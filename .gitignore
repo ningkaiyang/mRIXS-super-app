@@ -3,3 +3,6 @@ jpgs_gray
 Sample1VL_200F*
 IntDen_histogram.png
 .venv
+.agents
+__pycache__
+.pytest_cache

@@ -1,0 +1,849 @@
+import customtkinter
+import tkinter as tk
+import numpy as np
+from PIL import Image, ImageTk
+import os
+import threading
+
+from align_app.core import (
+    preprocess_image,
+    find_peak_line,
+    phase_correlation_offset,
+    compute_line_based_offset,
+    warp_image
+)
+
+
+class SlideshowView(customtkinter.CTkFrame):
+    def __init__(self, parent, on_back_to_sorting=None, **kwargs):
+        super().__init__(parent, **kwargs)
+        self.on_back_to_sorting = on_back_to_sorting
+        self.file_list = []
+        self.current_idx = 0
+        self.pca_threshold = 99.9
+        self.colormap = "viridis"
+        self.warp_enabled = False
+
+        # Reference line (computed once from frame 1, held static)
+        self.ref_raw = None
+        self.ref_origin = None
+        self.ref_direction = None
+        self.ref_threshold = 99.9
+
+        # Per-frame state
+        self.per_frame_threshold = {}    # {frame_idx: float}
+        self.per_frame_manual = {}       # {frame_idx: np.ndarray (centroid)}
+        # Per-frame line results (cached)
+        self.per_frame_origin = {}       # {frame_idx: np.ndarray}
+
+        # Current frame data
+        self.current_raw = None
+        self.current_rgb = None
+
+        # Caches for performance
+        self.raw_cache = {}       # {filepath: np.ndarray}
+        self.rgb_cache = {}       # {(filepath, colormap): np.ndarray}
+        self.offset_cache = {}    # {filepath: (dx, dy)}
+
+        # Display cache (for resize redraws without recomputation)
+        self.cached_disp_rgb = None
+
+        # Manual line mode
+        self.manual_mode = False
+        self.manual_clicks = []
+
+        # Zoom state
+        self.zoom_level = 0
+        self.zoom_steps = [1, 2, 4, 8]
+        self.pan_offset_x = 0
+        self.pan_offset_y = 0
+
+        # Autoplay state
+        self.autoplay_active = False
+        self.autoplay_speed_ms = 500
+        self._autoplay_job = None
+
+        # Debounce IDs
+        self._pca_debounce_id = None
+        self._frame_debounce_id = None
+
+        # Letterbox transform params
+        self._lb_scale = 1.0
+        self._lb_dx = 0
+        self._lb_dy = 0
+        self._img_w = 0
+        self._img_h = 0
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # === Navigation Bar ===
+        self.nav_frame = customtkinter.CTkFrame(self)
+        self.nav_frame.pack(fill="x", pady=5)
+
+        self.back_button = customtkinter.CTkButton(
+            self.nav_frame, text="◀ Back", command=self.back_to_sorting, width=80
+        )
+        self.back_button.pack(side="left", padx=5)
+
+        self.prev_button = customtkinter.CTkButton(
+            self.nav_frame, text="◀ Prev", command=self.prev_frame, width=80
+        )
+        self.prev_button.pack(side="left", padx=5)
+
+        self.next_button = customtkinter.CTkButton(
+            self.nav_frame, text="Next ▶", command=self.next_frame, width=80
+        )
+        self.next_button.pack(side="left", padx=5)
+
+        self.autoplay_button = customtkinter.CTkButton(
+            self.nav_frame, text="▶ Play", command=self.toggle_autoplay,
+            width=80, fg_color="#2FA572", hover_color="#238a5a"
+        )
+        self.autoplay_button.pack(side="left", padx=5)
+
+        self.show_line_switch = customtkinter.CTkSwitch(
+            self.nav_frame, text="Show Ref Line", command=self._render_display
+        )
+        self.show_line_switch.select()
+        self.show_line_switch.pack(side="right", padx=5)
+
+        self.warp_switch = customtkinter.CTkSwitch(
+            self.nav_frame, text="Warp Image", command=self.toggle_warp
+        )
+        self.warp_switch.pack(side="right", padx=5)
+
+        self.colormap_menu = customtkinter.CTkOptionMenu(
+            self.nav_frame,
+            values=["viridis", "inferno", "plasma", "magma", "grayscale"],
+            command=self.change_colormap
+        )
+        self.colormap_menu.set("viridis")
+        self.colormap_menu.pack(side="right", padx=5)
+
+        # === Sliders Frame ===
+        self.slider_frame = customtkinter.CTkFrame(self)
+        self.slider_frame.pack(fill="x", pady=5)
+
+        # PCA threshold row
+        self.pca_frame = customtkinter.CTkFrame(self.slider_frame)
+        self.pca_frame.pack(fill="x", pady=2)
+
+        self.pca_label = customtkinter.CTkLabel(self.pca_frame, text="PCA Threshold: 99.9000%")
+        self.pca_label.pack(side="left", padx=5)
+
+        self.pca_slider = customtkinter.CTkSlider(
+            self.pca_frame, from_=95.0, to=99.9999,
+            number_of_steps=4999, command=self._on_pca_slider_move
+        )
+        self.pca_slider.set(99.9)
+        self.pca_slider.pack(side="left", fill="x", expand=True, padx=5)
+
+        self.pca_entry = customtkinter.CTkEntry(self.pca_frame, width=80, placeholder_text="99.9000")
+        self.pca_entry.pack(side="left", padx=2)
+        self.pca_entry.insert(0, "99.9000")
+        self.pca_entry.bind("<Return>", self._on_pca_entry_submit)
+
+        self.auto_snap_button = customtkinter.CTkButton(
+            self.pca_frame, text="Auto", command=self._auto_snap_threshold,
+            width=50, fg_color="#555", hover_color="#777"
+        )
+        self.auto_snap_button.pack(side="left", padx=2)
+
+        self.auto_all_button = customtkinter.CTkButton(
+            self.pca_frame, text="Auto All", command=self._auto_snap_all_frames,
+            width=65, fg_color="#2F72A5", hover_color="#1F5A85"
+        )
+        self.auto_all_button.pack(side="left", padx=2)
+
+        # Frame slider row
+        self.frame_nav_frame = customtkinter.CTkFrame(self.slider_frame)
+        self.frame_nav_frame.pack(fill="x", pady=2)
+
+        self.frame_label = customtkinter.CTkLabel(self.frame_nav_frame, text="Frame: 0/0")
+        self.frame_label.pack(side="left", padx=5)
+
+        self.frame_slider = customtkinter.CTkSlider(
+            self.frame_nav_frame, from_=0, to=1,
+            number_of_steps=1, command=self._on_frame_slider_move
+        )
+        self.frame_slider.set(0)
+        self.frame_slider.pack(side="left", fill="x", expand=True, padx=5)
+
+        # === Tools Frame ===
+        self.tools_frame = customtkinter.CTkFrame(self)
+        self.tools_frame.pack(fill="x", pady=2)
+
+        self.manual_line_button = customtkinter.CTkButton(
+            self.tools_frame, text="✏ Manual Line", command=self.toggle_manual_mode,
+            width=110, fg_color="#555", hover_color="#777"
+        )
+        self.manual_line_button.pack(side="left", padx=5)
+
+        self.clear_manual_button = customtkinter.CTkButton(
+            self.tools_frame, text="Clear Manual", command=self.clear_manual_line,
+            width=100, fg_color="#555", hover_color="#777"
+        )
+        self.clear_manual_button.pack(side="left", padx=2)
+
+        self.zoom_in_button = customtkinter.CTkButton(
+            self.tools_frame, text="🔍+ Zoom In", command=self.zoom_in,
+            width=100, fg_color="#555", hover_color="#777"
+        )
+        self.zoom_in_button.pack(side="left", padx=5)
+
+        self.zoom_out_button = customtkinter.CTkButton(
+            self.tools_frame, text="🔍- Zoom Out", command=self.zoom_out,
+            width=100, fg_color="#555", hover_color="#777"
+        )
+        self.zoom_out_button.pack(side="left", padx=2)
+
+        self.reset_view_button = customtkinter.CTkButton(
+            self.tools_frame, text="⟲ Reset View", command=self.reset_view,
+            width=100, fg_color="#555", hover_color="#777"
+        )
+        self.reset_view_button.pack(side="left", padx=2)
+
+        self.zoom_label = customtkinter.CTkLabel(self.tools_frame, text="Zoom: 1×")
+        self.zoom_label.pack(side="left", padx=5)
+
+        # Per-frame info label
+        self.frame_info_label = customtkinter.CTkLabel(
+            self.tools_frame, text="", text_color="#88aacc"
+        )
+        self.frame_info_label.pack(side="right", padx=10)
+
+        # === Metadata Label ===
+        self.metadata_label = customtkinter.CTkLabel(
+            self, text="Filename: - | Frame Index: - | Offset: (0.00, 0.00)"
+        )
+        self.metadata_label.pack(fill="x", pady=2)
+
+        # === Canvas ===
+        self.canvas = tk.Canvas(self, bg="black", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True, pady=5)
+        self.canvas.bind("<Configure>", self._on_resize)
+        self.canvas.bind("<Button-1>", self._on_canvas_click)
+        self.photo_img = None
+
+    # ─── Lifecycle ────────────────────────────────────────────
+
+    def start(self, file_list):
+        self.file_list = file_list
+        self.current_idx = 0
+
+        # Clear all state
+        self.ref_raw = None
+        self.ref_origin = None
+        self.ref_direction = None
+        self.raw_cache.clear()
+        self.rgb_cache.clear()
+        self.offset_cache.clear()
+        self.cached_disp_rgb = None
+        self.per_frame_threshold.clear()
+        self.per_frame_manual.clear()
+        self.per_frame_origin.clear()
+        self.manual_clicks.clear()
+        self.zoom_level = 0
+        self.pan_offset_x = 0
+        self.pan_offset_y = 0
+
+        if len(self.file_list) > 1:
+            self.frame_slider.configure(
+                from_=0, to=len(self.file_list) - 1,
+                number_of_steps=len(self.file_list) - 1, state="normal"
+            )
+        else:
+            self.frame_slider.configure(from_=0, to=1, number_of_steps=1, state="disabled")
+        self.frame_slider.set(0)
+
+        self._load_reference()
+        self._preload_all_in_background()
+        self.load_and_render()
+
+    def _load_reference(self):
+        """Compute the reference line from frame 1."""
+        if not self.file_list:
+            return
+        ref_raw = self._get_raw(self.file_list[0])
+        if ref_raw is None:
+            return
+        self.ref_raw = ref_raw
+        t = self.per_frame_threshold.get(0, self.pca_threshold)
+        self.ref_threshold = t
+        self.ref_origin, self.ref_direction = find_peak_line(ref_raw, t)
+        self.per_frame_origin[0] = self.ref_origin.copy()
+
+    def _preload_all_in_background(self):
+        def _worker():
+            for path in self.file_list:
+                self._get_raw(path)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ─── Data Loading (Cached) ────────────────────────────────
+
+    def _get_raw(self, filepath):
+        if filepath in self.raw_cache:
+            return self.raw_cache[filepath]
+        try:
+            _, raw = preprocess_image(filepath, "grayscale", 100.0)
+            self.raw_cache[filepath] = raw
+            return raw
+        except Exception:
+            return None
+
+    def _get_rgb(self, filepath, colormap):
+        cache_key = (filepath, colormap)
+        if cache_key in self.rgb_cache:
+            return self.rgb_cache[cache_key]
+        try:
+            rgb, _ = preprocess_image(filepath, colormap, 100.0)
+            self.rgb_cache[cache_key] = rgb
+            return rgb
+        except Exception:
+            return None
+
+    def _get_offset(self, frame_idx):
+        """Get alignment offset for a frame using line-based alignment."""
+        filepath = self.file_list[frame_idx]
+        
+        # Check if manual centroid exists for this frame
+        if frame_idx in self.per_frame_manual:
+            manual_centroid = self.per_frame_manual[frame_idx]
+            # Compute offset from reference origin to manual centroid
+            delta = manual_centroid - self.ref_origin
+            return float(delta[0]), float(delta[1])
+
+        # Use line-based alignment with per-frame threshold
+        cache_key = (filepath, frame_idx)
+        if cache_key in self.offset_cache:
+            return self.offset_cache[cache_key]
+
+        raw = self._get_raw(filepath)
+        if raw is None or self.ref_raw is None or self.ref_direction is None:
+            return (0.0, 0.0)
+
+        target_threshold = self.per_frame_threshold.get(frame_idx, self.ref_threshold)
+        try:
+            dx, dy = compute_line_based_offset(
+                self.ref_raw, raw,
+                self.ref_direction, self.ref_origin,
+                self.ref_threshold, target_threshold
+            )
+            self.offset_cache[cache_key] = (dx, dy)
+            return (dx, dy)
+        except Exception:
+            try:
+                dx, dy = phase_correlation_offset(self.ref_raw, raw)
+                return (dx, dy)
+            except Exception:
+                return (0.0, 0.0)
+
+    # ─── Navigation ───────────────────────────────────────────
+
+    def back_to_sorting(self):
+        self.stop_autoplay()
+        if self.on_back_to_sorting:
+            self.on_back_to_sorting()
+
+    def prev_frame(self):
+        if self.current_idx > 0:
+            self.current_idx -= 1
+            self.frame_slider.set(self.current_idx)
+            self.load_and_render()
+
+    def next_frame(self):
+        if self.current_idx < len(self.file_list) - 1:
+            self.current_idx += 1
+            self.frame_slider.set(self.current_idx)
+            self.load_and_render()
+
+    def change_colormap(self, val):
+        self.colormap = val
+        self.load_and_render()
+
+    def toggle_warp(self):
+        self.warp_enabled = bool(self.warp_switch.get())
+        self.load_and_render()
+
+    # ─── PCA Threshold (per-frame) ────────────────────────────
+
+    def _get_current_threshold(self):
+        """Get the threshold for the current frame."""
+        return self.per_frame_threshold.get(self.current_idx, self.ref_threshold)
+
+    def _set_current_threshold(self, val):
+        """Set the threshold for the current frame."""
+        self.per_frame_threshold[self.current_idx] = val
+        # Invalidate caches for this frame
+        filepath = self.file_list[self.current_idx] if self.current_idx < len(self.file_list) else None
+        if filepath:
+            cache_key = (filepath, self.current_idx)
+            self.offset_cache.pop(cache_key, None)
+        self.per_frame_origin.pop(self.current_idx, None)
+
+    def _sync_slider_to_frame(self):
+        """Update slider/label/entry to show current frame's threshold."""
+        t = self._get_current_threshold()
+        self.pca_threshold = t
+        self.pca_slider.set(min(t, 99.9999))
+        self.pca_label.configure(text=f"PCA Threshold: {t:.4f}%")
+        self.pca_entry.delete(0, "end")
+        self.pca_entry.insert(0, f"{t:.4f}")
+
+        # Update per-frame info
+        info_parts = []
+        if self.current_idx in self.per_frame_threshold:
+            info_parts.append(f"Custom threshold: {self.per_frame_threshold[self.current_idx]:.4f}%")
+        if self.current_idx in self.per_frame_manual:
+            info_parts.append("Manual line set")
+        self.frame_info_label.configure(text=" | ".join(info_parts))
+
+    def _on_pca_slider_move(self, val):
+        self.pca_threshold = float(val)
+        self.pca_label.configure(text=f"PCA Threshold: {self.pca_threshold:.4f}%")
+        self.pca_entry.delete(0, "end")
+        self.pca_entry.insert(0, f"{self.pca_threshold:.4f}")
+        if self._pca_debounce_id is not None:
+            self.after_cancel(self._pca_debounce_id)
+        self._pca_debounce_id = self.after(80, self._apply_pca_change)
+
+    def _on_pca_entry_submit(self, event=None):
+        try:
+            val = float(self.pca_entry.get())
+            val = max(95.0, min(99.9999, val))
+            self.pca_threshold = val
+            self.pca_slider.set(val)
+            self.pca_label.configure(text=f"PCA Threshold: {val:.4f}%")
+            self._apply_pca_change()
+        except ValueError:
+            pass
+
+    def _apply_pca_change(self):
+        self._pca_debounce_id = None
+        self._set_current_threshold(self.pca_threshold)
+
+        if self.current_idx == 0:
+            # Recompute reference line
+            self._load_reference()
+            # Clear all offset caches (reference changed)
+            self.offset_cache.clear()
+            self.per_frame_origin.clear()
+            self.per_frame_origin[0] = self.ref_origin.copy()
+
+        self.load_and_render()
+
+    def _auto_snap_threshold(self):
+        """Auto-snap threshold for the CURRENT frame."""
+        idx = self.current_idx
+        raw = self._get_raw(self.file_list[idx]) if idx < len(self.file_list) else None
+        if raw is None:
+            return
+
+        best_threshold = self._get_current_threshold()
+        best_spread = float('inf')
+
+        # Coarse pass
+        for t_int in range(9800, 10000):
+            t = t_int / 100.0
+            spread = self._eval_spread(raw, t)
+            if spread is not None and spread < best_spread:
+                best_spread = spread
+                best_threshold = t
+
+        # Fine pass
+        fine_start = int((best_threshold - 0.1) * 1000)
+        fine_end = int(min(best_threshold + 0.1, 99.9999) * 1000)
+        for t_int in range(max(fine_start, 98000), min(fine_end, 999999) + 1):
+            t = t_int / 1000.0
+            spread = self._eval_spread(raw, t)
+            if spread is not None and spread < best_spread:
+                best_spread = spread
+                best_threshold = t
+
+        # Ultra-fine pass
+        uf_start = int((best_threshold - 0.01) * 10000)
+        uf_end = int(min(best_threshold + 0.01, 99.9999) * 10000)
+        for t_int in range(max(uf_start, 980000), min(uf_end, 9999999) + 1):
+            t = t_int / 10000.0
+            spread = self._eval_spread(raw, t)
+            if spread is not None and spread < best_spread:
+                best_spread = spread
+                best_threshold = t
+
+        self.pca_threshold = best_threshold
+        self.pca_slider.set(min(best_threshold, 99.9999))
+        self.pca_label.configure(text=f"PCA Threshold: {best_threshold:.4f}%")
+        self.pca_entry.delete(0, "end")
+        self.pca_entry.insert(0, f"{best_threshold:.4f}")
+        self._apply_pca_change()
+
+    def _auto_snap_all_frames(self):
+        """Auto-snap threshold for ALL frames."""
+        for idx in range(len(self.file_list)):
+            raw = self._get_raw(self.file_list[idx])
+            if raw is None:
+                continue
+
+            best_threshold = self.per_frame_threshold.get(idx, self.ref_threshold)
+            best_spread = float('inf')
+
+            for t_int in range(9800, 10000):
+                t = t_int / 100.0
+                spread = self._eval_spread(raw, t)
+                if spread is not None and spread < best_spread:
+                    best_spread = spread
+                    best_threshold = t
+
+            fine_start = int((best_threshold - 0.1) * 1000)
+            fine_end = int(min(best_threshold + 0.1, 99.9999) * 1000)
+            for t_int in range(max(fine_start, 98000), min(fine_end, 999999) + 1):
+                t = t_int / 1000.0
+                spread = self._eval_spread(raw, t)
+                if spread is not None and spread < best_spread:
+                    best_spread = spread
+                    best_threshold = t
+
+            uf_start = int((best_threshold - 0.01) * 10000)
+            uf_end = int(min(best_threshold + 0.01, 99.9999) * 10000)
+            for t_int in range(max(uf_start, 980000), min(uf_end, 9999999) + 1):
+                t = t_int / 10000.0
+                spread = self._eval_spread(raw, t)
+                if spread is not None and spread < best_spread:
+                    best_spread = spread
+                    best_threshold = t
+
+            self.per_frame_threshold[idx] = best_threshold
+
+        # Recompute reference with frame 0's optimized threshold
+        if 0 in self.per_frame_threshold:
+            self.ref_threshold = self.per_frame_threshold[0]
+        self._load_reference()
+        self.offset_cache.clear()
+        self.per_frame_origin.clear()
+
+        self._sync_slider_to_frame()
+        self.load_and_render()
+
+    def _eval_spread(self, raw, t):
+        try:
+            origin, direction = find_peak_line(raw, t)
+            threshold_val = np.percentile(raw, t)
+            rows, cols = np.where(raw >= threshold_val)
+            if len(rows) < 5:
+                return None
+            points = np.column_stack((cols, rows)).astype(np.float64)
+            centered = points - origin
+            perp_dist = np.abs(centered[:, 0] * direction[1] - centered[:, 1] * direction[0])
+            return float(np.median(perp_dist))
+        except Exception:
+            return None
+
+    # ─── Frame Slider ─────────────────────────────────────────
+
+    def _on_frame_slider_move(self, val):
+        idx = int(float(val))
+        if 0 <= idx < len(self.file_list) and idx != self.current_idx:
+            self.current_idx = idx
+            if self._frame_debounce_id is not None:
+                self.after_cancel(self._frame_debounce_id)
+            self._frame_debounce_id = self.after(50, self._apply_frame_change)
+
+    def _apply_frame_change(self):
+        self._frame_debounce_id = None
+        self.load_and_render()
+
+    # ─── Autoplay ─────────────────────────────────────────────
+
+    def toggle_autoplay(self):
+        if self.autoplay_active:
+            self.stop_autoplay()
+        else:
+            self.start_autoplay()
+
+    def start_autoplay(self):
+        self.autoplay_active = True
+        self.autoplay_button.configure(text="⏸ Pause", fg_color="#cc5500")
+        self._autoplay_tick()
+
+    def stop_autoplay(self):
+        self.autoplay_active = False
+        self.autoplay_button.configure(text="▶ Play", fg_color="#2FA572")
+        if self._autoplay_job is not None:
+            self.after_cancel(self._autoplay_job)
+            self._autoplay_job = None
+
+    def _autoplay_tick(self):
+        if not self.autoplay_active:
+            return
+        if self.current_idx < len(self.file_list) - 1:
+            self.current_idx += 1
+        else:
+            self.current_idx = 0
+        self.frame_slider.set(self.current_idx)
+        self.load_and_render()
+        self._autoplay_job = self.after(self.autoplay_speed_ms, self._autoplay_tick)
+
+    # ─── Zoom ─────────────────────────────────────────────────
+
+    def _compute_centroid_pan(self):
+        origin = self._get_display_origin()
+        if origin is None:
+            return
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw <= 1 or ch <= 1:
+            return
+        ih, iw = self.cached_disp_rgb.shape[:2] if self.cached_disp_rgb is not None else (2048, 3840)
+        base_scale = min(cw / iw, ch / ih)
+        zoom_factor = self.zoom_steps[self.zoom_level]
+        scale = base_scale * zoom_factor
+        nw = int(iw * scale)
+        nh = int(ih * scale)
+        base_dx = (cw - nw) // 2
+        base_dy = (ch - nh) // 2
+        cx = base_dx + origin[0] * scale
+        cy = base_dy + origin[1] * scale
+        self.pan_offset_x = int(cw / 2 - cx)
+        self.pan_offset_y = int(ch / 2 - cy)
+
+    def zoom_in(self):
+        if self.zoom_level < len(self.zoom_steps) - 1:
+            self.zoom_level += 1
+            self.zoom_label.configure(text=f"Zoom: {self.zoom_steps[self.zoom_level]}×")
+            if self.zoom_level > 0:
+                self._compute_centroid_pan()
+            self._render_display()
+
+    def zoom_out(self):
+        if self.zoom_level > 0:
+            self.zoom_level -= 1
+            self.zoom_label.configure(text=f"Zoom: {self.zoom_steps[self.zoom_level]}×")
+            if self.zoom_level == 0:
+                self.pan_offset_x = 0
+                self.pan_offset_y = 0
+            else:
+                self._compute_centroid_pan()
+            self._render_display()
+
+    def reset_view(self):
+        self.zoom_level = 0
+        self.pan_offset_x = 0
+        self.pan_offset_y = 0
+        self.zoom_label.configure(text="Zoom: 1×")
+        self._render_display()
+
+    # ─── Manual Line Mode ─────────────────────────────────────
+
+    def toggle_manual_mode(self):
+        self.manual_mode = not self.manual_mode
+        if self.manual_mode:
+            self.manual_line_button.configure(fg_color="#cc5500", text="✏ Click 2 pts...")
+            self.manual_clicks.clear()
+            self.canvas.configure(cursor="crosshair")
+        else:
+            self.manual_line_button.configure(fg_color="#555", text="✏ Manual Line")
+            self.canvas.configure(cursor="")
+
+    def clear_manual_line(self):
+        """Clear manual line for the current frame."""
+        self.per_frame_manual.pop(self.current_idx, None)
+        self.manual_clicks.clear()
+        # Invalidate offset cache for this frame
+        if self.current_idx < len(self.file_list):
+            filepath = self.file_list[self.current_idx]
+            self.offset_cache.pop((filepath, self.current_idx), None)
+        if self.manual_mode:
+            self.toggle_manual_mode()
+        self.load_and_render()
+
+    def _on_canvas_click(self, event):
+        if not self.manual_mode:
+            return
+
+        canvas_x, canvas_y = event.x, event.y
+        self.manual_clicks.append((canvas_x, canvas_y))
+
+        if len(self.manual_clicks) == 1:
+            self.canvas.create_oval(
+                canvas_x - 5, canvas_y - 5, canvas_x + 5, canvas_y + 5,
+                fill="lime", outline="white", width=2, tags="manual_marker"
+            )
+        elif len(self.manual_clicks) >= 2:
+            cx1, cy1 = self.manual_clicks[0]
+            cx2, cy2 = self.manual_clicks[1]
+
+            # Convert canvas coords to image coords
+            ix1 = (cx1 - self._lb_dx) / self._lb_scale
+            iy1 = (cy1 - self._lb_dy) / self._lb_scale
+            ix2 = (cx2 - self._lb_dx) / self._lb_scale
+            iy2 = (cy2 - self._lb_dy) / self._lb_scale
+
+            # Compute midpoint — this becomes the manual centroid for this frame
+            midpoint = np.array([(ix1 + ix2) / 2.0, (iy1 + iy2) / 2.0])
+
+            # Store the manual centroid for THIS frame (uses reference slope)
+            self.per_frame_manual[self.current_idx] = midpoint
+
+            # Invalidate offset cache for this frame
+            if self.current_idx < len(self.file_list):
+                filepath = self.file_list[self.current_idx]
+                self.offset_cache.pop((filepath, self.current_idx), None)
+
+            self.toggle_manual_mode()
+            self.load_and_render()
+
+    # ─── Display Origin Helper ────────────────────────────────
+
+    def _get_display_origin(self):
+        """Get the line origin to display (manual override > per-frame PCA > reference)."""
+        if self.current_idx in self.per_frame_manual:
+            return self.per_frame_manual[self.current_idx]
+        if self.current_idx in self.per_frame_origin:
+            return self.per_frame_origin[self.current_idx]
+        if self.ref_origin is not None:
+            return self.ref_origin
+        return None
+
+    # ─── Core Render Pipeline ─────────────────────────────────
+
+    def load_and_render(self):
+        if not self.file_list:
+            self.canvas.delete("all")
+            self.frame_label.configure(text="Frame: 0/0")
+            self.metadata_label.configure(text="Filename: - | Frame Index: - | Offset: (0.00, 0.00)")
+            return
+
+        self.frame_label.configure(text=f"Frame: {self.current_idx + 1}/{len(self.file_list)}")
+        self._sync_slider_to_frame()
+
+        img_path = self.file_list[self.current_idx]
+
+        raw = self._get_raw(img_path)
+        rgb = self._get_rgb(img_path, self.colormap)
+        if raw is None or rgb is None:
+            self.canvas.delete("all")
+            self.canvas.create_text(
+                self.canvas.winfo_width() / 2 or 300,
+                self.canvas.winfo_height() / 2 or 200,
+                text=f"Error loading image:\n{img_path}",
+                fill="red", tags="error"
+            )
+            return
+
+        self.current_raw = raw
+        self.current_rgb = rgb
+
+        # Compute per-frame line origin (if not cached and not manual)
+        if (self.current_idx not in self.per_frame_origin and
+            self.current_idx not in self.per_frame_manual):
+            t = self._get_current_threshold()
+            try:
+                origin, _ = find_peak_line(raw, t)
+                self.per_frame_origin[self.current_idx] = origin
+            except Exception:
+                pass
+
+        # Get offset
+        dx, dy = 0.0, 0.0
+        if self.current_idx > 0 and self.ref_raw is not None:
+            dx, dy = self._get_offset(self.current_idx)
+
+        self.metadata_label.configure(
+            text=f"Filename: {os.path.basename(img_path)} | Frame Index: {self.current_idx} | Offset: ({dx:.2f}, {dy:.2f})"
+        )
+
+        # Apply warp
+        disp_rgb = rgb.copy()
+        if self.warp_enabled and self.current_idx > 0 and self.ref_raw is not None:
+            try:
+                disp_rgb = warp_image(rgb, -dx, -dy)
+            except Exception:
+                pass
+
+        self.cached_disp_rgb = disp_rgb
+        self._render_display()
+
+    def _render_display(self):
+        if self.cached_disp_rgb is None:
+            return
+
+        # Always draw with the REFERENCE line (origin + direction)
+        # The origin shown depends on whether we're viewing frame 1 or a warped frame
+        if self.ref_origin is not None and self.ref_direction is not None:
+            origin = self.ref_origin
+            direction = self.ref_direction
+        else:
+            origin = None
+            direction = None
+
+        self._draw_canvas(self.cached_disp_rgb, origin, direction)
+
+    def _draw_canvas(self, rgb, origin, direction):
+        if rgb is None:
+            return
+        ih, iw = rgb.shape[:2]
+        if iw <= 0 or ih <= 0:
+            return
+
+        self.canvas.delete("all")
+
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw <= 1 or ch <= 1:
+            cw = 600
+            ch = 400
+
+        base_scale = min(cw / iw, ch / ih)
+        zoom_factor = self.zoom_steps[self.zoom_level]
+        scale = base_scale * zoom_factor
+
+        nw = int(iw * scale)
+        nh = int(ih * scale)
+        if nw <= 0 or nh <= 0:
+            return
+
+        dx = (cw - nw) // 2 + self.pan_offset_x
+        dy = (ch - nh) // 2 + self.pan_offset_y
+
+        self._lb_scale = scale
+        self._lb_dx = dx
+        self._lb_dy = dy
+        self._img_w = iw
+        self._img_h = ih
+
+        pil_img = Image.fromarray(rgb)
+        pil_img_resized = pil_img.resize((nw, nh), Image.Resampling.LANCZOS)
+        self.photo_img = ImageTk.PhotoImage(pil_img_resized)
+        self.canvas.create_image(dx, dy, image=self.photo_img, anchor="nw", tags="image")
+
+        # Draw reference line
+        if self.show_line_switch.get() and origin is not None and direction is not None:
+            ox_canvas = dx + origin[0] * scale
+            oy_canvas = dy + origin[1] * scale
+
+            self.canvas.create_oval(
+                ox_canvas - 4, oy_canvas - 4, ox_canvas + 4, oy_canvas + 4,
+                fill="red", outline="white", tags="centroid"
+            )
+
+            dir_x, dir_y = direction
+            if abs(dir_x) > 1e-5 or abs(dir_y) > 1e-5:
+                extent = max(nw, nh) * 2
+                p1_x = ox_canvas - dir_x * extent
+                p1_y = oy_canvas - dir_y * extent
+                p2_x = ox_canvas + dir_x * extent
+                p2_y = oy_canvas + dir_y * extent
+
+                is_manual = self.current_idx in self.per_frame_manual
+                line_color = "lime" if is_manual else "red"
+                self.canvas.create_line(
+                    p1_x, p1_y, p2_x, p2_y,
+                    fill=line_color, width=2, tags="peak_line"
+                )
+
+    def _on_resize(self, event):
+        if self.cached_disp_rgb is not None:
+            self._render_display()
+        else:
+            self.load_and_render()

@@ -1,0 +1,7 @@
+customtkinter==5.2.2
+numpy==2.4.6
+pillow==12.2.0
+tifffile==2026.6.1
+matplotlib==3.10.9
+opencv-python==4.13.0.92
+pytest==9.0.3
