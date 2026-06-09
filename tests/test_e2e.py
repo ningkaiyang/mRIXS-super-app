@@ -289,15 +289,15 @@ class TestE2E(unittest.TestCase):
     def test_f4_01_warp_switch_initial_state(self):
         self.app.show_slideshow(self.temp_files)
         pump_events(self.app)
-        self.assertFalse(self.app.slideshow_view.warp_enabled)
+        self.assertTrue(self.app.slideshow_view.warp_enabled)
 
     def test_f4_02_warp_toggle_enable(self):
         self.app.show_slideshow(self.temp_files)
         pump_events(self.app)
-        self.app.slideshow_view.warp_switch.select()
+        self.app.slideshow_view.warp_switch.deselect()
         self.app.slideshow_view.toggle_warp()
         pump_events(self.app)
-        self.assertTrue(self.app.slideshow_view.warp_enabled)
+        self.assertFalse(self.app.slideshow_view.warp_enabled)
 
     def test_f4_03_warp_toggle_triggers_redraw(self):
         self.app.show_slideshow(self.temp_files)
@@ -307,7 +307,7 @@ class TestE2E(unittest.TestCase):
         line_id = self.app.slideshow_view.canvas.find_withtag("peak_line")[0]
         coords_before = self.app.slideshow_view.canvas.coords(line_id)
         
-        self.app.slideshow_view.warp_switch.select()
+        self.app.slideshow_view.warp_switch.deselect()
         self.app.slideshow_view.toggle_warp()
         pump_events(self.app)
         
@@ -472,11 +472,11 @@ class TestE2E(unittest.TestCase):
     def test_t3_04_navigating_preserves_warp_switch(self):
         self.app.show_slideshow(self.temp_files)
         pump_events(self.app)
-        self.app.slideshow_view.warp_switch.select()
+        self.app.slideshow_view.warp_switch.deselect()
         self.app.slideshow_view.toggle_warp()
         self.app.slideshow_view.next_button.invoke()
         pump_events(self.app)
-        self.assertTrue(self.app.slideshow_view.warp_enabled)
+        self.assertFalse(self.app.slideshow_view.warp_enabled)
 
     def test_t3_05_back_to_sorting_preserves_list_order(self):
         self.app.sorting_view.file_list = [self.temp_files[1], self.temp_files[0]]

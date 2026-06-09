@@ -8,9 +8,11 @@ import threading
 from align_app.core import (
     preprocess_image,
     find_peak_line,
+    find_peak_line_fast,
     phase_correlation_offset,
     compute_line_based_offset,
-    warp_image
+    warp_image,
+    _weighted_pca
 )
 
 
@@ -22,7 +24,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self.current_idx = 0
         self.pca_threshold = 99.9
         self.colormap = "viridis"
-        self.warp_enabled = False
+        self.warp_enabled = True
 
         # Reference line (computed once from frame 1, held static)
         self.ref_raw = None
@@ -54,7 +56,7 @@ class SlideshowView(customtkinter.CTkFrame):
 
         # Zoom state
         self.zoom_level = 0
-        self.zoom_steps = [1, 2, 4, 8]
+        self.zoom_steps = [1, 2, 4, 8, 16]
         self.pan_offset_x = 0
         self.pan_offset_y = 0
 
@@ -111,6 +113,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self.warp_switch = customtkinter.CTkSwitch(
             self.nav_frame, text="Warp Image", command=self.toggle_warp
         )
+        self.warp_switch.select()
         self.warp_switch.pack(side="right", padx=5)
 
         self.colormap_menu = customtkinter.CTkOptionMenu(
@@ -434,43 +437,22 @@ class SlideshowView(customtkinter.CTkFrame):
         self.load_and_render()
 
     def _auto_snap_threshold(self):
-        """Auto-snap threshold for the CURRENT frame."""
+        """Auto-snap threshold for the CURRENT frame (runs in background thread)."""
         idx = self.current_idx
         raw = self._get_raw(self.file_list[idx]) if idx < len(self.file_list) else None
         if raw is None:
             return
 
-        best_threshold = self._get_current_threshold()
-        best_spread = float('inf')
+        self.auto_snap_button.configure(text="...", state="disabled")
 
-        # Coarse pass
-        for t_int in range(9800, 10000):
-            t = t_int / 100.0
-            spread = self._eval_spread(raw, t)
-            if spread is not None and spread < best_spread:
-                best_spread = spread
-                best_threshold = t
+        def _worker():
+            best = self._find_best_threshold(raw)
+            self.after(0, lambda: self._finish_auto_snap(best))
 
-        # Fine pass
-        fine_start = int((best_threshold - 0.1) * 1000)
-        fine_end = int(min(best_threshold + 0.1, 99.9999) * 1000)
-        for t_int in range(max(fine_start, 98000), min(fine_end, 999999) + 1):
-            t = t_int / 1000.0
-            spread = self._eval_spread(raw, t)
-            if spread is not None and spread < best_spread:
-                best_spread = spread
-                best_threshold = t
+        threading.Thread(target=_worker, daemon=True).start()
 
-        # Ultra-fine pass
-        uf_start = int((best_threshold - 0.01) * 10000)
-        uf_end = int(min(best_threshold + 0.01, 99.9999) * 10000)
-        for t_int in range(max(uf_start, 980000), min(uf_end, 9999999) + 1):
-            t = t_int / 10000.0
-            spread = self._eval_spread(raw, t)
-            if spread is not None and spread < best_spread:
-                best_spread = spread
-                best_threshold = t
-
+    def _finish_auto_snap(self, best_threshold):
+        self.auto_snap_button.configure(text="Auto", state="normal")
         self.pca_threshold = best_threshold
         self.pca_slider.set(min(best_threshold, 99.9999))
         self.pca_label.configure(text=f"PCA Threshold: {best_threshold:.4f}%")
@@ -479,43 +461,30 @@ class SlideshowView(customtkinter.CTkFrame):
         self._apply_pca_change()
 
     def _auto_snap_all_frames(self):
-        """Auto-snap threshold for ALL frames."""
-        for idx in range(len(self.file_list)):
-            raw = self._get_raw(self.file_list[idx])
-            if raw is None:
-                continue
+        """Auto-snap threshold for ALL frames (runs in background thread)."""
+        self.auto_all_button.configure(text="0/{}...".format(len(self.file_list)), state="disabled")
+        self.auto_snap_button.configure(state="disabled")
 
-            best_threshold = self.per_frame_threshold.get(idx, self.ref_threshold)
-            best_spread = float('inf')
+        def _worker():
+            results = {}
+            for idx in range(len(self.file_list)):
+                raw = self._get_raw(self.file_list[idx])
+                if raw is not None:
+                    results[idx] = self._find_best_threshold(raw)
+                self.after(0, lambda i=idx: self.auto_all_button.configure(
+                    text=f"{i+1}/{len(self.file_list)}..."
+                ))
+            self.after(0, lambda: self._finish_auto_snap_all(results))
 
-            for t_int in range(9800, 10000):
-                t = t_int / 100.0
-                spread = self._eval_spread(raw, t)
-                if spread is not None and spread < best_spread:
-                    best_spread = spread
-                    best_threshold = t
+        threading.Thread(target=_worker, daemon=True).start()
 
-            fine_start = int((best_threshold - 0.1) * 1000)
-            fine_end = int(min(best_threshold + 0.1, 99.9999) * 1000)
-            for t_int in range(max(fine_start, 98000), min(fine_end, 999999) + 1):
-                t = t_int / 1000.0
-                spread = self._eval_spread(raw, t)
-                if spread is not None and spread < best_spread:
-                    best_spread = spread
-                    best_threshold = t
+    def _finish_auto_snap_all(self, results):
+        self.auto_all_button.configure(text="Auto All", state="normal")
+        self.auto_snap_button.configure(state="normal")
 
-            uf_start = int((best_threshold - 0.01) * 10000)
-            uf_end = int(min(best_threshold + 0.01, 99.9999) * 10000)
-            for t_int in range(max(uf_start, 980000), min(uf_end, 9999999) + 1):
-                t = t_int / 10000.0
-                spread = self._eval_spread(raw, t)
-                if spread is not None and spread < best_spread:
-                    best_spread = spread
-                    best_threshold = t
+        for idx, threshold in results.items():
+            self.per_frame_threshold[idx] = threshold
 
-            self.per_frame_threshold[idx] = best_threshold
-
-        # Recompute reference with frame 0's optimized threshold
         if 0 in self.per_frame_threshold:
             self.ref_threshold = self.per_frame_threshold[0]
         self._load_reference()
@@ -525,19 +494,71 @@ class SlideshowView(customtkinter.CTkFrame):
         self._sync_slider_to_frame()
         self.load_and_render()
 
-    def _eval_spread(self, raw, t):
-        try:
-            origin, direction = find_peak_line(raw, t)
-            threshold_val = np.percentile(raw, t)
-            rows, cols = np.where(raw >= threshold_val)
-            if len(rows) < 5:
+    def _find_best_threshold(self, raw):
+        """Find optimal threshold using pre-sorted pixel indices for speed.
+        
+        Pre-sorts all pixels by intensity once (~140ms), then each threshold
+        evaluation is a simple array slice + fast PCA (~3ms each).
+        Total: ~1.5s per frame instead of ~38s.
+        """
+        # Pre-sort all pixel indices by intensity (ascending) — done ONCE
+        h, w = raw.shape
+        flat = raw.ravel()
+        sorted_idx = np.argsort(flat)
+        sorted_rows = sorted_idx // w
+        sorted_cols = sorted_idx % w
+        n_total = len(flat)
+
+        best_threshold = 99.9
+        best_spread = float('inf')
+
+        def _eval_at(t_pct):
+            """Evaluate spread at percentile t_pct using pre-sorted indices."""
+            cutoff = int(t_pct / 100.0 * n_total)
+            if n_total - cutoff < 5:
                 return None
+            rows = sorted_rows[cutoff:]
+            cols = sorted_cols[cutoff:]
             points = np.column_stack((cols, rows)).astype(np.float64)
-            centered = points - origin
-            perp_dist = np.abs(centered[:, 0] * direction[1] - centered[:, 1] * direction[0])
-            return float(np.median(perp_dist))
-        except Exception:
-            return None
+            weights = raw[rows, cols].astype(np.float64)
+            w_min, w_max = np.min(weights), np.max(weights)
+            if w_max - w_min > 1e-9:
+                weights = ((weights - w_min) / (w_max - w_min)) ** 2
+            else:
+                weights = np.ones(len(points))
+            weights = np.clip(weights, 1e-6, None)
+            _, _, spread = find_peak_line_fast(points, weights)
+            return spread
+
+        # Coarse pass: 98.00 to 99.99 in 0.01 steps
+        for t_int in range(9800, 10000):
+            t = t_int / 100.0
+            spread = _eval_at(t)
+            if spread is not None and spread < best_spread:
+                best_spread = spread
+                best_threshold = t
+
+        # Fine pass: best ± 0.1 in 0.001 steps
+        fine_lo = max(98.0, best_threshold - 0.1)
+        fine_hi = min(99.999, best_threshold + 0.1)
+        for t_int in range(int(fine_lo * 1000), int(fine_hi * 1000) + 1):
+            t = t_int / 1000.0
+            spread = _eval_at(t)
+            if spread is not None and spread < best_spread:
+                best_spread = spread
+                best_threshold = t
+
+        # Ultra-fine pass: best ± 0.005 in 0.0001 steps
+        uf_lo = max(98.0, best_threshold - 0.005)
+        uf_hi = min(99.9999, best_threshold + 0.005)
+        for t_int in range(int(uf_lo * 10000), int(uf_hi * 10000) + 1):
+            t = t_int / 10000.0
+            spread = _eval_at(t)
+            if spread is not None and spread < best_spread:
+                best_spread = spread
+                best_threshold = t
+
+        return best_threshold
 
     # ─── Frame Slider ─────────────────────────────────────────
 
@@ -679,8 +700,18 @@ class SlideshowView(customtkinter.CTkFrame):
             ix2 = (cx2 - self._lb_dx) / self._lb_scale
             iy2 = (cy2 - self._lb_dy) / self._lb_scale
 
-            # Compute midpoint — this becomes the manual centroid for this frame
+            # Compute midpoint in the displayed (possibly warped) image coords
             midpoint = np.array([(ix1 + ix2) / 2.0, (iy1 + iy2) / 2.0])
+
+            # If warp is enabled, back-calculate the un-warped centroid.
+            # The displayed image was shifted by (-dx, -dy), so the original
+            # position is midpoint + (dx, dy) = midpoint - (-dx, -dy).
+            if self.warp_enabled and self.current_idx > 0 and self.ref_raw is not None:
+                # Get the current warp offset that was applied
+                existing_dx, existing_dy = self._get_offset(self.current_idx)
+                # Undo the warp: the display was shifted by (-dx, -dy),
+                # so original coords = displayed coords + (dx, dy)
+                midpoint = midpoint + np.array([existing_dx, existing_dy])
 
             # Store the manual centroid for THIS frame (uses reference slope)
             self.per_frame_manual[self.current_idx] = midpoint

@@ -118,63 +118,66 @@ def _cross_section_center(points: np.ndarray, weights: np.ndarray,
                           centroid: np.ndarray, direction: np.ndarray) -> np.ndarray:
     """
     Refine the centroid by finding the peak of the perpendicular intensity profile.
-    
-    This finds the true center of a line with some width, rather than the
-    intensity-weighted mean which can be biased by asymmetric edges/noise.
+    Uses vectorized np.bincount for speed.
     """
-    # Perpendicular direction (90° rotation)
     perp = np.array([-direction[1], direction[0]])
-    
-    # Compute signed perpendicular distance from each point to the current line
     centered = points - centroid
     perp_dists = centered[:, 0] * perp[0] + centered[:, 1] * perp[1]
     
-    # Build a smoothed intensity profile along the perpendicular axis
     dist_range = np.max(perp_dists) - np.min(perp_dists)
     if dist_range < 1e-6:
         return centroid
     
-    # Use ~50 bins for the histogram, or fewer if very few points
     n_bins = min(50, max(10, len(points) // 20))
     bin_edges = np.linspace(np.min(perp_dists), np.max(perp_dists), n_bins + 1)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
-    # Weighted histogram: sum of intensity weights per bin
-    profile = np.zeros(n_bins)
+    # Vectorized weighted histogram using np.bincount
     bin_indices = np.clip(np.digitize(perp_dists, bin_edges) - 1, 0, n_bins - 1)
-    for i in range(n_bins):
-        mask = bin_indices == i
-        if np.any(mask):
-            profile[i] = np.sum(weights[mask])
+    profile = np.bincount(bin_indices, weights=weights, minlength=n_bins)[:n_bins]
     
     if np.max(profile) < 1e-9:
         return centroid
     
-    # Smooth the profile with a small kernel to reduce noise
+    # Smooth with small kernel
     kernel_size = max(3, n_bins // 10)
     if kernel_size % 2 == 0:
         kernel_size += 1
     kernel = np.ones(kernel_size) / kernel_size
     smoothed = np.convolve(profile, kernel, mode='same')
     
-    # Find the peak of the smoothed profile
+    # Peak + sub-bin refinement
     peak_idx = np.argmax(smoothed)
-    peak_offset = bin_centers[peak_idx]
-    
-    # Sub-bin refinement: weighted average around the peak
     window = max(1, kernel_size // 2)
     lo = max(0, peak_idx - window)
     hi = min(n_bins, peak_idx + window + 1)
     local_weights = smoothed[lo:hi]
     local_centers = bin_centers[lo:hi]
     total_w = np.sum(local_weights)
-    if total_w > 1e-9:
-        peak_offset = np.sum(local_centers * local_weights) / total_w
+    peak_offset = np.sum(local_centers * local_weights) / total_w if total_w > 1e-9 else bin_centers[peak_idx]
     
-    # Shift centroid by the peak offset in the perpendicular direction
-    refined_centroid = centroid + peak_offset * perp
+    return centroid + peak_offset * perp
+
+
+def find_peak_line_fast(points: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    """
+    Lightweight PCA for threshold search evaluation.
+    Skips outlier rejection and cross-section centering for speed.
     
-    return refined_centroid
+    Args:
+        points: (N, 2) array of (x, y) coordinates
+        weights: (N,) array of intensity weights (already normalized/squared)
+    
+    Returns:
+        (centroid, direction, median_perp_spread)
+    """
+    if len(points) < 2:
+        return np.array([0.0, 0.0]), np.array([1.0, 0.0]), float('inf')
+    
+    centroid, direction = _weighted_pca(points, weights)
+    centered = points - centroid
+    perp_dist = np.abs(centered[:, 0] * direction[1] - centered[:, 1] * direction[0])
+    return centroid, direction, float(np.median(perp_dist))
 
 
 def compute_line_based_offset(ref_raw: np.ndarray, target_raw: np.ndarray,

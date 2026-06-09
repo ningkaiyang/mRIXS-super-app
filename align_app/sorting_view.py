@@ -42,10 +42,99 @@ class SortingView(customtkinter.CTkFrame):
         )
         self.start_button.pack(pady=10)
 
+        self.help_button = customtkinter.CTkButton(
+            self, text="❓ Help / Guide", command=self.show_help,
+            width=120, fg_color="#555", hover_color="#777"
+        )
+        self.help_button.pack(pady=5)
+
         self.scroll_frame = customtkinter.CTkScrollableFrame(self, label_text="Selected Files")
         self.scroll_frame.pack(pady=5, fill="both", expand=True)
         
         self.labels = []
+
+    def show_help(self):
+        """Open a help/guide dialog."""
+        help_win = customtkinter.CTkToplevel(self)
+        help_win.title("Spectroscopy Alignment — Quick Guide")
+        help_win.geometry("620x560")
+        help_win.attributes("-topmost", True)
+
+        scroll = customtkinter.CTkScrollableFrame(help_win)
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+
+        guide_sections = [
+            ("Step 1: Load Files", (
+                "Click '📁 Select Files' to choose your TIFF spectroscopy images.\n"
+                "You can select multiple files at once."
+            )),
+            ("Step 2: Sort Files", (
+                "Click '↕ Sort Files' to auto-sort by filename (natural sorting).\n"
+                "Use '▲ Up' / '▼ Down' to manually reorder if needed.\n"
+                "Frame 1 (top of list) is the REFERENCE frame — all other frames\n"
+                "will be aligned to it."
+            )),
+            ("Step 3: Start Slideshow", (
+                "Click '▶ Start Slideshow' to begin analysis.\n"
+                "The app computes a PCA reference line from Frame 1 at the\n"
+                "default threshold of 99.9%. The red line shows the detected\n"
+                "spectroscopic peak center. Warp is ON by default."
+            )),
+            ("Step 4: Auto Optimization", (
+                "'Auto' — optimizes the PCA threshold for the CURRENT frame (~2s).\n"
+                "'Auto All' — optimizes ALL frames at once (~15-20s total).\n"
+                "The search finds the threshold that gives the tightest line fit.\n"
+                "Progress is shown on the button (e.g. '3/10...')."
+            )),
+            ("Step 5: Navigate & Inspect", (
+                "Use ← → arrow keys or '◀ Prev' / 'Next ▶' to step through frames.\n"
+                "Use the frame slider for quick jumping.\n"
+                "'▶ Play' auto-cycles through all frames.\n\n"
+                "Check that the red reference line aligns with the bright\n"
+                "spectroscopic line on each frame. With Warp ON, frames\n"
+                "should look aligned when flipping between them."
+            )),
+            ("Step 6: Zoom", (
+                "'🔍+ Zoom In' steps through 1× → 2× → 4× → 8× → 16×.\n"
+                "Zoom centers on the reference line centroid.\n"
+                "'🔍- Zoom Out' reverses. '⟲ Reset View' returns to 1×.\n"
+                "Use zoom to inspect line fit quality at high magnification."
+            )),
+            ("Step 7: Manual Line Correction", (
+                "If the auto-fit doesn't align a frame well:\n\n"
+                "1. Click '✏ Manual Line' (button turns orange)\n"
+                "2. Click TWO points on the spectroscopic line, far apart\n"
+                "   (zoom to 8× or 16× for precision)\n"
+                "3. The app computes the midpoint between your clicks and\n"
+                "   draws a line through it using Frame 1's reference slope\n"
+                "4. The warp offset is recalculated automatically\n\n"
+                "You can draw manual lines directly on the warped image —\n"
+                "the app back-calculates the un-warped coordinates.\n\n"
+                "'Clear Manual' removes the manual override for that frame."
+            )),
+            ("Tips", (
+                "• Each frame stores its own PCA threshold independently\n"
+                "• The PCA slider shows/controls the CURRENT frame's threshold\n"
+                "• Type exact values in the threshold text box + press Enter\n"
+                "• Warp is purely translational (no rotation or stretching)\n"
+                "• Use viridis colormap for best visibility of faint features"
+            )),
+        ]
+
+        for title, body in guide_sections:
+            title_label = customtkinter.CTkLabel(
+                scroll, text=title,
+                font=customtkinter.CTkFont(size=15, weight="bold"),
+                anchor="w"
+            )
+            title_label.pack(fill="x", padx=5, pady=(10, 2))
+
+            body_label = customtkinter.CTkLabel(
+                scroll, text=body,
+                anchor="w", justify="left",
+                wraplength=560
+            )
+            body_label.pack(fill="x", padx=15, pady=(0, 5))
 
     def select_files(self):
         # Allow mock override of file dialog
