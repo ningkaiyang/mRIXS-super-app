@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image, ImageTk
 import os
 import threading
+import queue
 
 from align_app.core import (
     preprocess_image,
@@ -76,7 +77,16 @@ class SlideshowView(customtkinter.CTkFrame):
         self._img_w = 0
         self._img_h = 0
 
+        # Thread-safe result queue (fixes self.after() from background threads)
+        self._result_queue = queue.Queue()
+
+        # PhotoImage cache for rendering performance
+        self.photo_cache = {}          # {cache_key: ImageTk.PhotoImage}
+        self._photo_cache_order = []   # LRU order tracking
+        self._photo_cache_max = 20     # Max cached PhotoImages
+
         self._build_ui()
+        self._poll_queue()  # Start the queue poll loop
 
     def _build_ui(self):
         # === Navigation Bar ===
@@ -243,6 +253,8 @@ class SlideshowView(customtkinter.CTkFrame):
         self.rgb_cache.clear()
         self.offset_cache.clear()
         self.cached_disp_rgb = None
+        self.photo_cache.clear()
+        self._photo_cache_order.clear()
         self.per_frame_threshold.clear()
         self.per_frame_manual.clear()
         self.per_frame_origin.clear()
@@ -363,10 +375,14 @@ class SlideshowView(customtkinter.CTkFrame):
 
     def change_colormap(self, val):
         self.colormap = val
+        self.photo_cache.clear()
+        self._photo_cache_order.clear()
         self.load_and_render()
 
     def toggle_warp(self):
         self.warp_enabled = bool(self.warp_switch.get())
+        self.photo_cache.clear()
+        self._photo_cache_order.clear()
         self.load_and_render()
 
     # ─── PCA Threshold (per-frame) ────────────────────────────
@@ -436,6 +452,17 @@ class SlideshowView(customtkinter.CTkFrame):
 
         self.load_and_render()
 
+    def _poll_queue(self):
+        """Drain all pending results from background threads (runs on main thread)."""
+        try:
+            while True:
+                callback = self._result_queue.get_nowait()
+                callback()
+        except queue.Empty:
+            pass
+        # Re-schedule every 50ms
+        self.after(50, self._poll_queue)
+
     def _auto_snap_threshold(self):
         """Auto-snap threshold for the CURRENT frame (runs in background thread)."""
         idx = self.current_idx
@@ -447,7 +474,7 @@ class SlideshowView(customtkinter.CTkFrame):
 
         def _worker():
             best = self._find_best_threshold(raw)
-            self.after(0, lambda: self._finish_auto_snap(best))
+            self._result_queue.put(lambda: self._finish_auto_snap(best))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -462,19 +489,25 @@ class SlideshowView(customtkinter.CTkFrame):
 
     def _auto_snap_all_frames(self):
         """Auto-snap threshold for ALL frames (runs in background thread)."""
-        self.auto_all_button.configure(text="0/{}...".format(len(self.file_list)), state="disabled")
+        n_frames = len(self.file_list)
+        self.auto_all_button.configure(text=f"0/{n_frames}...", state="disabled")
         self.auto_snap_button.configure(state="disabled")
 
         def _worker():
             results = {}
-            for idx in range(len(self.file_list)):
+            for idx in range(n_frames):
                 raw = self._get_raw(self.file_list[idx])
                 if raw is not None:
                     results[idx] = self._find_best_threshold(raw)
-                self.after(0, lambda i=idx: self.auto_all_button.configure(
-                    text=f"{i+1}/{len(self.file_list)}..."
-                ))
-            self.after(0, lambda: self._finish_auto_snap_all(results))
+                # Post progress update via queue (thread-safe)
+                count = idx + 1
+                self._result_queue.put(
+                    lambda c=count: self.auto_all_button.configure(
+                        text=f"{c}/{n_frames}..."
+                    )
+                )
+            # Post completion via queue
+            self._result_queue.put(lambda: self._finish_auto_snap_all(results))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -810,6 +843,18 @@ class SlideshowView(customtkinter.CTkFrame):
 
         self._draw_canvas(self.cached_disp_rgb, origin, direction)
 
+    def _get_photo_cache_key(self, rgb, nw, nh):
+        """Build a cache key for PhotoImage based on current display state."""
+        # Use id(rgb) as a fast proxy — rgb arrays are cached in rgb_cache
+        # so the same frame+colormap always returns the same object
+        return (id(rgb), nw, nh, self.zoom_level)
+
+    def _evict_photo_cache(self):
+        """LRU eviction: remove oldest entries beyond max cache size."""
+        while len(self._photo_cache_order) > self._photo_cache_max:
+            old_key = self._photo_cache_order.pop(0)
+            self.photo_cache.pop(old_key, None)
+
     def _draw_canvas(self, rgb, origin, direction):
         if rgb is None:
             return
@@ -843,9 +888,29 @@ class SlideshowView(customtkinter.CTkFrame):
         self._img_w = iw
         self._img_h = ih
 
-        pil_img = Image.fromarray(rgb)
-        pil_img_resized = pil_img.resize((nw, nh), Image.Resampling.LANCZOS)
-        self.photo_img = ImageTk.PhotoImage(pil_img_resized)
+        # Check PhotoImage cache first
+        cache_key = self._get_photo_cache_key(rgb, nw, nh)
+        if cache_key in self.photo_cache:
+            self.photo_img = self.photo_cache[cache_key]
+            # Move to end of LRU order
+            if cache_key in self._photo_cache_order:
+                self._photo_cache_order.remove(cache_key)
+            self._photo_cache_order.append(cache_key)
+        else:
+            # Create new PhotoImage with appropriate resampling
+            pil_img = Image.fromarray(rgb)
+            if zoom_factor > 1:
+                # NEAREST for zoomed views: sharp pixels, very fast
+                pil_img_resized = pil_img.resize((nw, nh), Image.Resampling.NEAREST)
+            else:
+                # BILINEAR at 1×: good quality, ~3× faster than LANCZOS
+                pil_img_resized = pil_img.resize((nw, nh), Image.Resampling.BILINEAR)
+            self.photo_img = ImageTk.PhotoImage(pil_img_resized)
+            # Cache it
+            self.photo_cache[cache_key] = self.photo_img
+            self._photo_cache_order.append(cache_key)
+            self._evict_photo_cache()
+
         self.canvas.create_image(dx, dy, image=self.photo_img, anchor="nw", tags="image")
 
         # Draw reference line
