@@ -173,8 +173,7 @@ class TestUIResizingAndCacheStress(unittest.TestCase):
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
 
-        self.app = AlignApp()
-        self.app.withdraw()
+        self.app = AlignApp(show_window=False)
         pump_events(self.app)
 
     def tearDown(self):
@@ -241,8 +240,7 @@ class TestGUIEdgeCasesStress(unittest.TestCase):
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
 
-        self.app = AlignApp()
-        self.app.withdraw()
+        self.app = AlignApp(show_window=False)
         pump_events(self.app)
 
     def tearDown(self):
@@ -356,8 +354,7 @@ class TestChallengerAdversarialExhaustive(unittest.TestCase):
         tifffile.imwrite(path, data)
         self.temp_files.append(path)
 
-        self.app = AlignApp()
-        self.app.withdraw()
+        self.app = AlignApp(show_window=False)
         pump_events(self.app)
 
     def tearDown(self):

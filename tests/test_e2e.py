@@ -39,8 +39,7 @@ class TestE2E(unittest.TestCase):
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
             
-        self.app = AlignApp()
-        self.app.withdraw()
+        self.app = AlignApp(show_window=False)
         pump_events(self.app)
         
     def tearDown(self):
@@ -203,11 +202,15 @@ class TestE2E(unittest.TestCase):
         
         # Mock winfo_ismapped because the window is withdrawn in test setUp
         with patch.object(self.app.slideshow_view, 'winfo_ismapped', return_value=True):
-            self.app.event_generate("<Right>")
+            # Simulate key events by calling handlers directly since withdrawn windows cannot gain focus
+            mock_event = tk.Event()
+            mock_event.widget = self.app
+            
+            self.app._on_right_key(mock_event)
             pump_events(self.app)
             self.assertEqual(self.app.slideshow_view.current_idx, 1)
             
-            self.app.event_generate("<Left>")
+            self.app._on_left_key(mock_event)
             pump_events(self.app)
             self.assertEqual(self.app.slideshow_view.current_idx, 0)
 

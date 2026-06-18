@@ -7,7 +7,7 @@ customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
 
 class AlignApp(customtkinter.CTk):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, show_window=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.withdraw()  # Hide window initially to prevent flickering
         self.title("Spectroscopy Image Alignment GUI")
@@ -37,12 +37,13 @@ class AlignApp(customtkinter.CTk):
 
         self.show_sorting()
 
-        # Maximize the geometry/state in the background while withdrawn
-        self.maximize_window()
-        # Force the OS window manager to apply the geometry changes before showing
-        self.update()
-        # Reveal the window directly in its maximized state
-        self.deiconify()
+        if show_window:
+            # Maximize the geometry/state in the background while withdrawn
+            self.maximize_window()
+            # Force the OS window manager to apply the geometry changes before showing
+            self.update()
+            # Reveal the window directly in its maximized state
+            self.deiconify()
 
     def _on_left_key(self, event):
         # Ignore if the event is targeting a slider widget (sliders use arrows for value adjustment)
