@@ -1,6 +1,7 @@
 jpgs
 jpgs_gray
 *.tif
+tif-cache/
 IntDen_histogram.png
 .venv
 .agents

@@ -5,6 +5,57 @@ import cv2
 import tifffile
 import matplotlib
 
+
+def load_raw(image_path: str) -> np.ndarray:
+    """
+    Load a float32 2D array from a TIFF file, using a persistent `.npy` disk cache
+    for fast subsequent loads.
+
+    On first access:
+      1. Reads the TIFF via tifffile, converts to float32, cleans NaN/inf.
+      2. Saves the result to `<tif_dir>/tif-cache/<basename>.npy`.
+      3. Returns the array.
+
+    On subsequent accesses (cache hit, .npy mtime >= .tif mtime):
+      1. Loads via `np.load(path, mmap_mode='r')` — zero-copy, OS-managed.
+      2. Returns the memory-mapped array.
+
+    Cache invalidation: if the .tif file is newer than the cached .npy, the cache
+    is regenerated automatically.
+
+    Raises:
+        FileNotFoundError: if image_path does not exist.
+        ValueError: if the TIFF cannot be squeezed to a 2D array.
+    """
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"File not found: {image_path}")
+
+    tif_dir = os.path.dirname(os.path.abspath(image_path))
+    cache_dir = os.path.join(tif_dir, "tif-cache")
+    basename = os.path.splitext(os.path.basename(image_path))[0]
+    npy_path = os.path.join(cache_dir, basename + ".npy")
+
+    # Check for a valid cache hit
+    if os.path.exists(npy_path):
+        tif_mtime = os.path.getmtime(image_path)
+        npy_mtime = os.path.getmtime(npy_path)
+        if npy_mtime >= tif_mtime:
+            return np.load(npy_path, mmap_mode="r")
+
+    # Cache miss or stale: read TIFF and convert
+    raw = tifffile.imread(image_path).astype(np.float32)
+    if raw.ndim != 2:
+        raw = np.squeeze(raw)
+        if raw.ndim != 2:
+            raise ValueError("TIFF image must be 2D")
+    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Save to cache (create directory if needed)
+    os.makedirs(cache_dir, exist_ok=True)
+    np.save(npy_path, raw)
+
+    return raw
+
 def natural_sort(file_list: list[str]) -> list[str]:
     """
     Sorts a list of file paths/names in-place and returns the same list
@@ -325,24 +376,16 @@ def warp_image(image_data: np.ndarray, dx: float, dy: float) -> np.ndarray:
 
 def preprocess_image(image_path: str, cmap_name: str, percentile_threshold: float, floor: float = None, ceiling: float = None) -> tuple[np.ndarray, np.ndarray]:
     """
-    Reads a float32 TIFF, normalizes values based on percentile threshold,
-    applies the colormap, and returns the RGB uint8 image and raw intensity values.
+    Reads a float32 TIFF (via load_raw for .npy caching), normalizes values
+    based on percentile threshold, applies the colormap, and returns the RGB
+    uint8 image and raw intensity values.
     
     Raises FileNotFoundError if path doesn't exist.
     """
-    if not os.path.exists(image_path):
-        raise FileNotFoundError(f"File not found: {image_path}")
-        
     if not (0.0 <= percentile_threshold <= 100.0):
         raise ValueError("percentile_threshold must be between 0.0 and 100.0")
-        
-    raw = tifffile.imread(image_path).astype(np.float32)
-    if raw.ndim != 2:
-        raw = np.squeeze(raw)
-        if raw.ndim != 2:
-            raise ValueError("TIFF image must be 2D")
-            
-    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+
+    raw = load_raw(image_path)  # Handles FileNotFoundError, 2D check, and NaN cleanup
 
     if floor is not None and ceiling is not None:
         vmin = float(floor)

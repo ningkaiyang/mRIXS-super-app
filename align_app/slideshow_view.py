@@ -10,6 +10,7 @@ import queue
 
 from align_app.core import (
     preprocess_image,
+    load_raw,
     apply_colormap,
     generate_aligned_sum,
     find_peak_line,
@@ -373,7 +374,7 @@ class SlideshowView(customtkinter.CTkFrame):
         if filepath in self.raw_cache:
             return self.raw_cache[filepath]
         try:
-            _, raw = preprocess_image(filepath, "grayscale", 100.0)
+            raw = load_raw(filepath)
             self.raw_cache[filepath] = raw
             return raw
         except Exception:

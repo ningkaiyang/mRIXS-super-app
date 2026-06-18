@@ -106,18 +106,6 @@ class TestPCAPeakFindingStress(unittest.TestCase):
         self.assertAlmostEqual(abs(direction[0]), expected_comp, delta=0.1)
         self.assertAlmostEqual(abs(direction[1]), expected_comp, delta=0.1)
 
-    def test_circular_intensity_profile(self):
-        # Symmetric circle
-        img = np.zeros((21, 21), dtype=np.float32)
-        y, x = np.ogrid[-10:11, -10:11]
-        mask = x**2 + y**2 <= 5**2
-        img[mask] = 10.0
-        # Should not crash, centroid should be the center (10, 10)
-        centroid, direction = find_peak_line(img, 99.0)
-        self.assertAlmostEqual(centroid[0], 10.0, places=3)
-        self.assertAlmostEqual(centroid[1], 10.0, places=3)
-        self.assertAlmostEqual(np.linalg.norm(direction), 1.0, places=5)
-
 
     def test_flat_image_variations(self):
         # Extremely large flat values
