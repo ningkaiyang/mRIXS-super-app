@@ -1,5 +1,7 @@
 import customtkinter
 import tkinter as tk
+import tkinter.filedialog
+import tkinter.messagebox
 import numpy as np
 from PIL import Image, ImageTk
 import os
@@ -8,6 +10,8 @@ import queue
 
 from align_app.core import (
     preprocess_image,
+    apply_colormap,
+    generate_aligned_sum,
     find_peak_line,
     find_peak_line_fast,
     phase_correlation_offset,
@@ -15,6 +19,7 @@ from align_app.core import (
     warp_image,
     _weighted_pca
 )
+from align_app.widgets import RangeSlider
 
 
 class SlideshowView(customtkinter.CTkFrame):
@@ -26,6 +31,12 @@ class SlideshowView(customtkinter.CTkFrame):
         self.pca_threshold = 99.9
         self.colormap = "viridis"
         self.warp_enabled = True
+
+        # Clamping state
+        self.intensity_min = 0.0
+        self.intensity_max = 1.0
+        self.clamping_floor = 0.0
+        self.clamping_ceiling = 1.0
 
         # Reference line (computed once from frame 1, held static)
         self.ref_raw = None
@@ -232,7 +243,46 @@ class SlideshowView(customtkinter.CTkFrame):
         )
         self.metadata_label.pack(fill="x", pady=2)
 
-        # === Canvas ===
+        # === Bottom Bar ===
+        self.bottom_bar = customtkinter.CTkFrame(self)
+        self.bottom_bar.pack(fill="x", side="bottom", pady=5)
+
+        # Bottom Bar Columns
+        self.clamping_frame = customtkinter.CTkFrame(self.bottom_bar, fg_color="transparent")
+        self.clamping_frame.pack(side="left", fill="x", expand=True, padx=10)
+
+        self.export_frame = customtkinter.CTkFrame(self.bottom_bar, fg_color="transparent")
+        self.export_frame.pack(side="right", padx=10)
+
+        # Clamping section widgets
+        self.clamping_label = customtkinter.CTkLabel(self.clamping_frame, text="Intensity Clamping:")
+        self.clamping_label.pack(side="left", padx=5)
+
+        self.floor_entry = customtkinter.CTkEntry(self.clamping_frame, width=80)
+        self.floor_entry.pack(side="left", padx=5)
+        self.floor_entry.bind("<Return>", self._on_floor_entry_submit)
+
+        self.range_slider = RangeSlider(
+            self.clamping_frame, height=25, command=self._on_clamping_change
+        )
+        self.range_slider.pack(side="left", fill="x", expand=True, padx=5)
+
+        self.ceiling_entry = customtkinter.CTkEntry(self.clamping_frame, width=80)
+        self.ceiling_entry.pack(side="left", padx=5)
+        self.ceiling_entry.bind("<Return>", self._on_ceiling_entry_submit)
+
+        # Export section widgets
+        self.progress_label = customtkinter.CTkLabel(self.export_frame, text="", text_color="#aaaaaa")
+        self.progress_label.pack(side="left", padx=5)
+
+        self.export_button = customtkinter.CTkButton(
+            self.export_frame, text="💾 Export Aligned Sum",
+            command=self.export_aligned_sum,
+            fg_color="#2F72A5", hover_color="#1F5A85"
+        )
+        self.export_button.pack(side="left", padx=5)
+
+        # === Canvas === (Greedy widget, packed last)
         self.canvas = tk.Canvas(self, bg="black", highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, pady=5)
         self.canvas.bind("<Configure>", self._on_resize)
@@ -284,6 +334,28 @@ class SlideshowView(customtkinter.CTkFrame):
         if ref_raw is None:
             return
         self.ref_raw = ref_raw
+
+        # Initialize display intensity boundaries once
+        if ref_raw is not None and ref_raw.size > 0:
+            self.intensity_min = float(np.min(ref_raw))
+            self.intensity_max = float(np.max(ref_raw))
+        else:
+            self.intensity_min = 0.0
+            self.intensity_max = 1.0
+        if self.intensity_max <= self.intensity_min:
+            self.intensity_max = self.intensity_min + 1.0
+
+        self.clamping_floor = self.intensity_min
+        self.clamping_ceiling = self.intensity_max
+
+        self.range_slider.configure_range(self.intensity_min, self.intensity_max)
+        self.range_slider.set_values(self.clamping_floor, self.clamping_ceiling)
+
+        self.floor_entry.delete(0, "end")
+        self.floor_entry.insert(0, f"{self.clamping_floor:.4f}")
+        self.ceiling_entry.delete(0, "end")
+        self.ceiling_entry.insert(0, f"{self.clamping_ceiling:.4f}")
+
         t = self.per_frame_threshold.get(0, self.pca_threshold)
         self.ref_threshold = t
         self.ref_origin, self.ref_direction = find_peak_line(ref_raw, t)
@@ -308,11 +380,22 @@ class SlideshowView(customtkinter.CTkFrame):
             return None
 
     def _get_rgb(self, filepath, colormap):
+        """Get RGB display image using apply_colormap() on cached raw data.
+
+        This avoids re-reading the TIFF from disk — the raw array is already
+        in raw_cache from _get_raw(). Only the colormap + clamping math runs,
+        making slider dragging near-instant (~5-50ms).
+        """
         cache_key = (filepath, colormap)
         if cache_key in self.rgb_cache:
             return self.rgb_cache[cache_key]
         try:
-            rgb, _ = preprocess_image(filepath, colormap, 100.0)
+            raw = self._get_raw(filepath)
+            if raw is None:
+                return None
+            floor, ceiling = self.get_current_clamping()
+            rgb = apply_colormap(raw, colormap,
+                                display_floor=floor, display_ceiling=ceiling)
             self.rgb_cache[cache_key] = rgb
             return rgb
         except Exception:
@@ -401,12 +484,18 @@ class SlideshowView(customtkinter.CTkFrame):
             self.offset_cache.pop(cache_key, None)
         self.per_frame_origin.pop(self.current_idx, None)
 
+    def _format_threshold(self, t):
+        s = f"{t:.4f}".rstrip('0')
+        if s.endswith('.'):
+            s += '0'
+        return s
+
     def _sync_slider_to_frame(self):
         """Update slider/label/entry to show current frame's threshold."""
         t = self._get_current_threshold()
         self.pca_threshold = t
         self.pca_slider.set(min(t, 99.9999))
-        self.pca_label.configure(text=f"PCA Threshold: {t:.4f}%")
+        self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(t)}%")
         self.pca_entry.delete(0, "end")
         self.pca_entry.insert(0, f"{t:.4f}")
 
@@ -420,7 +509,7 @@ class SlideshowView(customtkinter.CTkFrame):
 
     def _on_pca_slider_move(self, val):
         self.pca_threshold = float(val)
-        self.pca_label.configure(text=f"PCA Threshold: {self.pca_threshold:.4f}%")
+        self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(self.pca_threshold)}%")
         self.pca_entry.delete(0, "end")
         self.pca_entry.insert(0, f"{self.pca_threshold:.4f}")
         if self._pca_debounce_id is not None:
@@ -433,7 +522,7 @@ class SlideshowView(customtkinter.CTkFrame):
             val = max(95.0, min(99.9999, val))
             self.pca_threshold = val
             self.pca_slider.set(val)
-            self.pca_label.configure(text=f"PCA Threshold: {val:.4f}%")
+            self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(val)}%")
             self._apply_pca_change()
         except ValueError:
             pass
@@ -482,7 +571,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self.auto_snap_button.configure(text="Auto", state="normal")
         self.pca_threshold = best_threshold
         self.pca_slider.set(min(best_threshold, 99.9999))
-        self.pca_label.configure(text=f"PCA Threshold: {best_threshold:.4f}%")
+        self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(best_threshold)}%")
         self.pca_entry.delete(0, "end")
         self.pca_entry.insert(0, f"{best_threshold:.4f}")
         self._apply_pca_change()
@@ -786,6 +875,7 @@ class SlideshowView(customtkinter.CTkFrame):
         raw = self._get_raw(img_path)
         rgb = self._get_rgb(img_path, self.colormap)
         if raw is None or rgb is None:
+            self.cached_disp_rgb = None
             self.canvas.delete("all")
             self.canvas.create_text(
                 self.canvas.winfo_width() / 2 or 300,
@@ -943,3 +1033,163 @@ class SlideshowView(customtkinter.CTkFrame):
             self._render_display()
         else:
             self.load_and_render()
+
+    # ─── Display Intensity Clamping ───────────────────────────
+
+    def get_current_clamping(self):
+        floor = getattr(self, "clamping_floor", None)
+        ceiling = getattr(self, "clamping_ceiling", None)
+        return floor, ceiling
+
+    def _on_clamping_change(self, floor, ceiling):
+        self.clamping_floor = floor
+        self.clamping_ceiling = ceiling
+
+        # Update text entries in real-time
+        self.floor_entry.delete(0, "end")
+        self.floor_entry.insert(0, f"{floor:.4f}")
+        self.ceiling_entry.delete(0, "end")
+        self.ceiling_entry.insert(0, f"{ceiling:.4f}")
+
+        # Debounce the heavy rendering updates
+        if hasattr(self, "_clamping_debounce_id") and self._clamping_debounce_id is not None:
+            self.after_cancel(self._clamping_debounce_id)
+        self._clamping_debounce_id = self.after(80, self._apply_clamping_change)
+
+    def _apply_clamping_change(self):
+        self._clamping_debounce_id = None
+        self.rgb_cache.clear()
+        self.photo_cache.clear()
+        self._photo_cache_order.clear()
+        self.load_and_render()
+
+    def _on_floor_entry_submit(self, event=None):
+        try:
+            val = float(self.floor_entry.get())
+            val = max(self.intensity_min, min(self.clamping_ceiling - 1e-4, val))
+            self.clamping_floor = val
+            self.range_slider.set_values(self.clamping_floor, self.clamping_ceiling)
+            self._apply_clamping_change()
+        except ValueError:
+            self.floor_entry.delete(0, "end")
+            self.floor_entry.insert(0, f"{self.clamping_floor:.4f}")
+
+    def _on_ceiling_entry_submit(self, event=None):
+        try:
+            val = float(self.ceiling_entry.get())
+            val = max(self.clamping_floor + 1e-4, min(self.intensity_max, val))
+            self.clamping_ceiling = val
+            self.range_slider.set_values(self.clamping_floor, self.clamping_ceiling)
+            self._apply_clamping_change()
+        except ValueError:
+            self.ceiling_entry.delete(0, "end")
+            self.ceiling_entry.insert(0, f"{self.clamping_ceiling:.4f}")
+
+    # ─── Aligned Sum Export ───────────────────────────────────
+
+    def export_aligned_sum(self):
+        """Export the aligned sum of all frames as a single TIFF file.
+
+        Pre-computes all alignment offsets, opens a save dialog, then spawns
+        a background thread using generate_aligned_sum() with progress updates.
+        """
+        if not self.file_list:
+            return
+
+        self.stop_autoplay()
+
+        # Pre-compute ALL offsets on the main thread (may trigger PCA for
+        # unvisited frames) so the background thread doesn't touch UI state.
+        n_frames = len(self.file_list)
+        self.progress_label.configure(text="Computing offsets...")
+        self.update_idletasks()  # Force label redraw before blocking loop
+
+        offsets = {0: (0.0, 0.0)}
+        for idx in range(1, n_frames):
+            self.progress_label.configure(text=f"Computing offsets: {idx}/{n_frames}...")
+            self.update_idletasks()
+            offsets[idx] = self._get_offset(idx)
+        self.progress_label.configure(text="")
+
+        # Open save dialog
+        first_file = self.file_list[0]
+        initial_dir = os.path.dirname(first_file)
+        save_path = tk.filedialog.asksaveasfilename(
+            initialdir=initial_dir,
+            initialfile="aligned_sum.tif",
+            defaultextension=".tif",
+            filetypes=[("TIFF Files", "*.tif;*.tiff")]
+        )
+        if not save_path:
+            return
+
+        self._set_export_ui_state("disabled")
+
+        ref_raw = self._get_raw(first_file)
+        if ref_raw is None:
+            self._finish_export(False, "Could not load reference frame.")
+            return
+
+        def _progress(current, total):
+            self._result_queue.put(
+                lambda c=current, t=total: self.progress_label.configure(
+                    text=f"Summing frames: {c}/{t}..."
+                )
+            )
+
+        def _worker():
+            try:
+                result = generate_aligned_sum(
+                    self.file_list, self._get_raw, offsets,
+                    ref_raw.shape, progress_callback=_progress
+                )
+                import tifffile
+                tifffile.imwrite(save_path, result)
+                self._result_queue.put(lambda: self._finish_export(True, save_path))
+            except Exception as e:
+                self._result_queue.put(lambda err=str(e): self._finish_export(False, err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _set_export_ui_state(self, state):
+        """Enable or disable all interactive UI widgets during export."""
+        widgets = [
+            self.back_button, self.prev_button, self.next_button, self.autoplay_button,
+            self.pca_slider, self.pca_entry, self.auto_snap_button, self.auto_all_button,
+            self.frame_slider, self.manual_line_button, self.clear_manual_button,
+            self.zoom_in_button, self.zoom_out_button, self.reset_view_button,
+            self.colormap_menu, self.warp_switch, self.show_line_switch,
+            self.export_button
+        ]
+        for w in widgets:
+            try:
+                w.configure(state=state)
+            except Exception:
+                pass
+
+    def _finish_export(self, success, info):
+        """Called on main thread when export completes."""
+        self._set_export_ui_state("normal")
+        self.progress_label.configure(text="")
+        if success:
+            tk.messagebox.showinfo("Export Successful", f"Aligned sum saved to:\n{info}")
+        else:
+            tk.messagebox.showerror("Export Failed", f"An error occurred during export:\n{info}")
+
+    # ─── Public Wrapper Methods (for Test Compatibility) ─────
+
+    def on_resize(self, event):
+        return self._on_resize(event)
+
+    def draw_canvas(self, rgb, origin, direction):
+        return self._draw_canvas(rgb, origin, direction)
+
+    def jump_to_frame(self, idx):
+        self.current_idx = idx
+        self.frame_slider.set(idx)
+        return self._apply_frame_change()
+
+    def change_pca_threshold(self, val):
+        self.pca_threshold = val
+        self.pca_slider.set(val)
+        return self._apply_pca_change()

@@ -6,6 +6,8 @@ from .core import (
     compute_line_based_offset,
     warp_image,
     preprocess_image,
+    apply_colormap,
+    generate_aligned_sum,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "compute_line_based_offset",
     "warp_image",
     "preprocess_image",
+    "apply_colormap",
+    "generate_aligned_sum",
 ]

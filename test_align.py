@@ -11,7 +11,9 @@ from align_app.core import (
     find_peak_line,
     phase_correlation_offset,
     warp_image,
-    preprocess_image
+    preprocess_image,
+    apply_colormap,
+    generate_aligned_sum
 )
 
 class TestNaturalSort(unittest.TestCase):
@@ -249,6 +251,149 @@ class TestPreprocessImage(unittest.TestCase):
         self.assertEqual(rgb.shape, (10, 10, 3))
         np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
         np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 2])
+
+
+
+class TestApplyColormap(unittest.TestCase):
+    def setUp(self):
+        self.raw = np.linspace(0.0, 100.0, 100).reshape(10, 10).astype(np.float32)
+
+    def test_grayscale_output_shape(self):
+        rgb = apply_colormap(self.raw, "grayscale")
+        self.assertEqual(rgb.shape, (10, 10, 3))
+        self.assertEqual(rgb.dtype, np.uint8)
+        # All channels identical for grayscale
+        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
+        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 2])
+
+    def test_viridis_colormap(self):
+        rgb = apply_colormap(self.raw, "viridis")
+        self.assertEqual(rgb.shape, (10, 10, 3))
+        self.assertEqual(rgb.dtype, np.uint8)
+
+    def test_clamping_floor_ceiling(self):
+        # Clamping to [25, 75] should remap that range to [0, 255]
+        rgb_full = apply_colormap(self.raw, "grayscale")
+        rgb_clamped = apply_colormap(self.raw, "grayscale",
+                                     display_floor=25.0, display_ceiling=75.0)
+        # Pixels at value 0 should be 0 (clamped to floor), but in clamped
+        # version the contrast should be different
+        self.assertNotEqual(rgb_full[5, 5, 0], rgb_clamped[5, 5, 0])
+
+    def test_floor_equals_ceiling(self):
+        # Should produce flat image without error
+        rgb = apply_colormap(self.raw, "grayscale",
+                             display_floor=50.0, display_ceiling=50.0)
+        self.assertEqual(rgb.shape, (10, 10, 3))
+
+    def test_none_defaults(self):
+        # When no floor/ceiling, should use raw min/max
+        rgb = apply_colormap(self.raw, "grayscale")
+        self.assertEqual(rgb.shape, (10, 10, 3))
+        # Min pixel should be 0, max should be 255
+        self.assertEqual(rgb[0, 0, 0], 0)
+        self.assertEqual(rgb[9, 9, 0], 255)
+
+    def test_invalid_colormap_fallback(self):
+        # Should fall back to grayscale without error
+        rgb = apply_colormap(self.raw, "nonexistent_cmap_xyz")
+        self.assertEqual(rgb.shape, (10, 10, 3))
+        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
+
+    def test_non_string_colormap(self):
+        # Should fall back to grayscale
+        rgb = apply_colormap(self.raw, 12345)
+        self.assertEqual(rgb.shape, (10, 10, 3))
+        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
+
+    def test_rejects_non_2d(self):
+        with self.assertRaises(ValueError):
+            apply_colormap(np.zeros((10, 10, 3), dtype=np.float32), "grayscale")
+
+    def test_flat_image(self):
+        flat = np.ones((5, 5), dtype=np.float32) * 42.0
+        rgb = apply_colormap(flat, "grayscale")
+        self.assertEqual(rgb.shape, (5, 5, 3))
+        # All pixels should be the same value
+        self.assertTrue(np.all(rgb[:, :, 0] == rgb[0, 0, 0]))
+
+
+class TestGenerateAlignedSum(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.temp_files = []
+        # Create 3 simple test frames (10x10 each)
+        for i in range(3):
+            data = np.full((10, 10), float(i + 1), dtype=np.float32)
+            path = os.path.join(self.temp_dir, f"frame_{i}.tif")
+            tifffile.imwrite(path, data)
+            self.temp_files.append(path)
+
+        # Simple raw loader
+        self._cache = {}
+        for path in self.temp_files:
+            self._cache[path] = tifffile.imread(path).astype(np.float32)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _get_raw(self, filepath):
+        return self._cache.get(filepath)
+
+    def test_basic_sum_no_offsets(self):
+        offsets = {0: (0.0, 0.0), 1: (0.0, 0.0), 2: (0.0, 0.0)}
+        result = generate_aligned_sum(
+            self.temp_files, self._get_raw, offsets, (10, 10)
+        )
+        self.assertEqual(result.shape, (10, 10))
+        self.assertEqual(result.dtype, np.float32)
+        # Sum should be 1 + 2 + 3 = 6 everywhere
+        np.testing.assert_allclose(result, 6.0)
+
+    def test_with_offset(self):
+        # Frame 1 shifted left by warp_image(raw, -2, 0) — right edge becomes 0
+        offsets = {0: (0.0, 0.0), 1: (2.0, 0.0), 2: (0.0, 0.0)}
+        result = generate_aligned_sum(
+            self.temp_files, self._get_raw, offsets, (10, 10)
+        )
+        # warp_image(raw, -2, 0) shifts the image LEFT by 2 pixels.
+        # Interior (col 0-7): frame_0(1) + warped_frame_1(2) + frame_2(3) = 6
+        # Right edge (col 8-9): frame_0(1) + 0 + frame_2(3) = 4
+        np.testing.assert_allclose(result[5, 5], 6.0, atol=0.5)
+        np.testing.assert_allclose(result[5, 9], 4.0, atol=0.5)
+
+    def test_progress_callback(self):
+        offsets = {0: (0.0, 0.0), 1: (0.0, 0.0), 2: (0.0, 0.0)}
+        progress_calls = []
+
+        def callback(current, total):
+            progress_calls.append((current, total))
+
+        generate_aligned_sum(
+            self.temp_files, self._get_raw, offsets, (10, 10),
+            progress_callback=callback
+        )
+        self.assertEqual(len(progress_calls), 3)
+        self.assertEqual(progress_calls[0], (1, 3))
+        self.assertEqual(progress_calls[2], (3, 3))
+
+    def test_missing_frame_raises(self):
+        def _bad_loader(filepath):
+            return None
+
+        offsets = {0: (0.0, 0.0)}
+        with self.assertRaises(ValueError):
+            generate_aligned_sum(
+                self.temp_files[:1], _bad_loader, offsets, (10, 10)
+            )
+
+    def test_single_frame(self):
+        offsets = {0: (0.0, 0.0)}
+        result = generate_aligned_sum(
+            self.temp_files[:1], self._get_raw, offsets, (10, 10)
+        )
+        np.testing.assert_allclose(result, 1.0)
 
 
 if __name__ == "__main__":

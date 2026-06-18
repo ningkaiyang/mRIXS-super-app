@@ -67,19 +67,25 @@ def find_peak_line(image_data: np.ndarray, percentile_threshold: float) -> tuple
         return np.array([w / 2.0, h / 2.0]), np.array([1.0, 0.0])
 
     # Get intensity weights for these points (normalized to [0, 1])
-    weights = image_data[rows, cols].astype(np.float64)
-    weight_min = np.min(weights)
-    weight_range = np.max(weights) - weight_min
-    if weight_range > 1e-9:
-        weights = (weights - weight_min) / weight_range
-    else:
+    if percentile_threshold == 0.0:
         weights = np.ones(len(points))
-    # Square the weights to emphasize bright center pixels even more
-    weights = weights ** 2
-    # Ensure no zero weights
-    weights = np.clip(weights, 1e-6, None)
+    else:
+        weights = image_data[rows, cols].astype(np.float64)
+        weight_min = np.min(weights)
+        weight_range = np.max(weights) - weight_min
+        if weight_range > 1e-9:
+            weights = (weights - weight_min) / weight_range
+        else:
+            weights = np.ones(len(points))
+        # Square the weights to emphasize bright center pixels even more
+        weights = weights ** 2
+        # Ensure no zero weights
+        weights = np.clip(weights, 1e-6, None)
 
     centroid, direction = _weighted_pca(points, weights)
+
+    if percentile_threshold == 0.0:
+        return centroid, direction
 
     # Iterative outlier rejection (up to 5 iterations)
     for _ in range(5):
@@ -317,7 +323,7 @@ def warp_image(image_data: np.ndarray, dx: float, dy: float) -> np.ndarray:
     )
     return warped
 
-def preprocess_image(image_path: str, cmap_name: str, percentile_threshold: float) -> tuple[np.ndarray, np.ndarray]:
+def preprocess_image(image_path: str, cmap_name: str, percentile_threshold: float, floor: float = None, ceiling: float = None) -> tuple[np.ndarray, np.ndarray]:
     """
     Reads a float32 TIFF, normalizes values based on percentile threshold,
     applies the colormap, and returns the RGB uint8 image and raw intensity values.
@@ -337,14 +343,20 @@ def preprocess_image(image_path: str, cmap_name: str, percentile_threshold: floa
             raise ValueError("TIFF image must be 2D")
             
     raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-    vmin = np.min(raw)
-    if percentile_threshold < 100.0:
-        vmax = np.percentile(raw, percentile_threshold)
+
+    if floor is not None and ceiling is not None:
+        vmin = float(floor)
+        vmax = float(ceiling)
+        if vmax <= vmin:
+            vmax = vmin + 1e-6
     else:
-        vmax = np.max(raw)
-        
-    if vmax <= vmin:
-        vmax = np.max(raw)
+        vmin = np.min(raw)
+        if percentile_threshold < 100.0:
+            vmax = np.percentile(raw, percentile_threshold)
+        else:
+            vmax = np.max(raw)
+        if vmax <= vmin:
+            vmax = np.max(raw)
         
     norm_range = vmax - vmin
     if norm_range > 1e-8:
@@ -382,3 +394,109 @@ def preprocess_image(image_path: str, cmap_name: str, percentile_threshold: floa
             rgb_image = np.stack([scaled_8bit, scaled_8bit, scaled_8bit], axis=-1)
             
     return rgb_image, raw
+
+
+def apply_colormap(raw: np.ndarray, cmap_name: str,
+                   display_floor: float = None,
+                   display_ceiling: float = None) -> np.ndarray:
+    """
+    Apply a colormap to a raw 2D intensity array, returning an RGB uint8 image.
+
+    Clamps values to [display_floor, display_ceiling] before normalizing to [0, 1],
+    then applies the named matplotlib colormap (or grayscale).
+
+    This function does NOT read from disk — it operates on an already-loaded
+    numpy array (e.g., from raw_cache), making it fast enough for interactive
+    slider dragging (~5-50ms depending on image size).
+
+    Args:
+        raw: 2D float32 array of raw intensity values.
+        cmap_name: Colormap name ('grayscale', 'viridis', 'inferno', etc.).
+        display_floor: Minimum display intensity. Defaults to raw.min().
+        display_ceiling: Maximum display intensity. Defaults to raw.max().
+
+    Returns:
+        RGB uint8 numpy array of shape (H, W, 3).
+    """
+    if raw.ndim != 2:
+        raise ValueError("raw must be a 2D numpy array")
+
+    vmin = float(display_floor) if display_floor is not None else float(np.min(raw))
+    vmax = float(display_ceiling) if display_ceiling is not None else float(np.max(raw))
+    if vmax <= vmin:
+        vmax = vmin + 1e-6
+
+    norm_range = vmax - vmin
+    if norm_range > 1e-8:
+        scaled = np.clip((raw - vmin) / norm_range, 0.0, 1.0)
+    else:
+        scaled = np.zeros_like(raw)
+
+    is_grayscale = False
+    if isinstance(cmap_name, str):
+        try:
+            if cmap_name.lower() in ("grayscale", "gray"):
+                is_grayscale = True
+        except Exception:
+            is_grayscale = True
+    else:
+        is_grayscale = True
+
+    if is_grayscale:
+        scaled_8bit = (scaled * 255.0).astype(np.uint8)
+        return np.stack([scaled_8bit, scaled_8bit, scaled_8bit], axis=-1)
+
+    try:
+        cmap_lower = cmap_name.lower()
+        if hasattr(matplotlib, 'colormaps'):
+            cmap = matplotlib.colormaps[cmap_lower]
+        else:
+            import matplotlib.cm as cm
+            cmap = cm.get_cmap(cmap_lower)
+        rgba_float = cmap(scaled)
+        return (rgba_float[:, :, :3] * 255.0).astype(np.uint8)
+    except Exception:
+        scaled_8bit = (scaled * 255.0).astype(np.uint8)
+        return np.stack([scaled_8bit, scaled_8bit, scaled_8bit], axis=-1)
+
+
+def generate_aligned_sum(file_list: list[str], get_raw_fn, offsets: dict,
+                         ref_shape: tuple,
+                         progress_callback=None) -> np.ndarray:
+    """
+    Generate an aligned sum of all frames by warping each to the reference
+    frame's coordinate system and accumulating into a float32 array.
+
+    Args:
+        file_list: Ordered list of TIFF file paths.
+        get_raw_fn: Callable(filepath) -> np.ndarray that returns cached raw data.
+        offsets: Dict mapping frame index -> (dx, dy) alignment offsets.
+                 Frame 0 is assumed to be the reference (offset 0,0).
+        ref_shape: (H, W) shape of the reference frame.
+        progress_callback: Optional callable(current, total) for progress updates.
+
+    Returns:
+        Float32 numpy array containing the summed, aligned image.
+
+    Raises:
+        ValueError: If a frame cannot be loaded.
+    """
+    accum = np.zeros(ref_shape, dtype=np.float32)
+    n_frames = len(file_list)
+
+    for idx, filepath in enumerate(file_list):
+        raw = get_raw_fn(filepath)
+        if raw is None:
+            raise ValueError(f"Could not load frame {idx}: {filepath}")
+
+        if idx == 0:
+            accum += raw
+        else:
+            dx, dy = offsets.get(idx, (0.0, 0.0))
+            warped = warp_image(raw, -dx, -dy)
+            accum += warped
+
+        if progress_callback is not None:
+            progress_callback(idx + 1, n_frames)
+
+    return accum
