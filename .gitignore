@@ -7,3 +7,4 @@ IntDen_histogram.png
 .agents
 __pycache__
 .pytest_cache
+.DS_Store
