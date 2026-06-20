@@ -326,3 +326,76 @@ def compute_line_based_offset(ref_raw: np.ndarray, target_raw: np.ndarray,
     dy = perp_offset * perp[1] + parallel_offset * ref_direction[1]
     
     return float(dx), float(dy)
+
+def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray) -> tuple[float, float]:
+    """
+    Calculate the translation vector (dx, dy) using a 2-stage Iterative ECC Maximization.
+    
+    Mathematics & Physics Context:
+    Uses a robust coarse-to-fine approach.
+    1. Coarse Pass: A heavy Gaussian blur (sigma=5.0) is applied to ignore high-frequency Poisson noise 
+       and establish a rough alignment.
+    2. Fine Pass: A light Gaussian blur (sigma=1.0) is applied, and the transformation matrix from the 
+       coarse pass is used as the starting seed to dial in exact sub-pixel precision.
+    
+    Args:
+        ref_img: 2D float32 reference frame.
+        target_img: 2D float32 target frame.
+        
+    Returns:
+        tuple[float, float]: Sub-pixel translation vector (dx, dy).
+    """
+    if ref_img.shape != target_img.shape or ref_img.ndim != 2 or target_img.ndim != 2:
+        return (0.0, 0.0)
+    
+    if np.std(ref_img) < 1e-5 or np.std(target_img) < 1e-5:
+        return (0.0, 0.0)
+        
+    try:
+        max_iter = 50
+        epsilon = 1e-4
+        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, int(max_iter), float(epsilon))
+        
+        # --- PASS 1: Coarse (sigma=5.0) ---
+        sigma_coarse = 5.0
+        ksize_coarse = max(3, int(sigma_coarse * 3) | 1)
+        r_blur_c = cv2.GaussianBlur(ref_img, (ksize_coarse, ksize_coarse), sigma_coarse)
+        t_blur_c = cv2.GaussianBlur(target_img, (ksize_coarse, ksize_coarse), sigma_coarse)
+        
+        warp_matrix_coarse = np.eye(2, 3, dtype=np.float32)
+        _, warp_matrix_coarse = cv2.findTransformECC(
+            r_blur_c.astype(np.float32), 
+            t_blur_c.astype(np.float32), 
+            warp_matrix_coarse, 
+            cv2.MOTION_TRANSLATION, 
+            criteria,
+            None,
+            5
+        )
+        
+        # --- PASS 2: Fine (sigma=1.0) ---
+        sigma_fine = 1.0
+        ksize_fine = max(3, int(sigma_fine * 3) | 1)
+        r_blur_f = cv2.GaussianBlur(ref_img, (ksize_fine, ksize_fine), sigma_fine)
+        t_blur_f = cv2.GaussianBlur(target_img, (ksize_fine, ksize_fine), sigma_fine)
+        
+        warp_matrix_fine = warp_matrix_coarse.copy()
+        _, warp_matrix_fine = cv2.findTransformECC(
+            r_blur_f.astype(np.float32), 
+            t_blur_f.astype(np.float32), 
+            warp_matrix_fine, 
+            cv2.MOTION_TRANSLATION, 
+            criteria,
+            None,
+            5
+        )
+        
+        dx = warp_matrix_fine[0, 2]
+        dy = warp_matrix_fine[1, 2]
+        
+        if np.isnan(dx) or np.isnan(dy):
+            return (0.0, 0.0)
+            
+        return float(dx), float(dy)
+    except Exception:
+        return (0.0, 0.0)

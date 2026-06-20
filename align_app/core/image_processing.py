@@ -39,7 +39,7 @@ def warp_image(image_data: np.ndarray, dx: float, dy: float) -> np.ndarray:
         image_data,
         M,
         (w, h),
-        flags=cv2.INTER_LINEAR,
+        flags=cv2.INTER_NEAREST,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=0
     )

@@ -12,7 +12,8 @@ from align_app.core import (
     find_peak_line,
     find_peak_line_fast,
     compute_line_based_offset,
-    phase_correlation_offset
+    phase_correlation_offset,
+    ecc_maximization_offset
 )
 
 class SlideshowManager:
@@ -42,6 +43,7 @@ class SlideshowManager:
         self.result_queue = result_queue
         self.file_list = []
         self.current_idx = 0
+        self.active_engine = "PCA"
         self.pca_threshold = 99.9
         self.colormap = "viridis"
         self.warp_enabled = True
@@ -229,29 +231,39 @@ class SlideshowManager:
             delta = manual_centroid - self.global_ref_origin
             return float(delta[0]), float(delta[1])
 
-        cache_key = (filepath, frame_idx)
+        if self.active_engine == "PCA":
+            target_threshold = self.per_frame_threshold.get(frame_idx, self.ref_threshold)
+            cache_key = (filepath, frame_idx, "PCA", self.ref_threshold, target_threshold)
+        else:
+            cache_key = (filepath, frame_idx, "ECC")
+
         if cache_key in self.offset_cache:
             return self.offset_cache[cache_key]
 
         raw = self.get_raw(filepath)
-        if raw is None or self.ref_raw is None or self.global_ref_direction is None:
+        if raw is None or self.ref_raw is None:
             return (0.0, 0.0)
 
-        target_threshold = self.per_frame_threshold.get(frame_idx, self.ref_threshold)
-        try:
-            dx, dy = compute_line_based_offset(
-                self.ref_raw, raw,
-                self.global_ref_direction, self.global_ref_origin,
-                self.ref_threshold, target_threshold
-            )
-            self.offset_cache[cache_key] = (dx, dy)
-            return (dx, dy)
-        except Exception:
-            try:
-                dx, dy = phase_correlation_offset(self.ref_raw, raw)
-                return (dx, dy)
-            except Exception:
+        if self.active_engine == "PCA":
+            if self.global_ref_direction is None:
                 return (0.0, 0.0)
+            target_threshold = self.per_frame_threshold.get(frame_idx, self.ref_threshold)
+            try:
+                dx, dy = compute_line_based_offset(
+                    self.ref_raw, raw,
+                    self.global_ref_direction, self.global_ref_origin,
+                    self.ref_threshold, target_threshold
+                )
+            except Exception:
+                try:
+                    dx, dy = phase_correlation_offset(self.ref_raw, raw)
+                except Exception:
+                    dx, dy = 0.0, 0.0
+        else:
+            dx, dy = ecc_maximization_offset(self.ref_raw, raw)
+            
+        self.offset_cache[cache_key] = (dx, dy)
+        return (dx, dy)
 
     def get_current_threshold(self) -> float:
         """Gets the PCA threshold percentage currently active for the active frame.
@@ -261,6 +273,13 @@ class SlideshowManager:
         """
         return self.per_frame_threshold.get(self.current_idx, self.ref_threshold)
 
+    def _invalidate_offset_cache(self, frame_idx: int):
+        if frame_idx < len(self.file_list):
+            filepath = self.file_list[frame_idx]
+            keys_to_remove = [k for k in self.offset_cache.keys() if isinstance(k, tuple) and len(k) >= 2 and k[0] == filepath and k[1] == frame_idx]
+            for k in keys_to_remove:
+                self.offset_cache.pop(k, None)
+
     def set_current_threshold(self, val: float):
         """Sets a custom PCA threshold for the current frame and invalidates relevant caches.
 
@@ -268,9 +287,7 @@ class SlideshowManager:
             val (float): The new threshold percentage.
         """
         self.per_frame_threshold[self.current_idx] = val
-        if self.current_idx < len(self.file_list):
-            filepath = self.file_list[self.current_idx]
-            self.offset_cache.pop((filepath, self.current_idx), None)
+        self._invalidate_offset_cache(self.current_idx)
         self.per_frame_origin.pop(self.current_idx, None)
 
     def apply_pca_change(self):
@@ -401,9 +418,7 @@ class SlideshowManager:
             self.per_frame_manual_dir[0] = direction
             self.offset_cache.clear()
             
-        if self.current_idx < len(self.file_list):
-            filepath = self.file_list[self.current_idx]
-            self.offset_cache.pop((filepath, self.current_idx), None)
+        self._invalidate_offset_cache(self.current_idx)
         return True
 
     def clear_manual_line(self):
@@ -412,9 +427,8 @@ class SlideshowManager:
         self.per_frame_manual_dir.pop(self.current_idx, None)
         if self.current_idx == 0:
             self.offset_cache.clear()
-        elif self.current_idx < len(self.file_list):
-            filepath = self.file_list[self.current_idx]
-            self.offset_cache.pop((filepath, self.current_idx), None)
+        else:
+            self._invalidate_offset_cache(self.current_idx)
 
     def run_auto_snap(self, on_complete):
         """Asynchronously searches for the optimal PCA threshold for the current frame.

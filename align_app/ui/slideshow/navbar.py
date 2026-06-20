@@ -45,12 +45,6 @@ class SlideshowNavBar(customtkinter.CTkFrame):
         )
         self.autoplay_button.pack(side="left", padx=5)
 
-        self.show_line_switch = customtkinter.CTkSwitch(
-            self, text="Show Ref Line", command=self.controller._render_display
-        )
-        self.show_line_switch.select()
-        self.show_line_switch.pack(side="right", padx=5)
-
         self.warp_switch = customtkinter.CTkSwitch(
             self, text="Warp Image", command=self.controller.toggle_warp
         )
@@ -64,3 +58,11 @@ class SlideshowNavBar(customtkinter.CTkFrame):
         )
         self.colormap_menu.set("viridis")
         self.colormap_menu.pack(side="right", padx=5)
+
+        self.engine_menu = customtkinter.CTkOptionMenu(
+            self,
+            values=["PCA", "ECC"],
+            command=self.controller.change_engine
+        )
+        self.engine_menu.set("PCA")
+        self.engine_menu.pack(side="right", padx=5)

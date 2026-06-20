@@ -261,11 +261,23 @@ class SlideshowView(customtkinter.CTkFrame):
         self._sync_slider_to_frame()
         self.load_and_render()
 
+    def change_engine(self, choice):
+        self.manager.active_engine = choice
+        self.control_panel.switch_engine(choice)
+        self.canvas_panel.clear_photo_cache()
+        self.load_and_render()
+
     def trigger_auto_snap(self):
         """Triggers the auto-snap operation to find the best threshold for the current frame."""
-        self.control_panel.auto_snap_button.configure(text="...", state="disabled")
+        if self.manager.active_engine == "ECC":
+            self.manager._invalidate_offset_cache(self.manager.current_idx)
+            self.canvas_panel.clear_photo_cache()
+            self.load_and_render()
+            return
+
+        self.control_panel.active_engine_panel.auto_snap_button.configure(text="...", state="disabled")
         def on_complete(best_t):
-            self.control_panel.auto_snap_button.configure(text="Auto", state="normal")
+            self.control_panel.active_engine_panel.auto_snap_button.configure(text="Auto", state="normal")
             self.manager.set_current_threshold(best_t)
             self.canvas_panel.clear_photo_cache()
             self._sync_slider_to_frame()
@@ -275,15 +287,28 @@ class SlideshowView(customtkinter.CTkFrame):
     def trigger_auto_snap_all(self):
         """Triggers the auto-snap operation for all loaded frames asynchronously."""
         n_frames = len(self.manager.file_list)
-        self.control_panel.auto_all_button.configure(text=f"0/{n_frames}...", state="disabled")
-        self.control_panel.auto_snap_button.configure(state="disabled")
+        
+        if self.manager.active_engine == "ECC":
+            self.control_panel.active_engine_panel.precompute_button.configure(text=f"0/{n_frames}...", state="disabled")
+            def _worker():
+                for idx in range(n_frames):
+                    self.manager.get_offset(idx)
+                    self.after(0, lambda current=idx+1, total=n_frames: self.control_panel.active_engine_panel.precompute_button.configure(text=f"{current}/{total}..."))
+                self.after(0, lambda: self.control_panel.active_engine_panel.precompute_button.configure(text="Precompute All", state="normal"))
+                self.after(0, self.load_and_render)
+            import threading
+            threading.Thread(target=_worker, daemon=True).start()
+            return
+
+        self.control_panel.active_engine_panel.auto_all_button.configure(text=f"0/{n_frames}...", state="disabled")
+        self.control_panel.active_engine_panel.auto_snap_button.configure(state="disabled")
 
         def on_progress(current, total):
-            self.control_panel.auto_all_button.configure(text=f"{current}/{total}...")
+            self.control_panel.active_engine_panel.auto_all_button.configure(text=f"{current}/{total}...")
 
         def on_complete(results):
-            self.control_panel.auto_all_button.configure(text="Auto All", state="normal")
-            self.control_panel.auto_snap_button.configure(state="normal")
+            self.control_panel.active_engine_panel.auto_all_button.configure(text="Auto All", state="normal")
+            self.control_panel.active_engine_panel.auto_snap_button.configure(state="normal")
             for idx, val in results.items():
                 self.manager.per_frame_threshold[idx] = val
             if 0 in self.manager.per_frame_threshold:
@@ -541,10 +566,9 @@ class SlideshowView(customtkinter.CTkFrame):
         """
         widgets = [
             self.navbar.back_button, self.navbar.prev_button, self.navbar.next_button, self.navbar.autoplay_button,
-            self.control_panel.pca_slider, self.control_panel.pca_entry, self.control_panel.auto_snap_button, self.control_panel.auto_all_button,
-            self.control_panel.frame_slider, self.tools_panel.manual_line_button, self.tools_panel.clear_manual_button,
+            self.tools_panel.manual_line_button, self.tools_panel.clear_manual_button,
             self.tools_panel.zoom_in_button, self.tools_panel.zoom_out_button, self.tools_panel.reset_view_button,
-            self.navbar.colormap_menu, self.navbar.warp_switch, self.navbar.show_line_switch,
+            self.navbar.colormap_menu, self.navbar.warp_switch,
             self.export_panel.export_button
         ]
         for w in widgets:
@@ -552,6 +576,7 @@ class SlideshowView(customtkinter.CTkFrame):
                 w.configure(state=state)
             except Exception:
                 pass
+        self.control_panel.set_ui_state(state)
 
     def back_to_sorting(self):
         """Handles the user request to navigate back to the sorting view."""
@@ -638,27 +663,27 @@ class SlideshowView(customtkinter.CTkFrame):
 
     @property
     def show_line_switch(self):
-        return self.navbar.show_line_switch
+        return self.control_panel.pca_panel.show_line_switch
 
     @property
     def pca_slider(self):
-        return self.control_panel.pca_slider
+        return self.control_panel.pca_panel.pca_slider
 
     @property
     def pca_label(self):
-        return self.control_panel.pca_label
+        return self.control_panel.pca_panel.pca_label
 
     @property
     def pca_entry(self):
-        return self.control_panel.pca_entry
+        return self.control_panel.pca_panel.pca_entry
 
     @property
     def auto_snap_button(self):
-        return self.control_panel.auto_snap_button
+        return self.control_panel.active_engine_panel.auto_snap_button
 
     @property
     def auto_all_button(self):
-        return self.control_panel.auto_all_button
+        return self.control_panel.active_engine_panel.auto_all_button
 
     @property
     def frame_slider(self):
@@ -888,5 +913,5 @@ class SlideshowView(customtkinter.CTkFrame):
 
     def change_pca_threshold(self, val):
         self.manager.pca_threshold = val
-        self.control_panel.pca_slider.set(val)
+        self.control_panel.pca_panel.pca_slider.set(val)
         return self._apply_pca_change()

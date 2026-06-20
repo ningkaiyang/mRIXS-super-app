@@ -18,6 +18,7 @@ from .alignment import (
     find_peak_line_fast,
     phase_correlation_offset,
     compute_line_based_offset,
+    ecc_maximization_offset,
 )
 from .image_processing import (
     warp_image,
@@ -39,4 +40,5 @@ __all__ = [
     "preprocess_image",
     "apply_colormap",
     "generate_aligned_sum",
+    "ecc_maximization_offset",
 ]
