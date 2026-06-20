@@ -16,6 +16,14 @@ class SlideshowClampingPanel(customtkinter.CTkFrame):
       delay (80ms) to ensure smooth GUI responsiveness.
     """
     def __init__(self, parent, controller, **kwargs):
+        """
+        Initialize the SlideshowClampingPanel.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic and state.
+            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+        """
         super().__init__(parent, **kwargs)
         self.controller = controller
 
@@ -36,9 +44,23 @@ class SlideshowClampingPanel(customtkinter.CTkFrame):
         self.ceiling_entry.bind("<Return>", self._on_ceiling_submit)
 
     def setup_clamping_limits(self, intensity_min, intensity_max):
+        """
+        Configure the absolute minimum and maximum values for the clamping slider.
+
+        Args:
+            intensity_min (float): The minimum valid intensity value.
+            intensity_max (float): The maximum valid intensity value.
+        """
         self.range_slider.configure_range(intensity_min, intensity_max)
 
     def sync_clamping_inputs(self, floor, ceiling):
+        """
+        Synchronize the slider and text entry values with the current clamping levels.
+
+        Args:
+            floor (float): The current minimum intensity threshold.
+            ceiling (float): The current maximum intensity threshold.
+        """
         self.floor_entry.delete(0, "end")
         self.floor_entry.insert(0, f"{floor:.4f}")
         self.ceiling_entry.delete(0, "end")
@@ -46,7 +68,19 @@ class SlideshowClampingPanel(customtkinter.CTkFrame):
         self.range_slider.set_values(floor, ceiling)
 
     def _on_floor_submit(self, event=None):
+        """
+        Handle submission of the floor intensity entry field.
+
+        Args:
+            event (tk.Event, optional): The return key press event. Defaults to None.
+        """
         self.controller.handle_floor_entry_submit(self.floor_entry.get())
 
     def _on_ceiling_submit(self, event=None):
+        """
+        Handle submission of the ceiling intensity entry field.
+
+        Args:
+            event (tk.Event, optional): The return key press event. Defaults to None.
+        """
         self.controller.handle_ceiling_entry_submit(self.ceiling_entry.get())

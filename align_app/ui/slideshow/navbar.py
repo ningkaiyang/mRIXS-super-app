@@ -13,6 +13,14 @@ class SlideshowNavBar(customtkinter.CTkFrame):
       - Provides toggle switches to show/hide the reference line overlay and enable/disable real-time warping.
     """
     def __init__(self, parent, controller, **kwargs):
+        """
+        Initialize the SlideshowNavBar.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic and state.
+            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+        """
         super().__init__(parent, **kwargs)
         self.controller = controller
 

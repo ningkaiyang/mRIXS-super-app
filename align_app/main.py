@@ -7,7 +7,22 @@ customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
 
 class AlignApp(customtkinter.CTk):
+    """
+    Main application class for the Spectroscopy Image Alignment GUI.
+
+    This class manages the main window, acts as a container for the different
+    views (SortingView and SlideshowView), and handles global application state
+    such as keyboard navigation and window maximization.
+    """
     def __init__(self, *args, show_window=True, **kwargs):
+        """
+        Initialize the main application window and its components.
+
+        Args:
+            *args: Variable length argument list passed to the CTk constructor.
+            show_window (bool): Whether to immediately display the window after initialization.
+            **kwargs: Arbitrary keyword arguments passed to the CTk constructor.
+        """
         super().__init__(*args, **kwargs)
         self.withdraw()  # Hide window initially to prevent flickering
         self.title("Spectroscopy Image Alignment GUI")
@@ -46,6 +61,15 @@ class AlignApp(customtkinter.CTk):
             self.deiconify()
 
     def _on_left_key(self, event):
+        """
+        Handle the global left arrow key press event.
+
+        If the slideshow view is active and the event didn't originate from a
+        slider widget, this method navigates to the previous frame.
+
+        Args:
+            event: The Tkinter event object containing event details.
+        """
         # Ignore if the event is targeting a slider widget (sliders use arrows for value adjustment)
         widget_class = event.widget.winfo_class()
         if widget_class in ("Scale", "TScale"):
@@ -63,6 +87,15 @@ class AlignApp(customtkinter.CTk):
             self.slideshow_view.prev_frame()
 
     def _on_right_key(self, event):
+        """
+        Handle the global right arrow key press event.
+
+        If the slideshow view is active and the event didn't originate from a
+        slider widget, this method navigates to the next frame.
+
+        Args:
+            event: The Tkinter event object containing event details.
+        """
         widget_class = event.widget.winfo_class()
         if widget_class in ("Scale", "TScale"):
             return
@@ -78,16 +111,33 @@ class AlignApp(customtkinter.CTk):
             self.slideshow_view.next_frame()
 
     def show_sorting(self):
+        """
+        Display the file sorting view and hide the slideshow view.
+
+        This method also triggers an update of the file listbox in the sorting view.
+        """
         self.slideshow_view.grid_remove()
         self.sorting_view.grid()
         self.sorting_view.update_listbox()
 
     def show_slideshow(self, file_list):
+        """
+        Display the slideshow view and start the slideshow with the provided files.
+
+        Args:
+            file_list (list of str): A list of file paths to be displayed in the slideshow.
+        """
         self.sorting_view.grid_remove()
         self.slideshow_view.grid()
         self.slideshow_view.start(file_list)
 
     def maximize_window(self):
+        """
+        Maximize the application window based on the current operating system.
+
+        Attempts to use the appropriate window state command for Windows, Linux,
+        or macOS. Falls back to manual geometry calculation if maximization fails.
+        """
         os_name = platform.system()
         try:
             if os_name == "Windows":
@@ -103,6 +153,11 @@ class AlignApp(customtkinter.CTk):
             self.apply_geometry_fallback()
 
     def apply_geometry_fallback(self):
+        """
+        Apply a manual window size based on the screen dimensions and UI scaling.
+
+        Used as a fallback when native window maximization is not supported or fails.
+        """
         scale = customtkinter.ScalingTracker.get_window_scaling(self)
         scaled_w = int(self.winfo_screenwidth() / scale)
         scaled_h = int(self.winfo_screenheight() / scale)

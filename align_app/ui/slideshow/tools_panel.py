@@ -13,6 +13,14 @@ class SlideshowToolsPanel(customtkinter.CTkFrame):
       - Displays real-time frame details (e.g., custom thresholds or manual override notifications).
     """
     def __init__(self, parent, controller, **kwargs):
+        """
+        Initialize the SlideshowToolsPanel.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic and state.
+            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+        """
         super().__init__(parent, **kwargs)
         self.controller = controller
 
@@ -56,4 +64,10 @@ class SlideshowToolsPanel(customtkinter.CTkFrame):
         self.frame_info_label.pack(side="right", padx=10)
 
     def sync_zoom_label(self, factor):
+        """
+        Update the displayed zoom multiplier text on the interface.
+
+        Args:
+            factor (float or int): The zoom factor to display (e.g., 2 for 2x zoom).
+        """
         self.zoom_label.configure(text=f"Zoom: {factor}×")

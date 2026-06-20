@@ -34,6 +34,11 @@ class SlideshowManager:
         to minimize line fit perpendicular spread for automated snapping.
     """
     def __init__(self, result_queue: queue.Queue):
+        """Initializes the SlideshowManager state and configurations.
+
+        Args:
+            result_queue (queue.Queue): Thread-safe queue used to dispatch callbacks to the main GUI thread.
+        """
         self.result_queue = result_queue
         self.file_list = []
         self.current_idx = 0
@@ -82,6 +87,14 @@ class SlideshowManager:
         self.manual_clicks = []
 
     def start(self, file_list: list[str]):
+        """Starts a new slideshow session with the provided list of files.
+
+        Resets caching, zooming, and state tracking, then loads the first image 
+        as the reference and spawns a background thread to preload remaining images.
+
+        Args:
+            file_list (list[str]): List of absolute file paths to the TIFF images.
+        """
         self.file_list = file_list
         self.current_idx = 0
         self.ref_raw = None
@@ -104,6 +117,11 @@ class SlideshowManager:
         self._preload_all_in_background()
 
     def _load_reference(self):
+        """Loads and processes the first frame as the global reference frame.
+
+        Initializes intensity bounds, clamping limits, and computes the 
+        origin/direction peak line vectors for the reference image.
+        """
         if not self.file_list:
             return
         ref_raw = self.get_raw(self.file_list[0])
@@ -114,15 +132,29 @@ class SlideshowManager:
         if ref_raw.size > 0:
             self.intensity_min = float(np.min(ref_raw))
             self.intensity_max = float(np.max(ref_raw))
+            
+            # Compute 95th percentile strictly on active (non-background) pixels
+            active_pixels = ref_raw[ref_raw > self.intensity_min]
+            if active_pixels.size > 0:
+                p95 = float(np.percentile(active_pixels, 95.0))
+            else:
+                p95 = self.intensity_max
+            
+            # Final fallback: if still invalid or flat, default to maximum
+            if p95 <= self.intensity_min:
+                self.clamping_ceiling = self.intensity_max
+            else:
+                self.clamping_ceiling = p95
         else:
             self.intensity_min = 0.0
             self.intensity_max = 1.0
+            self.clamping_ceiling = 1.0
 
         if self.intensity_max <= self.intensity_min:
             self.intensity_max = self.intensity_min + 1.0
+            self.clamping_ceiling = self.intensity_max
 
         self.clamping_floor = self.intensity_min
-        self.clamping_ceiling = self.intensity_max
 
         t = self.per_frame_threshold.get(0, self.pca_threshold)
         self.ref_threshold = t
@@ -130,12 +162,21 @@ class SlideshowManager:
         self.per_frame_origin[0] = self.ref_origin.copy()
 
     def _preload_all_in_background(self):
+        """Spawns a daemon thread to asynchronously load all raw image files into cache."""
         def _worker():
             for path in self.file_list:
                 self.get_raw(path)
         threading.Thread(target=_worker, daemon=True).start()
 
     def get_raw(self, filepath: str) -> np.ndarray:
+        """Retrieves the raw float32 image array for the given file, utilizing cache if available.
+
+        Args:
+            filepath (str): The absolute path to the image file.
+
+        Returns:
+            np.ndarray: The 2D image array, or None if loading fails.
+        """
         if filepath in self.raw_cache:
             return self.raw_cache[filepath]
         try:
@@ -146,6 +187,15 @@ class SlideshowManager:
             return None
 
     def get_rgb(self, filepath: str, colormap: str) -> np.ndarray:
+        """Retrieves the colormapped RGB image array for the given file.
+
+        Args:
+            filepath (str): The absolute path to the image file.
+            colormap (str): The matplotlib colormap name to apply.
+
+        Returns:
+            np.ndarray: The RGB image array (H, W, 3) mapped within clamping limits, or None if loading fails.
+        """
         cache_key = (filepath, colormap)
         if cache_key in self.rgb_cache:
             return self.rgb_cache[cache_key]
@@ -162,6 +212,14 @@ class SlideshowManager:
             return None
 
     def get_offset(self, frame_idx: int) -> tuple[float, float]:
+        """Calculates the x and y pixel translation offset of a frame relative to the reference frame.
+
+        Args:
+            frame_idx (int): The index of the frame in the file list.
+
+        Returns:
+            tuple[float, float]: A tuple containing the (dx, dy) translation offsets.
+        """
         filepath = self.file_list[frame_idx]
         if frame_idx in self.per_frame_manual:
             manual_centroid = self.per_frame_manual[frame_idx]
@@ -195,9 +253,19 @@ class SlideshowManager:
                 return (0.0, 0.0)
 
     def get_current_threshold(self) -> float:
+        """Gets the PCA threshold percentage currently active for the active frame.
+
+        Returns:
+            float: The active PCA threshold (e.g., 99.9).
+        """
         return self.per_frame_threshold.get(self.current_idx, self.ref_threshold)
 
     def set_current_threshold(self, val: float):
+        """Sets a custom PCA threshold for the current frame and invalidates relevant caches.
+
+        Args:
+            val (float): The new threshold percentage.
+        """
         self.per_frame_threshold[self.current_idx] = val
         if self.current_idx < len(self.file_list):
             filepath = self.file_list[self.current_idx]
@@ -205,6 +273,11 @@ class SlideshowManager:
         self.per_frame_origin.pop(self.current_idx, None)
 
     def apply_pca_change(self):
+        """Applies the globally modified PCA threshold to the current frame.
+
+        If the current frame is the reference frame (index 0), reloads the reference state 
+        and resets all cached offsets and origins.
+        """
         t = self.pca_threshold
         self.set_current_threshold(t)
         if self.current_idx == 0:
@@ -215,12 +288,24 @@ class SlideshowManager:
                 self.per_frame_origin[0] = self.ref_origin.copy()
 
     def zoom_in(self, canvas_w: int, canvas_h: int):
+        """Increases the zoom level and updates panning offsets to center the view.
+
+        Args:
+            canvas_w (int): Current width of the display canvas.
+            canvas_h (int): Current height of the display canvas.
+        """
         if self.zoom_level < len(self.zoom_steps) - 1:
             self.zoom_level += 1
             if self.zoom_level > 0:
                 self.compute_centroid_pan(canvas_w, canvas_h)
 
     def zoom_out(self, canvas_w: int, canvas_h: int):
+        """Decreases the zoom level and updates panning offsets to center the view.
+
+        Args:
+            canvas_w (int): Current width of the display canvas.
+            canvas_h (int): Current height of the display canvas.
+        """
         if self.zoom_level > 0:
             self.zoom_level -= 1
             if self.zoom_level == 0:
@@ -230,11 +315,17 @@ class SlideshowManager:
                 self.compute_centroid_pan(canvas_w, canvas_h)
 
     def reset_view(self):
+        """Resets the zoom level and panning offsets to their default initial state."""
         self.zoom_level = 0
         self.pan_offset_x = 0
         self.pan_offset_y = 0
 
     def get_display_origin(self) -> np.ndarray:
+        """Retrieves the origin pixel coordinates used for centering the display.
+
+        Returns:
+            np.ndarray: The [x, y] coordinates of the peak line origin or manual centroid.
+        """
         if self.current_idx in self.per_frame_manual:
             return self.per_frame_manual[self.current_idx]
         if self.current_idx in self.per_frame_origin:
@@ -242,6 +333,14 @@ class SlideshowManager:
         return self.ref_origin
 
     def compute_centroid_pan(self, canvas_w: int, canvas_h: int, image_w=3840, image_h=2048):
+        """Computes panning offsets required to keep the spectral peak centered on screen.
+
+        Args:
+            canvas_w (int): Width of the display canvas.
+            canvas_h (int): Height of the display canvas.
+            image_w (int, optional): Original image width. Defaults to 3840.
+            image_h (int, optional): Original image height. Defaults to 2048.
+        """
         origin = self.get_display_origin()
         if origin is None or canvas_w <= 1 or canvas_h <= 1:
             return
@@ -257,6 +356,17 @@ class SlideshowManager:
         self.pan_offset_y = int(canvas_h / 2 - cy)
 
     def process_manual_click(self, clicks: list[tuple[int, int]], lb_dx: int, lb_dy: int, lb_scale: float):
+        """Processes two manual user clicks to set a custom reference midpoint for a frame.
+
+        Args:
+            clicks (list[tuple[int, int]]): List of (x, y) canvas click coordinates.
+            lb_dx (int): The horizontal padding/offset of the displayed image on canvas.
+            lb_dy (int): The vertical padding/offset of the displayed image on canvas.
+            lb_scale (float): The current display scale factor of the image on canvas.
+
+        Returns:
+            bool: True if clicks were successfully processed, False otherwise.
+        """
         if len(clicks) < 2:
             return False
         cx1, cy1 = clicks[0]
@@ -278,12 +388,18 @@ class SlideshowManager:
         return True
 
     def clear_manual_line(self):
+        """Clears any manual alignment override applied to the current frame."""
         self.per_frame_manual.pop(self.current_idx, None)
         if self.current_idx < len(self.file_list):
             filepath = self.file_list[self.current_idx]
             self.offset_cache.pop((filepath, self.current_idx), None)
 
     def run_auto_snap(self, on_complete):
+        """Asynchronously searches for the optimal PCA threshold for the current frame.
+
+        Args:
+            on_complete (callable): Callback executed on the main thread with the optimal threshold float.
+        """
         idx = self.current_idx
         if idx >= len(self.file_list):
             return
@@ -297,6 +413,12 @@ class SlideshowManager:
         threading.Thread(target=_worker, daemon=True).start()
 
     def run_auto_snap_all(self, on_progress, on_complete):
+        """Asynchronously searches for the optimal PCA threshold for all frames.
+
+        Args:
+            on_progress (callable): Callback executed on the main thread with current and total frame counts.
+            on_complete (callable): Callback executed on the main thread with a dict of {frame_idx: best_threshold}.
+        """
         n_frames = len(self.file_list)
         def _worker():
             results = {}
@@ -310,6 +432,14 @@ class SlideshowManager:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _find_best_threshold(self, raw: np.ndarray) -> float:
+        """Finds the PCA threshold that minimizes the perpendicular spread of the peak line.
+
+        Args:
+            raw (np.ndarray): The raw 2D intensity array.
+
+        Returns:
+            float: The optimal PCA threshold percentage.
+        """
         h, w = raw.shape
         flat = raw.ravel()
         sorted_idx = np.argsort(flat)
@@ -368,6 +498,14 @@ class SlideshowManager:
         return best_threshold
 
     def compute_all_offsets_for_export(self, progress_callback) -> dict[int, tuple[float, float]]:
+        """Synchronously computes sub-pixel translation offsets for all frames relative to the reference.
+
+        Args:
+            progress_callback (callable): Function to call with current progress updates.
+
+        Returns:
+            dict[int, tuple[float, float]]: Dictionary mapping frame index to (dx, dy) translation vectors.
+        """
         n_frames = len(self.file_list)
         offsets = {0: (0.0, 0.0)}
         for idx in range(1, n_frames):
@@ -376,6 +514,14 @@ class SlideshowManager:
         return offsets
 
     def start_export(self, save_path: str, offsets: dict[int, tuple[float, float]], on_progress, on_complete):
+        """Starts a background thread to generate and save the aligned sum image.
+
+        Args:
+            save_path (str): The absolute file path to save the resulting TIFF.
+            offsets (dict[int, tuple[float, float]]): Dictionary of precomputed frame offsets.
+            on_progress (callable): Callback executed with current frame processing progress.
+            on_complete (callable): Callback executed upon success or failure.
+        """
         first_file = self.file_list[0]
         ref_raw = self.get_raw(first_file)
         if ref_raw is None:

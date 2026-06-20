@@ -4,7 +4,23 @@ import tkinter.filedialog
 from align_app.core import natural_sort
 
 class SortingView(customtkinter.CTkFrame):
+    """
+    A view that allows users to select, organize, and sort files for the slideshow.
+
+    This UI component provides buttons to add files via a file dialog, sort them
+    naturally, reorder them manually (up/down), and remove them. It acts as the
+    entry point before launching the main image analysis slideshow.
+    """
     def __init__(self, parent, on_start_slideshow=None, **kwargs):
+        """
+        Initialize the sorting view and set up the user interface.
+
+        Args:
+            parent: The parent widget that contains this frame.
+            on_start_slideshow (callable, optional): Callback triggered when the
+                start slideshow button is clicked.
+            **kwargs: Additional keyword arguments passed to the CTkFrame constructor.
+        """
         super().__init__(parent, **kwargs)
         self.on_start_slideshow = on_start_slideshow
         self.file_list = []
@@ -137,6 +153,12 @@ class SortingView(customtkinter.CTkFrame):
             body_label.pack(fill="x", padx=15, pady=(0, 5))
 
     def select_files(self):
+        """
+        Open a file dialog to allow the user to select multiple TIFF images.
+
+        The selected files are appended to the current file list and the
+        display is updated.
+        """
         # Allow mock override of file dialog
         files = tkinter.filedialog.askopenfilenames(
             title="Select TIFF files",
@@ -147,14 +169,32 @@ class SortingView(customtkinter.CTkFrame):
             self.update_listbox()
 
     def sort_files(self):
+        """
+        Sort the current list of files using a natural sorting algorithm.
+
+        Natural sorting ensures that numbered files like 'file_2.tif' appear
+        before 'file_10.tif'. Updates the display after sorting.
+        """
         self.file_list = natural_sort(self.file_list)
         self.update_listbox()
 
     def select_item(self, idx):
+        """
+        Highlight and select an item in the file list.
+
+        Args:
+            idx (int): The index of the file to select.
+        """
         self.selected_index = idx
         self.update_listbox()
 
     def move_up(self):
+        """
+        Move the currently selected file one position up in the list.
+
+        Does nothing if the file is already at the top of the list or if
+        no file is selected.
+        """
         idx = self.selected_index
         if 0 < idx < len(self.file_list):
             self.file_list[idx], self.file_list[idx-1] = self.file_list[idx-1], self.file_list[idx]
@@ -162,6 +202,12 @@ class SortingView(customtkinter.CTkFrame):
             self.update_listbox()
 
     def move_down(self):
+        """
+        Move the currently selected file one position down in the list.
+
+        Does nothing if the file is already at the bottom of the list or if
+        no file is selected.
+        """
         idx = self.selected_index
         if 0 <= idx < len(self.file_list) - 1:
             self.file_list[idx], self.file_list[idx+1] = self.file_list[idx+1], self.file_list[idx]
@@ -169,6 +215,12 @@ class SortingView(customtkinter.CTkFrame):
             self.update_listbox()
 
     def remove_file(self):
+        """
+        Remove the currently selected file from the list.
+
+        After removal, the selection is automatically shifted to the nearest
+        available item to maintain a valid selection state.
+        """
         idx = self.selected_index
         if 0 <= idx < len(self.file_list):
             self.file_list.pop(idx)
@@ -179,10 +231,21 @@ class SortingView(customtkinter.CTkFrame):
             self.update_listbox()
 
     def start_slideshow(self):
+        """
+        Trigger the callback to start the slideshow with the current file list.
+
+        Only executes if the file list is not empty and a callback is provided.
+        """
         if self.on_start_slideshow and self.file_list:
             self.on_start_slideshow(self.file_list)
 
     def update_listbox(self):
+        """
+        Refresh the visual list of files displayed in the scrollable frame.
+
+        Clears existing labels, creates new ones for the current file list,
+        and applies highlighting to the selected item.
+        """
         for lbl in self.labels:
             lbl.destroy()
         self.labels.clear()

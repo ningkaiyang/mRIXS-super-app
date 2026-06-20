@@ -19,7 +19,19 @@ from align_app.ui.slideshow import (
 )
 
 class SlideshowView(customtkinter.CTkFrame):
+    """Main view component for the slideshow application.
+    
+    Coordinates the UI panels (NavBar, ControlPanel, ToolsPanel, etc.) and forwards
+    user actions to the SlideshowManager. Observes state changes and re-renders the canvas.
+    """
     def __init__(self, parent, on_back_to_sorting=None, **kwargs):
+        """Initializes the slideshow view and its sub-panels.
+
+        Args:
+            parent: The parent tkinter/customtkinter widget.
+            on_back_to_sorting (callable, optional): Callback invoked when returning to sorting mode.
+            **kwargs: Additional keyword arguments passed to CTkFrame.
+        """
         super().__init__(parent, **kwargs)
         self.on_back_to_sorting = on_back_to_sorting
         
@@ -39,6 +51,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self._poll_queue()
 
     def _build_ui(self):
+        """Constructs and packs all sub-panels within the main view."""
         # 1. Navigation Bar
         self.navbar = SlideshowNavBar(self, controller=self)
         self.navbar.pack(fill="x", pady=5)
@@ -72,6 +85,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self.canvas_panel.pack(fill="both", expand=True, pady=5)
 
     def _poll_queue(self):
+        """Periodically polls the thread-safe queue for callbacks from background threads."""
         try:
             while True:
                 callback = self._result_queue.get_nowait()
@@ -81,6 +95,11 @@ class SlideshowView(customtkinter.CTkFrame):
         self.after(50, self._poll_queue)
 
     def start(self, file_list):
+        """Initializes the view and manager with a new list of files.
+
+        Args:
+            file_list (list[str]): List of absolute file paths to load.
+        """
         self.manager.start(file_list)
 
         # Setup frame slider range
@@ -100,9 +119,19 @@ class SlideshowView(customtkinter.CTkFrame):
         self.load_and_render()
 
     def get_current_clamping(self):
+        """Retrieves the current intensity clamping levels.
+
+        Returns:
+            tuple[float, float]: The current floor and ceiling clamping values.
+        """
         return self.manager.clamping_floor, self.manager.clamping_ceiling
 
     def load_and_render(self):
+        """Synchronizes UI states and renders the current frame to the canvas.
+
+        Fetches active frame data, determines offsets, constructs the image for display,
+        and triggers a redraw operation.
+        """
         if not self.manager.file_list:
             self.canvas_panel.clear()
             self.control_panel.frame_label.configure(text="Frame: 0/0")
@@ -161,6 +190,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self._render_display()
 
     def _render_display(self):
+        """Pushes the cached display image and vectors to the canvas panel."""
         if self.canvas_panel.cached_disp_rgb is None:
             return
         
@@ -175,6 +205,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self.canvas_panel.draw_canvas(self.canvas_panel.cached_disp_rgb, origin, direction)
 
     def _sync_slider_to_frame(self):
+        """Synchronizes threshold and tools panel information to match the current frame state."""
         t = self.manager.get_current_threshold()
         self.control_panel.sync_pca_elements(t)
 
@@ -187,6 +218,11 @@ class SlideshowView(customtkinter.CTkFrame):
 
     # --- Event Handlers & Forwarding Calls ---
     def handle_pca_slider_drag(self, val):
+        """Handles user interaction with the PCA threshold slider.
+
+        Args:
+            val (float): The updated slider value.
+        """
         self.manager.pca_threshold = float(val)
         self.control_panel.sync_pca_label_and_entry(self.manager.pca_threshold)
 
@@ -195,6 +231,11 @@ class SlideshowView(customtkinter.CTkFrame):
         self._pca_debounce_id = self.after(80, self._apply_pca_change)
 
     def handle_pca_entry_submit(self, text_val):
+        """Handles user submission of a manual PCA threshold via the entry box.
+
+        Args:
+            text_val (str): The string value entered by the user.
+        """
         try:
             val = float(text_val)
             val = max(95.0, min(99.9999, val))
@@ -205,11 +246,13 @@ class SlideshowView(customtkinter.CTkFrame):
             pass
 
     def _apply_pca_change(self):
+        """Applies a debounced PCA threshold change and triggers a re-render."""
         self._pca_debounce_id = None
         self.manager.apply_pca_change()
         self.load_and_render()
 
     def trigger_auto_snap(self):
+        """Triggers the auto-snap operation to find the best threshold for the current frame."""
         self.control_panel.auto_snap_button.configure(text="...", state="disabled")
         def on_complete(best_threshold):
             self.control_panel.auto_snap_button.configure(text="Auto", state="normal")
@@ -219,6 +262,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self.manager.run_auto_snap(on_complete)
 
     def trigger_auto_snap_all(self):
+        """Triggers the auto-snap operation for all loaded frames asynchronously."""
         n_frames = len(self.manager.file_list)
         self.control_panel.auto_all_button.configure(text=f"0/{n_frames}...", state="disabled")
         self.control_panel.auto_snap_button.configure(state="disabled")
@@ -242,6 +286,11 @@ class SlideshowView(customtkinter.CTkFrame):
         self.manager.run_auto_snap_all(on_progress, on_complete)
 
     def handle_frame_slider_move(self, val):
+        """Handles user interaction with the frame timeline slider.
+
+        Args:
+            val (float): The selected frame index.
+        """
         idx = int(float(val))
         if 0 <= idx < len(self.manager.file_list) and idx != self.manager.current_idx:
             self.manager.current_idx = idx
@@ -250,33 +299,39 @@ class SlideshowView(customtkinter.CTkFrame):
             self._frame_debounce_id = self.after(50, self._apply_frame_change)
 
     def _apply_frame_change(self):
+        """Applies a debounced frame change and triggers a re-render."""
         self._frame_debounce_id = None
         self.load_and_render()
 
     def prev_frame(self):
+        """Navigates to the previous frame, if available."""
         if self.manager.current_idx > 0:
             self.manager.current_idx -= 1
             self.control_panel.frame_slider.set(self.manager.current_idx)
             self.load_and_render()
 
     def next_frame(self):
+        """Navigates to the next frame, if available."""
         if self.manager.current_idx < len(self.manager.file_list) - 1:
             self.manager.current_idx += 1
             self.control_panel.frame_slider.set(self.manager.current_idx)
             self.load_and_render()
 
     def toggle_autoplay(self):
+        """Toggles the autoplay state between active and paused."""
         if self.manager.autoplay_active:
             self.stop_autoplay()
         else:
             self.start_autoplay()
 
     def start_autoplay(self):
+        """Starts the automatic playback of frames."""
         self.manager.autoplay_active = True
         self.navbar.autoplay_button.configure(text="⏸ Pause", fg_color="#cc5500")
         self._autoplay_tick()
 
     def stop_autoplay(self):
+        """Stops the automatic playback of frames."""
         self.manager.autoplay_active = False
         self.navbar.autoplay_button.configure(text="▶ Play", fg_color="#2FA572")
         if self._autoplay_job is not None:
@@ -284,6 +339,7 @@ class SlideshowView(customtkinter.CTkFrame):
             self._autoplay_job = None
 
     def _autoplay_tick(self):
+        """Executes a single step of the autoplay loop and schedules the next tick."""
         if not self.manager.autoplay_active:
             return
         if self.manager.current_idx < len(self.manager.file_list) - 1:
@@ -295,16 +351,23 @@ class SlideshowView(customtkinter.CTkFrame):
         self._autoplay_job = self.after(self.manager.autoplay_speed_ms, self._autoplay_tick)
 
     def change_colormap(self, val):
+        """Updates the active colormap and re-renders the display.
+
+        Args:
+            val (str): The new colormap name.
+        """
         self.manager.colormap = val
         self.canvas_panel.clear_photo_cache()
         self.load_and_render()
 
     def toggle_warp(self):
+        """Toggles the dynamic alignment warping functionality."""
         self.manager.warp_enabled = bool(self.navbar.warp_switch.get())
         self.canvas_panel.clear_photo_cache()
         self.load_and_render()
 
     def toggle_manual_mode(self):
+        """Toggles the manual 2-point line alignment mode."""
         self.manager.manual_mode = not self.manager.manual_mode
         if self.manager.manual_mode:
             self.tools_panel.manual_line_button.configure(fg_color="#cc5500", text="✏ Click 2 pts...")
@@ -315,12 +378,18 @@ class SlideshowView(customtkinter.CTkFrame):
             self.canvas_panel.configure(cursor="")
 
     def clear_manual_line(self):
+        """Clears any user-defined manual alignment for the current frame."""
         self.manager.clear_manual_line()
         if self.manager.manual_mode:
             self.toggle_manual_mode()
         self.load_and_render()
 
     def handle_canvas_click(self, event):
+        """Processes mouse click events on the canvas during manual mode.
+
+        Args:
+            event: The Tkinter mouse event object.
+        """
         if not self.manager.manual_mode:
             return
         self.manager.manual_clicks.append((event.x, event.y))
@@ -338,6 +407,7 @@ class SlideshowView(customtkinter.CTkFrame):
             self.load_and_render()
 
     def zoom_in(self):
+        """Increases the canvas zoom level."""
         cw = self.canvas_panel.winfo_width()
         ch = self.canvas_panel.winfo_height()
         self.manager.zoom_in(cw, ch)
@@ -345,6 +415,7 @@ class SlideshowView(customtkinter.CTkFrame):
         self._render_display()
 
     def zoom_out(self):
+        """Decreases the canvas zoom level."""
         cw = self.canvas_panel.winfo_width()
         ch = self.canvas_panel.winfo_height()
         self.manager.zoom_out(cw, ch)
@@ -352,11 +423,18 @@ class SlideshowView(customtkinter.CTkFrame):
         self._render_display()
 
     def reset_view(self):
+        """Resets the canvas view to its default unzoomed state."""
         self.manager.reset_view()
         self.tools_panel.sync_zoom_label(1)
         self._render_display()
 
     def handle_clamping_change(self, floor, ceiling):
+        """Handles changes made to the display clamping levels.
+
+        Args:
+            floor (float): The new lower clamp bound.
+            ceiling (float): The new upper clamp bound.
+        """
         self.manager.clamping_floor = floor
         self.manager.clamping_ceiling = ceiling
         self.clamping_panel.sync_clamping_inputs(floor, ceiling)
@@ -366,12 +444,18 @@ class SlideshowView(customtkinter.CTkFrame):
         self._clamping_debounce_id = self.after(80, self._apply_clamping_change)
 
     def _apply_clamping_change(self):
+        """Applies debounced clamping changes and clears relevant image caches."""
         self._clamping_debounce_id = None
         self.manager.rgb_cache.clear()
         self.canvas_panel.clear_photo_cache()
         self.load_and_render()
 
     def handle_floor_entry_submit(self, val_str):
+        """Handles user submission of a new floor clamping limit via entry box.
+
+        Args:
+            val_str (str): The text entered by the user.
+        """
         try:
             val = float(val_str)
             val = max(self.manager.intensity_min, min(self.manager.clamping_ceiling - 1e-4, val))
@@ -383,6 +467,11 @@ class SlideshowView(customtkinter.CTkFrame):
             self.clamping_panel.floor_entry.insert(0, f"{self.manager.clamping_floor:.4f}")
 
     def handle_ceiling_entry_submit(self, val_str):
+        """Handles user submission of a new ceiling clamping limit via entry box.
+
+        Args:
+            val_str (str): The text entered by the user.
+        """
         try:
             val = float(val_str)
             val = max(self.manager.clamping_floor + 1e-4, min(self.manager.intensity_max, val))
@@ -394,6 +483,7 @@ class SlideshowView(customtkinter.CTkFrame):
             self.clamping_panel.ceiling_entry.insert(0, f"{self.manager.clamping_ceiling:.4f}")
 
     def trigger_export(self):
+        """Initiates the process to compute final offsets and export the aligned sum."""
         self.stop_autoplay()
         self.export_panel.progress_label.configure(text="Computing offsets...")
         self.update_idletasks()
@@ -432,6 +522,11 @@ class SlideshowView(customtkinter.CTkFrame):
         self.manager.start_export(save_path, offsets, on_progress, on_complete)
 
     def _set_export_ui_state(self, state):
+        """Sets the active state of UI elements during an export operation.
+
+        Args:
+            state (str): 'normal' or 'disabled'.
+        """
         widgets = [
             self.navbar.back_button, self.navbar.prev_button, self.navbar.next_button, self.navbar.autoplay_button,
             self.control_panel.pca_slider, self.control_panel.pca_entry, self.control_panel.auto_snap_button, self.control_panel.auto_all_button,
@@ -447,6 +542,7 @@ class SlideshowView(customtkinter.CTkFrame):
                 pass
 
     def back_to_sorting(self):
+        """Handles the user request to navigate back to the sorting view."""
         self.stop_autoplay()
         if self.on_back_to_sorting:
             self.on_back_to_sorting()

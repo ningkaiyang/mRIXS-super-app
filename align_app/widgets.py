@@ -2,7 +2,25 @@ import tkinter as tk
 import customtkinter
 
 class RangeSlider(tk.Canvas):
+    """
+    A custom dual-handle range slider widget built on a Tkinter Canvas.
+
+    This widget allows the user to select a range defined by a minimum and
+    maximum value. It supports clicking and dragging the handles to adjust
+    the selected range.
+    """
     def __init__(self, parent, width=300, height=25, command=None, **kwargs):
+        """
+        Initialize the range slider widget.
+
+        Args:
+            parent: The parent widget.
+            width (int): The width of the canvas in pixels. Default is 300.
+            height (int): The height of the canvas in pixels. Default is 25.
+            command (callable, optional): A callback function executed when the
+                slider values change. Receives the left and right values.
+            **kwargs: Additional keyword arguments passed to the tk.Canvas constructor.
+        """
         # Determine background dynamically to match parent CTkFrame
         bg = "#2B2B2B"
         if hasattr(parent, "cget"):
@@ -43,6 +61,13 @@ class RangeSlider(tk.Canvas):
         self.bind("<Motion>", self._on_mouse_move)
         
     def configure_range(self, min_val, max_val):
+        """
+        Set the absolute minimum and maximum boundaries for the slider.
+
+        Args:
+            min_val (float): The lower bound of the slider.
+            max_val (float): The upper bound of the slider.
+        """
         self.min_val = float(min_val)
         self.max_val = float(max_val)
         if self.max_val <= self.min_val:
@@ -55,6 +80,15 @@ class RangeSlider(tk.Canvas):
         self._draw()
 
     def set_values(self, val_left, val_right):
+        """
+        Set the current left and right handle values.
+
+        The values are clamped to the configured minimum and maximum bounds.
+
+        Args:
+            val_left (float): The value for the left handle.
+            val_right (float): The value for the right handle.
+        """
         self.val_left = max(self.min_val, min(self.max_val, float(val_left)))
         self.val_right = max(self.min_val, min(self.max_val, float(val_right)))
         if self.val_right < self.val_left:
@@ -62,6 +96,13 @@ class RangeSlider(tk.Canvas):
         self._draw()
 
     def _get_coords(self):
+        """
+        Calculate and retrieve the current drawing coordinates for the slider.
+
+        Returns:
+            tuple: A tuple containing (x_min, x_max, y_center, x_left, x_right)
+                representing the pixel coordinates of the slider bounds and handles.
+        """
         w = self.winfo_width()
         h = self.winfo_height()
         if w <= 1: w = 300
@@ -77,6 +118,11 @@ class RangeSlider(tk.Canvas):
         return x_min, x_max, y_center, x_left, x_right
 
     def _draw(self):
+        """
+        Redraw the slider track, active range, and handles on the canvas.
+
+        This is called whenever the values change or the widget is resized.
+        """
         self.delete("all")
         x_min, x_max, y_center, x_left, x_right = self._get_coords()
         
@@ -108,9 +154,21 @@ class RangeSlider(tk.Canvas):
         )
 
     def _on_resize(self, event):
+        """
+        Handle the canvas resize event by redrawing the slider.
+
+        Args:
+            event: The Tkinter event object.
+        """
         self._draw()
 
     def _on_click(self, event):
+        """
+        Handle mouse click events to determine which slider handle to activate.
+
+        Args:
+            event: The Tkinter mouse event containing the click coordinates.
+        """
         x_min, x_max, y_center, x_left, x_right = self._get_coords()
         dist_l = abs(event.x - x_left)
         dist_r = abs(event.x - x_right)
@@ -126,6 +184,15 @@ class RangeSlider(tk.Canvas):
             self._draw()
 
     def _on_drag(self, event):
+        """
+        Handle mouse drag events to update the position of the active handle.
+
+        Enforces constraints such as preventing handles from crossing each other
+        and clamps values within the allowed range.
+
+        Args:
+            event: The Tkinter mouse drag event containing the current coordinates.
+        """
         if not self.active_handle:
             return
         x_min, x_max, y_center, x_left, x_right = self._get_coords()
@@ -145,10 +212,22 @@ class RangeSlider(tk.Canvas):
             self.command(self.val_left, self.val_right)
 
     def _on_release(self, event):
+        """
+        Handle mouse release events to deactivate the currently dragged handle.
+
+        Args:
+            event: The Tkinter mouse release event.
+        """
         self.active_handle = None
         self._draw()
 
     def _on_mouse_move(self, event):
+        """
+        Handle mouse motion events to update the cursor when hovering over handles.
+
+        Args:
+            event: The Tkinter mouse motion event.
+        """
         x_min, x_max, y_center, x_left, x_right = self._get_coords()
         if abs(event.x - x_left) < self.handle_radius or abs(event.x - x_right) < self.handle_radius:
             self.configure(cursor="hand2")

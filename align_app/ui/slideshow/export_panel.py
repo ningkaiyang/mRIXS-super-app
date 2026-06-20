@@ -12,6 +12,14 @@ class SlideshowExportPanel(customtkinter.CTkFrame):
       the background export worker thread. Re-enables the UI upon completion.
     """
     def __init__(self, parent, controller, **kwargs):
+        """
+        Initialize the SlideshowExportPanel.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic and state.
+            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+        """
         super().__init__(parent, **kwargs)
         self.controller = controller
 

@@ -22,6 +22,14 @@ class SlideshowCanvasPanel(tk.Canvas):
        in lime green.
     """
     def __init__(self, parent, controller, **kwargs):
+        """
+        Initialize the SlideshowCanvasPanel.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic and state.
+            **kwargs: Additional keyword arguments for the tk.Canvas.
+        """
         super().__init__(parent, bg="black", highlightthickness=0, **kwargs)
         self.controller = controller
 
@@ -43,12 +51,26 @@ class SlideshowCanvasPanel(tk.Canvas):
         self.cached_disp_rgb = None
 
     def on_resize(self, event=None):
+        """
+        Handle canvas resize events to re-render or reload the display.
+
+        Args:
+            event (tk.Event, optional): The resize event. Defaults to None.
+        """
         if self.cached_disp_rgb is not None:
             self.controller._render_display()
         else:
             self.controller.load_and_render()
 
     def draw_canvas(self, rgb, origin, direction):
+        """
+        Draw the image array and overlay vectors on the canvas.
+
+        Args:
+            rgb (numpy.ndarray): The RGB image array to display.
+            origin (tuple): The (x, y) origin coordinates for the line overlay.
+            direction (tuple): The (dx, dy) direction vector for the line overlay.
+        """
         if rgb is None:
             return
         ih, iw = rgb.shape[:2]
@@ -133,15 +155,31 @@ class SlideshowCanvasPanel(tk.Canvas):
                 )
 
     def draw_marker(self, cx, cy):
+        """
+        Draw a manual alignment marker on the canvas.
+
+        Args:
+            cx (int or float): The x-coordinate of the marker.
+            cy (int or float): The y-coordinate of the marker.
+        """
         self.create_oval(
             cx - 5, cy - 5, cx + 5, cy + 5,
             fill="lime", outline="white", width=2, tags="manual_marker"
         )
 
     def clear(self):
+        """
+        Clear all elements currently drawn on the canvas.
+        """
         self.delete("all")
 
     def render_error(self, img_path):
+        """
+        Render an error message on the canvas if an image fails to load.
+
+        Args:
+            img_path (str): The path to the image that failed to load.
+        """
         self.delete("all")
         cw = self.winfo_width()
         ch = self.winfo_height()
@@ -153,13 +191,25 @@ class SlideshowCanvasPanel(tk.Canvas):
         )
 
     def set_cached_image(self, disp_rgb):
+        """
+        Update the locally cached RGB image array.
+
+        Args:
+            disp_rgb (numpy.ndarray): The new RGB image array to cache.
+        """
         self.cached_disp_rgb = disp_rgb
 
     def clear_photo_cache(self):
+        """
+        Clear the internal PhotoImage cache and reset its tracking order.
+        """
         self.photo_cache.clear()
         self._photo_cache_order.clear()
 
     def _evict_photo_cache(self):
+        """
+        Evict the oldest cached PhotoImage objects to enforce the maximum cache size limit.
+        """
         while len(self._photo_cache_order) > self._photo_cache_max:
             old_key = self._photo_cache_order.pop(0)
             self.photo_cache.pop(old_key, None)

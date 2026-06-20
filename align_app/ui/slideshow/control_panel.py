@@ -16,6 +16,14 @@ class SlideshowControlPanel(customtkinter.CTkFrame):
     - Timeline Navigation Slider: Navigates through frames in the active file list.
     """
     def __init__(self, parent, controller, **kwargs):
+        """
+        Initialize the SlideshowControlPanel.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic and state.
+            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+        """
         super().__init__(parent, **kwargs)
         self.controller = controller
 
@@ -65,24 +73,58 @@ class SlideshowControlPanel(customtkinter.CTkFrame):
         self.frame_slider.pack(side="left", fill="x", expand=True, padx=5)
 
     def _format_threshold(self, t):
+        """
+        Format a threshold value as a string with trailing zeros appropriately stripped or maintained.
+
+        Args:
+            t (float): The threshold value to format.
+
+        Returns:
+            str: The formatted threshold string.
+        """
         s = f"{t:.4f}".rstrip('0')
         if s.endswith('.'):
             s += '0'
         return s
 
     def sync_timeline_label(self, current, total):
+        """
+        Update the timeline navigation label indicating the current frame index and total frames.
+
+        Args:
+            current (int): The current frame index (typically 1-based for display).
+            total (int): The total number of frames.
+        """
         self.frame_label.configure(text=f"Frame: {current}/{total}")
 
     def sync_pca_elements(self, t):
+        """
+        Synchronize all PCA threshold UI components (slider, label, and entry field) with a new value.
+
+        Args:
+            t (float): The PCA threshold value.
+        """
         self.pca_slider.set(min(t, 99.9999))
         self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(t)}%")
         self.pca_entry.delete(0, "end")
         self.pca_entry.insert(0, f"{t:.4f}")
 
     def sync_pca_label_and_entry(self, t):
+        """
+        Update the PCA threshold label and text entry without modifying the slider.
+
+        Args:
+            t (float): The PCA threshold value.
+        """
         self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(t)}%")
         self.pca_entry.delete(0, "end")
         self.pca_entry.insert(0, f"{t:.4f}")
 
     def _on_pca_entry_submit(self, event=None):
+        """
+        Handle submission of the PCA threshold entry field.
+
+        Args:
+            event (tk.Event, optional): The return key press event. Defaults to None.
+        """
         self.controller.handle_pca_entry_submit(self.pca_entry.get())

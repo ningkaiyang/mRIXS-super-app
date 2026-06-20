@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 import queue
 import numpy as np
 from align_app.ui.slideshow.managers import SlideshowManager
@@ -48,3 +49,31 @@ class TestSlideshowManagerBugs(unittest.TestCase):
             self.assertEqual((dx, dy), (0.0, 0.0))
         except TypeError as e:
             self.fail(f"get_offset raised TypeError when ref_origin is None: {e}")
+
+    @patch("align_app.ui.slideshow.managers.load_raw")
+    def test_default_clamping_ceiling_percentile(self, mock_load_raw):
+        """
+        Verify that default clamping_ceiling starts at the 95th percentile
+        of the reference image's intensities rather than the absolute maximum,
+        while clamping_floor starts at the absolute minimum.
+        """
+        q = queue.Queue()
+        mgr = SlideshowManager(q)
+        
+        # Create a mock 10x10 raw array with values from 0 to 99
+        raw = np.arange(100, dtype=np.float32).reshape((10, 10))
+        # Set an outlier to be very high to mimic outlier hot pixels
+        raw[0, 0] = 1000.0  # outlier
+        
+        mock_load_raw.return_value = raw
+        mgr.start(["mock.tif"])
+        
+        self.assertEqual(mgr.intensity_min, 1.0)
+        self.assertEqual(mgr.intensity_max, 1000.0)
+        self.assertEqual(mgr.clamping_floor, 1.0)
+        # 95th percentile of active pixels should be calculated
+        active = raw[raw > mgr.intensity_min]
+        expected_p95 = float(np.percentile(active, 95.0))
+        self.assertEqual(mgr.clamping_ceiling, expected_p95)
+        self.assertLess(mgr.clamping_ceiling, 1000.0)
+
