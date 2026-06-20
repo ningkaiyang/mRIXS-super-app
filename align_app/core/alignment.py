@@ -352,8 +352,8 @@ def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray) -> tupl
         return (0.0, 0.0)
         
     try:
-        max_iter = 50
-        epsilon = 1e-4
+        max_iter = 300
+        epsilon = 1e-5
         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, int(max_iter), float(epsilon))
         
         # --- PASS 1: Coarse (sigma=5.0) ---

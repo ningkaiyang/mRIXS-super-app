@@ -51,7 +51,7 @@ This project supports the QERLIN beamline (Beamline 6.0.2) at the Advanced Light
 To resolve fine-grained electronic features (such as phonons, magnons, and d-d excitations), the spectrometer requires extreme energy resolution and uses long path-length disperser arms. Consequently, the instrument is highly sensitive to sub-pixel spatial drift at the detector face. This drift is induced by mechanical relaxation and micro-thermal fluctuations over the course of long experimental runs.
 
 ## 2. The Core Problem
-To prevent spatial drift from broadening and blurring the spectral features, long scans are acquired as a sequence of shorter, sliced exposures (e.g., 200 frames in TIFF format). However, because the camera and optics shift dynamically during the process, these individual slices undergo 2D translations (Δx, Δy) relative to one another. If summed directly without alignment, the resulting spectrum suffers from severe resolution loss.
+To prevent spatial drift from broadening and blurring the spectral features, long scans are acquired as a sequence of shorter, sliced exposures (e.g., 200 frames per scan merged together in TIFF format). However, because the camera and optics shift dynamically during the process, these individual slices undergo 2D translations (Δx, Δy) relative to one another. If summed directly without alignment, the resulting spectrum suffers from severe resolution loss.
 
 ## 3. Current Implementation & Limitations
 The current prototype aligner corrects these shifts using two modes:

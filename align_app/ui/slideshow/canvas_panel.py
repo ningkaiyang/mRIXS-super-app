@@ -129,7 +129,7 @@ class SlideshowCanvasPanel(tk.Canvas):
         self.create_image(dx, dy, image=self.photo_img, anchor="nw", tags="image")
 
         # Draw reference line
-        show_line = bool(self.controller.show_line_switch.get())
+        show_line = bool(self.controller.show_line_switch.get()) and self.controller.manager.active_engine == "PCA"
         if show_line and origin is not None and direction is not None:
             ox_canvas = dx + origin[0] * scale
             oy_canvas = dy + origin[1] * scale

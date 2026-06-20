@@ -293,9 +293,9 @@ class SlideshowView(customtkinter.CTkFrame):
             def _worker():
                 for idx in range(n_frames):
                     self.manager.get_offset(idx)
-                    self.after(0, lambda current=idx+1, total=n_frames: self.control_panel.active_engine_panel.precompute_button.configure(text=f"{current}/{total}..."))
-                self.after(0, lambda: self.control_panel.active_engine_panel.precompute_button.configure(text="Precompute All", state="normal"))
-                self.after(0, self.load_and_render)
+                    self.manager.result_queue.put(lambda current=idx+1, total=n_frames: self.control_panel.active_engine_panel.precompute_button.configure(text=f"{current}/{total}..."))
+                self.manager.result_queue.put(lambda: self.control_panel.active_engine_panel.precompute_button.configure(text="Precompute All", state="normal"))
+                self.manager.result_queue.put(self.load_and_render)
             import threading
             threading.Thread(target=_worker, daemon=True).start()
             return
