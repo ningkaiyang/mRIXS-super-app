@@ -5,8 +5,8 @@ import queue
 import threading
 import numpy as np
 
+from align_app.dataset import ZarrSequenceManager
 from align_app.core import (
-    load_raw,
     apply_colormap,
     generate_aligned_sum,
     find_peak_line,
@@ -65,7 +65,7 @@ class SlideshowManager:
         self.per_frame_origin = {}
 
         # Caching
-        self.raw_cache = {}
+        self.zarr_manager = None
         self.rgb_cache = {}
         self.offset_cache = {}
 
@@ -101,7 +101,7 @@ class SlideshowManager:
         self.ref_raw = None
         self.ref_origin = None
         self.ref_direction = None
-        self.raw_cache.clear()
+        self.zarr_manager = ZarrSequenceManager(file_list)
         self.rgb_cache.clear()
         self.offset_cache.clear()
         self.per_frame_threshold.clear()
@@ -116,7 +116,6 @@ class SlideshowManager:
         self.manual_clicks = []
 
         self._load_reference()
-        self._preload_all_in_background()
 
     def _load_reference(self):
         """Loads and processes the first frame as the global reference frame.
@@ -163,13 +162,6 @@ class SlideshowManager:
         self.ref_origin, self.ref_direction = find_peak_line(ref_raw, t)
         self.per_frame_origin[0] = self.ref_origin.copy()
 
-    def _preload_all_in_background(self):
-        """Spawns a daemon thread to asynchronously load all raw image files into cache."""
-        def _worker():
-            for path in self.file_list:
-                self.get_raw(path)
-        threading.Thread(target=_worker, daemon=True).start()
-
     def get_raw(self, filepath: str) -> np.ndarray:
         """Retrieves the raw float32 image array for the given file, utilizing cache if available.
 
@@ -179,13 +171,12 @@ class SlideshowManager:
         Returns:
             np.ndarray: The 2D image array, or None if loading fails.
         """
-        if filepath in self.raw_cache:
-            return self.raw_cache[filepath]
+        if self.zarr_manager is None:
+            return None
         try:
-            raw = load_raw(filepath)
-            self.raw_cache[filepath] = raw
-            return raw
-        except Exception:
+            idx = self.file_list.index(filepath)
+            return self.zarr_manager.get_frame(idx)
+        except ValueError:
             return None
 
     def get_rgb(self, filepath: str, colormap: str) -> np.ndarray:

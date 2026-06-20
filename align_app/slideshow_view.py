@@ -789,12 +789,6 @@ class SlideshowView(customtkinter.CTkFrame):
     def current_raw(self, val):
         self.manager.current_raw = val
 
-    @property
-    def raw_cache(self):
-        return self.manager.raw_cache
-    @raw_cache.setter
-    def raw_cache(self, val):
-        self.manager.raw_cache = val
 
     @property
     def rgb_cache(self):
