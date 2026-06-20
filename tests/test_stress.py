@@ -5,7 +5,6 @@ import tempfile
 import numpy as np
 import cv2
 import tifffile
-import matplotlib
 
 from align_app.core import (
     natural_sort,

@@ -390,11 +390,12 @@ class TestChallengerAdversarialExhaustive(unittest.TestCase):
         self.assertFalse(has_image, "Bug: Stale cached image should not be drawn on the canvas in an error state")
 
     def test_zero_width_height_zero_division(self):
-        # 1. Mock preprocess_image to return an image with 0 width, but valid shape, to bypass load exceptions
+        # 1. Mock the manager's get_raw and get_rgb to return an image with 0 width, but valid shape, to bypass load exceptions
         # and test the draw_canvas zero-division vulnerability
-        from unittest.mock import patch
-        with patch('align_app.slideshow_view.preprocess_image') as mock_prep:
-            mock_prep.return_value = (np.zeros((100, 0, 3), dtype=np.uint8), np.zeros((100, 0), dtype=np.float32))
+        with patch('align_app.ui.slideshow.managers.SlideshowManager.get_raw') as mock_raw, \
+             patch('align_app.ui.slideshow.managers.SlideshowManager.get_rgb') as mock_rgb:
+            mock_raw.return_value = np.zeros((100, 0), dtype=np.float32)
+            mock_rgb.return_value = np.zeros((100, 0, 3), dtype=np.uint8)
             
             # 2. Try loading the slideshow.
             # This should load and render gracefully without ZeroDivisionError.

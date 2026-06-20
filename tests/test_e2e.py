@@ -8,9 +8,7 @@ import tkinter as tk
 from unittest.mock import patch
 import customtkinter
 
-from align_app.main import AlignApp, MainApplication
-from align_app.sorting_view import SortingView
-from align_app.slideshow_view import SlideshowView
+from align_app.main import AlignApp
 from align_app.core import (
     natural_sort,
     find_peak_line,
