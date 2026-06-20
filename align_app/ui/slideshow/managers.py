@@ -61,6 +61,7 @@ class SlideshowManager:
         # Per-frame states
         self.per_frame_threshold = {}
         self.per_frame_manual = {}
+        self.per_frame_manual_dir = {}
         self.per_frame_origin = {}
 
         # Caching
@@ -105,6 +106,7 @@ class SlideshowManager:
         self.offset_cache.clear()
         self.per_frame_threshold.clear()
         self.per_frame_manual.clear()
+        self.per_frame_manual_dir.clear()
         self.per_frame_origin.clear()
         self.zoom_level = 0
         self.pan_offset_x = 0
@@ -211,6 +213,14 @@ class SlideshowManager:
         except Exception:
             return None
 
+    @property
+    def global_ref_origin(self) -> np.ndarray:
+        return self.per_frame_manual.get(0, self.ref_origin)
+
+    @property
+    def global_ref_direction(self) -> np.ndarray:
+        return self.per_frame_manual_dir.get(0, self.ref_direction)
+
     def get_offset(self, frame_idx: int) -> tuple[float, float]:
         """Calculates the x and y pixel translation offset of a frame relative to the reference frame.
 
@@ -223,9 +233,9 @@ class SlideshowManager:
         filepath = self.file_list[frame_idx]
         if frame_idx in self.per_frame_manual:
             manual_centroid = self.per_frame_manual[frame_idx]
-            if self.ref_origin is None:
+            if self.global_ref_origin is None:
                 return (0.0, 0.0)
-            delta = manual_centroid - self.ref_origin
+            delta = manual_centroid - self.global_ref_origin
             return float(delta[0]), float(delta[1])
 
         cache_key = (filepath, frame_idx)
@@ -233,14 +243,14 @@ class SlideshowManager:
             return self.offset_cache[cache_key]
 
         raw = self.get_raw(filepath)
-        if raw is None or self.ref_raw is None or self.ref_direction is None:
+        if raw is None or self.ref_raw is None or self.global_ref_direction is None:
             return (0.0, 0.0)
 
         target_threshold = self.per_frame_threshold.get(frame_idx, self.ref_threshold)
         try:
             dx, dy = compute_line_based_offset(
                 self.ref_raw, raw,
-                self.ref_direction, self.ref_origin,
+                self.global_ref_direction, self.global_ref_origin,
                 self.ref_threshold, target_threshold
             )
             self.offset_cache[cache_key] = (dx, dy)
@@ -332,6 +342,12 @@ class SlideshowManager:
             return self.per_frame_origin[self.current_idx]
         return self.ref_origin
 
+    def get_display_direction(self) -> np.ndarray:
+        """Retrieves the direction vector used for drawing the line."""
+        if self.current_idx == 0 and 0 in self.per_frame_manual_dir:
+            return self.per_frame_manual_dir[0]
+        return self.global_ref_direction
+
     def compute_centroid_pan(self, canvas_w: int, canvas_h: int, image_w=3840, image_h=2048):
         """Computes panning offsets required to keep the spectral peak centered on screen.
 
@@ -377,11 +393,23 @@ class SlideshowManager:
         iy2 = (cy2 - lb_dy) / lb_scale
 
         midpoint = np.array([(ix1 + ix2) / 2.0, (iy1 + iy2) / 2.0])
+        
+        direction = np.array([ix2 - ix1, iy2 - iy1], dtype=np.float64)
+        norm = np.linalg.norm(direction)
+        if norm > 1e-9:
+            direction = direction / norm
+        else:
+            direction = self.ref_direction
+            
         if self.warp_enabled and self.current_idx > 0 and self.ref_raw is not None:
             dx, dy = self.get_offset(self.current_idx)
             midpoint = midpoint + np.array([dx, dy])
 
         self.per_frame_manual[self.current_idx] = midpoint
+        if self.current_idx == 0:
+            self.per_frame_manual_dir[0] = direction
+            self.offset_cache.clear()
+            
         if self.current_idx < len(self.file_list):
             filepath = self.file_list[self.current_idx]
             self.offset_cache.pop((filepath, self.current_idx), None)
@@ -390,7 +418,10 @@ class SlideshowManager:
     def clear_manual_line(self):
         """Clears any manual alignment override applied to the current frame."""
         self.per_frame_manual.pop(self.current_idx, None)
-        if self.current_idx < len(self.file_list):
+        self.per_frame_manual_dir.pop(self.current_idx, None)
+        if self.current_idx == 0:
+            self.offset_cache.clear()
+        elif self.current_idx < len(self.file_list):
             filepath = self.file_list[self.current_idx]
             self.offset_cache.pop((filepath, self.current_idx), None)
 

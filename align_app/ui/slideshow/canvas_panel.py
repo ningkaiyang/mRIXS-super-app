@@ -104,7 +104,7 @@ class SlideshowCanvasPanel(tk.Canvas):
         self._img_h = ih
 
         # Check PhotoImage cache first
-        cache_key = (id(rgb), nw, nh, self.controller.manager.zoom_level)
+        cache_key = (self.controller.manager.current_idx, id(rgb), nw, nh, self.controller.manager.zoom_level)
         if cache_key in self.photo_cache:
             self.photo_img = self.photo_cache[cache_key]
             # Move to end of LRU order

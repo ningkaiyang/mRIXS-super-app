@@ -194,11 +194,19 @@ class SlideshowView(customtkinter.CTkFrame):
         if self.canvas_panel.cached_disp_rgb is None:
             return
         
-        # Reference Peak vector parameters mapping
-        if self.manager.ref_origin is not None and self.manager.ref_direction is not None:
-            origin = self.manager.ref_origin
-            direction = self.manager.ref_direction
+        is_warped = self.manager.warp_enabled and self.manager.current_idx > 0 and self.manager.ref_raw is not None
+        
+        if is_warped:
+            # If warped, the image has been transformed so its feature sits at the global reference
+            origin = self.manager.global_ref_origin
+            direction = self.manager.global_ref_direction
         else:
+            # If not warped, or it's the first frame, use the unwarped coordinates
+            origin = self.manager.get_display_origin()
+            direction = self.manager.get_display_direction()
+            
+        # Ensure we have valid vectors before drawing
+        if origin is None or direction is None:
             origin = None
             direction = None
 
@@ -246,19 +254,22 @@ class SlideshowView(customtkinter.CTkFrame):
             pass
 
     def _apply_pca_change(self):
-        """Applies a debounced PCA threshold change and triggers a re-render."""
+        """Applies debounced PCA threshold changes."""
         self._pca_debounce_id = None
         self.manager.apply_pca_change()
+        self.canvas_panel.clear_photo_cache()
+        self._sync_slider_to_frame()
         self.load_and_render()
 
     def trigger_auto_snap(self):
         """Triggers the auto-snap operation to find the best threshold for the current frame."""
         self.control_panel.auto_snap_button.configure(text="...", state="disabled")
-        def on_complete(best_threshold):
+        def on_complete(best_t):
             self.control_panel.auto_snap_button.configure(text="Auto", state="normal")
-            self.manager.pca_threshold = best_threshold
-            self.control_panel.sync_pca_elements(best_threshold)
-            self._apply_pca_change()
+            self.manager.set_current_threshold(best_t)
+            self.canvas_panel.clear_photo_cache()
+            self._sync_slider_to_frame()
+            self.load_and_render()
         self.manager.run_auto_snap(on_complete)
 
     def trigger_auto_snap_all(self):
@@ -280,6 +291,7 @@ class SlideshowView(customtkinter.CTkFrame):
             self.manager._load_reference()
             self.manager.offset_cache.clear()
             self.manager.per_frame_origin.clear()
+            self.canvas_panel.clear_photo_cache()
             self._sync_slider_to_frame()
             self.load_and_render()
 
