@@ -66,7 +66,9 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         raw[0, 0] = 1000.0  # outlier
         
         mock_get_raw.return_value = raw
-        mgr.start(["mock.tif"])
+        import os
+        mock_path = os.path.join(os.path.dirname(__file__), "samples", "mock.tif")
+        mgr.start([mock_path])
         
         self.assertEqual(mgr.intensity_min, 1.0)
         self.assertEqual(mgr.intensity_max, 1000.0)

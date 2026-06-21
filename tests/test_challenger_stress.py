@@ -399,7 +399,7 @@ class TestChallengerAdversarialExhaustive(unittest.TestCase):
             
             # 2. Try loading the slideshow.
             # This should load and render gracefully without ZeroDivisionError.
-            self.app.show_slideshow(["dummy_path.tif"])
+            self.app.show_slideshow(["tests/samples/dummy_path.tif"])
             pump_events(self.app)
 
 
