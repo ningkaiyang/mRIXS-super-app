@@ -489,7 +489,7 @@ class TestE2E(unittest.TestCase):
 
     # --- Tier 4 (Real-world application/TIF checks) - 5 test cases ---
     def test_t4_01_real_tif_load_and_preprocess(self):
-        real_path = "Sample1VL_200F_frames_1-200.tif"
+        real_path = "tests/samples/Sample1VL_200F_frames_1-200.tif"
         self.assertTrue(os.path.exists(real_path))
         rgb, raw = preprocess_image(real_path, "grayscale", 99.0)
         self.assertEqual(raw.ndim, 2)
@@ -497,7 +497,7 @@ class TestE2E(unittest.TestCase):
         self.assertEqual(rgb.shape[2], 3)
 
     def test_t4_02_real_tif_find_peak_line(self):
-        real_path = "Sample1VL_200F_frames_1-200.tif"
+        real_path = "tests/samples/Sample1VL_200F_frames_1-200.tif"
         self.assertTrue(os.path.exists(real_path))
         _, raw = preprocess_image(real_path, "grayscale", 99.0)
         origin, direction = find_peak_line(raw, 99.0)
@@ -506,8 +506,8 @@ class TestE2E(unittest.TestCase):
         self.assertAlmostEqual(np.linalg.norm(direction), 1.0, places=5)
 
     def test_t4_03_real_tif_phase_correlation(self):
-        real_path_1 = "Sample1VL_200F_frames_1-200.tif"
-        real_path_2 = "Sample1VL_200F_frames_201-400.tif"
+        real_path_1 = "tests/samples/Sample1VL_200F_frames_1-200.tif"
+        real_path_2 = "tests/samples/Sample1VL_200F_frames_201-400.tif"
         self.assertTrue(os.path.exists(real_path_1))
         self.assertTrue(os.path.exists(real_path_2))
         _, raw1 = preprocess_image(real_path_1, "grayscale", 100.0)
@@ -517,8 +517,8 @@ class TestE2E(unittest.TestCase):
         self.assertIsInstance(dy, float)
 
     def test_t4_04_real_tif_warp_and_render(self):
-        real_path_1 = "Sample1VL_200F_frames_1-200.tif"
-        real_path_2 = "Sample1VL_200F_frames_201-400.tif"
+        real_path_1 = "tests/samples/Sample1VL_200F_frames_1-200.tif"
+        real_path_2 = "tests/samples/Sample1VL_200F_frames_201-400.tif"
         self.assertTrue(os.path.exists(real_path_1))
         self.assertTrue(os.path.exists(real_path_2))
         self.app.show_slideshow([real_path_1, real_path_2])
@@ -538,7 +538,7 @@ class TestE2E(unittest.TestCase):
 
     def test_t4_05_real_tif_natural_sort_workspace_tifs(self):
         import glob
-        tif_files = [os.path.basename(p) for p in glob.glob("*.tif")]
+        tif_files = [os.path.basename(p) for p in glob.glob("tests/samples/*.tif")]
         self.assertTrue(len(tif_files) > 0)
         sorted_tifs = natural_sort(tif_files.copy())
         self.assertEqual(len(sorted_tifs), len(tif_files))
