@@ -24,16 +24,20 @@ class SlideshowView(customtkinter.CTkFrame):
     Coordinates the UI panels (NavBar, ControlPanel, ToolsPanel, etc.) and forwards
     user actions to the SlideshowManager. Observes state changes and re-renders the canvas.
     """
-    def __init__(self, parent, on_back_to_sorting=None, **kwargs):
+    def __init__(self, parent, on_back_to_sorting=None, on_show_export_comparison=None, **kwargs):
         """Initializes the slideshow view and its sub-panels.
 
         Args:
             parent: The parent tkinter/customtkinter widget.
             on_back_to_sorting (callable, optional): Callback invoked when returning to sorting mode.
+            on_show_export_comparison (callable, optional): Callback invoked with
+                (aligned_sum, direct_sum, initial_dir) to transition to the
+                in-app comparison view.
             **kwargs: Additional keyword arguments passed to CTkFrame.
         """
         super().__init__(parent, **kwargs)
         self.on_back_to_sorting = on_back_to_sorting
+        self.on_show_export_comparison = on_show_export_comparison
         
         # Thread-safe result queue and poll scheduler
         self._result_queue = queue.Queue()
@@ -545,9 +549,8 @@ class SlideshowView(customtkinter.CTkFrame):
             self.export_panel.progress_label.configure(text="")
             if success:
                 aligned_sum, direct_sum = result
-                from align_app.ui.slideshow import ExportComparisonDialog
-                dialog = ExportComparisonDialog(self, aligned_sum, direct_sum, initial_dir)
-                dialog.grab_set()
+                if self.on_show_export_comparison:
+                    self.on_show_export_comparison(aligned_sum, direct_sum, initial_dir)
             else:
                 tk.messagebox.showerror("Export Failed", f"An error occurred during export:\n{result}")
 

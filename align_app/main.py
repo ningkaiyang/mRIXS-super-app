@@ -2,6 +2,7 @@ import platform
 import customtkinter
 from align_app.sorting_view import SortingView
 from align_app.slideshow_view import SlideshowView
+from align_app.ui.slideshow.comparison_view import ExportComparisonView
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
@@ -39,16 +40,25 @@ class AlignApp(customtkinter.CTk):
         )
         self.slideshow_view = SlideshowView(
             self.container,
-            on_back_to_sorting=self.show_sorting
+            on_back_to_sorting=self.show_sorting,
+            on_show_export_comparison=self.show_export_comparison
+        )
+        self.export_comparison_view = ExportComparisonView(
+            self.container,
+            on_back=self.show_slideshow_from_comparison
         )
 
         self.sorting_view.grid(row=0, column=0, sticky="nsew")
         self.slideshow_view.grid(row=0, column=0, sticky="nsew")
+        self.export_comparison_view.grid(row=0, column=0, sticky="nsew")
 
         # Global keyboard navigation binding (bind_all captures events
         # regardless of which widget has focus)
         self.bind_all("<Left>", self._on_left_key)
         self.bind_all("<Right>", self._on_right_key)
+
+        # Bind window close protocol to ensure proper teardown of resources (e.g. Matplotlib)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         self.show_sorting()
 
@@ -112,11 +122,12 @@ class AlignApp(customtkinter.CTk):
 
     def show_sorting(self):
         """
-        Display the file sorting view and hide the slideshow view.
+        Display the file sorting view and hide the slideshow and comparison views.
 
         This method also triggers an update of the file listbox in the sorting view.
         """
         self.slideshow_view.grid_remove()
+        self.export_comparison_view.grid_remove()
         self.sorting_view.grid()
         self.sorting_view.update_listbox()
 
@@ -128,8 +139,30 @@ class AlignApp(customtkinter.CTk):
             file_list (list of str): A list of file paths to be displayed in the slideshow.
         """
         self.sorting_view.grid_remove()
+        self.export_comparison_view.grid_remove()
         self.slideshow_view.grid()
         self.slideshow_view.start(file_list)
+
+    def show_export_comparison(self, aligned_sum, direct_sum, initial_dir):
+        """Transition from the slideshow view to the in-app comparison view.
+
+        Args:
+            aligned_sum (np.ndarray): The drift-corrected summed image.
+            direct_sum (np.ndarray): The naïve (unaligned) summed image.
+            initial_dir (str): Default directory for the save-file dialog.
+        """
+        self.slideshow_view.grid_remove()
+        self.export_comparison_view.load_comparison(aligned_sum, direct_sum, initial_dir)
+        self.export_comparison_view.grid()
+
+    def show_slideshow_from_comparison(self):
+        """Return from the comparison view back to the slideshow view.
+
+        The slideshow state (current frame, alignment parameters, etc.) is
+        preserved because the SlideshowView is never destroyed.
+        """
+        self.export_comparison_view.grid_remove()
+        self.slideshow_view.grid()
 
     def maximize_window(self):
         """
@@ -162,5 +195,18 @@ class AlignApp(customtkinter.CTk):
         scaled_w = int(self.winfo_screenwidth() / scale)
         scaled_h = int(self.winfo_screenheight() / scale)
         self.geometry(f"{scaled_w}x{scaled_h}+0+0")
+
+    def on_close(self):
+        """
+        Handle the window delete/close request (WM_DELETE_WINDOW protocol).
+
+        This method acts as a custom exit handler. When the user closes the main
+        window, it ensures that the active Matplotlib figures, canvases, and
+        associated navigation toolbars are cleanly torn down before calling
+        destroy() to destroy the widget hierarchy. This prevents PyEval thread
+        GIL errors.
+        """
+        self.export_comparison_view._teardown_mpl()
+        self.destroy()
 
 MainApplication = AlignApp
