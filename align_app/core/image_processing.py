@@ -8,11 +8,11 @@ def warp_image(image_data: np.ndarray, dx: float, dy: float) -> np.ndarray:
     Translate a 2D or 3D image by sub-pixel offsets (dx, dy) using affine warping.
     
     Mathematics & Alignment Context:
-      - Sub-pixel shift is necessary to align RIXS beam profiles precisely without rounding errors.
+      - Sub-pixel shift is necessary to align RIXS beam profiles precisely.
       - Constructs a 2x3 affine translation matrix: M = [[1, 0, dx], [0, 1, dy]].
-      - Applies OpenCV's `warpAffine` with bilinear interpolation (`cv2.INTER_LINEAR`).
-      - Bilinear interpolation reconstructs intensities at fractional pixel locations, preventing 
-        high-frequency sampling artifacts.
+      - Applies OpenCV's `warpAffine` with nearest neighbor interpolation (`cv2.INTER_NEAREST`).
+      - Nearest neighbor interpolation is strictly used to preserve raw pixel data and prevent
+        blurring or interpolation artifacts, maintaining high-contrast sharp boundaries.
       - Boundary values are padded with 0 (constant padding) to signify empty detector regions.
 
     Args:
@@ -198,7 +198,7 @@ def generate_aligned_sum(file_list: list[str], get_raw_fn, offsets: dict,
       - Individual frames have low SNR. Summing them directly without alignment blurs spectral features 
         due to beamline drift.
       - For each frame, retrieves the alignment offset (dx, dy) and applies the negative (-dx, -dy) 
-        using bilinear interpolation to warp it back to the reference frame's coordinate system.
+        using nearest neighbor interpolation to warp it back to the reference frame's coordinate system.
       - Accumulates warped frames into a float32 array to preserve full bit-depth and sub-pixel alignment quality.
 
     Args:
@@ -228,6 +228,38 @@ def generate_aligned_sum(file_list: list[str], get_raw_fn, offsets: dict,
             dx, dy = offsets.get(idx, (0.0, 0.0))
             warped = warp_image(raw, -dx, -dy)
             accum += warped
+
+        if progress_callback is not None:
+            progress_callback(idx + 1, n_frames)
+
+    return accum
+
+
+def generate_direct_sum(file_list: list[str], get_raw_fn,
+                        ref_shape: tuple,
+                        progress_callback=None) -> np.ndarray:
+    """
+    Accumulate all spectroscopic frames into a single sum directly without alignment.
+    This serves as a baseline comparison to evaluate the effectiveness of the alignment algorithm.
+
+    Args:
+        file_list: List of paths to TIFF files.
+        get_raw_fn: Function mapping filepath -> 2D numpy array (raw float32 intensity).
+        ref_shape: (H, W) shape of the reference frame.
+        progress_callback: Optional function called with (current_index, total_frames).
+
+    Returns:
+        np.ndarray: 2D float32 array of the directly summed spectral image.
+    """
+    accum = np.zeros(ref_shape, dtype=np.float32)
+    n_frames = len(file_list)
+
+    for idx, filepath in enumerate(file_list):
+        raw = get_raw_fn(filepath)
+        if raw is None:
+            raise ValueError(f"Could not load frame {idx}: {filepath}")
+
+        accum += raw
 
         if progress_callback is not None:
             progress_callback(idx + 1, n_frames)

@@ -224,11 +224,11 @@ class TestWarpImageStress(unittest.TestCase):
         warped_int = warp_image(self.img, 1.0, 1.0)
         self.assertEqual(warped_int[5, 5], 1.0)
 
-        # Subpixel translation (triggers interpolation)
+        # Subpixel translation (uses nearest neighbor, no blurring/energy distribution)
         warped_sub = warp_image(self.img, 0.5, 0.5)
-        # Using linear interpolation, the energy is distributed to neighboring pixels
-        self.assertGreater(warped_sub[4, 4], 0.0)
-        self.assertGreater(warped_sub[5, 5], 0.0)
+        # Verify that energy is not distributed (remains a single sharp point of intensity 1.0)
+        self.assertEqual(np.sum(warped_sub), 1.0)
+        self.assertEqual(np.max(warped_sub), 1.0)
 
     def test_nan_inf_shift_parameters(self):
         # Warp with nan/inf shifts

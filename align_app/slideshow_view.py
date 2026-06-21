@@ -534,29 +534,24 @@ class SlideshowView(customtkinter.CTkFrame):
 
         first_file = self.manager.file_list[0]
         initial_dir = os.path.dirname(first_file)
-        save_path = tk.filedialog.asksaveasfilename(
-            initialdir=initial_dir,
-            initialfile="aligned_sum.tif",
-            defaultextension=".tif",
-            filetypes=[("TIFF Files", "*.tif;*.tiff")]
-        )
-        if not save_path:
-            return
 
         self._set_export_ui_state("disabled")
 
-        def on_progress(current, total):
-            self.export_panel.progress_label.configure(text=f"Summing frames: {current}/{total}...")
+        def on_progress(msg):
+            self.export_panel.progress_label.configure(text=msg)
 
-        def on_complete(success, info):
+        def on_complete(success, result):
             self._set_export_ui_state("normal")
             self.export_panel.progress_label.configure(text="")
             if success:
-                tk.messagebox.showinfo("Export Successful", f"Aligned sum saved to:\n{info}")
+                aligned_sum, direct_sum = result
+                from align_app.ui.slideshow import ExportComparisonDialog
+                dialog = ExportComparisonDialog(self, aligned_sum, direct_sum, initial_dir)
+                dialog.grab_set()
             else:
-                tk.messagebox.showerror("Export Failed", f"An error occurred during export:\n{info}")
+                tk.messagebox.showerror("Export Failed", f"An error occurred during export:\n{result}")
 
-        self.manager.start_export(save_path, offsets, on_progress, on_complete)
+        self.manager.compute_both_sums(offsets, on_progress, on_complete)
 
     def _set_export_ui_state(self, state):
         """Sets the active state of UI elements during an export operation.

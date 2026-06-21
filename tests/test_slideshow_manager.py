@@ -50,10 +50,10 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         except TypeError as e:
             self.fail(f"get_offset raised TypeError when ref_origin is None: {e}")
 
-    @patch("align_app.ui.slideshow.managers.load_raw")
-    def test_default_clamping_ceiling_percentile(self, mock_load_raw):
+    @patch("align_app.ui.slideshow.managers.SlideshowManager.get_raw")
+    def test_default_clamping_ceiling_percentile(self, mock_get_raw):
         """
-        Verify that default clamping_ceiling starts at the 95th percentile
+        Verify that default clamping_ceiling starts at the 60th percentile
         of the reference image's intensities rather than the absolute maximum,
         while clamping_floor starts at the absolute minimum.
         """
@@ -65,15 +65,15 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         # Set an outlier to be very high to mimic outlier hot pixels
         raw[0, 0] = 1000.0  # outlier
         
-        mock_load_raw.return_value = raw
+        mock_get_raw.return_value = raw
         mgr.start(["mock.tif"])
         
         self.assertEqual(mgr.intensity_min, 1.0)
         self.assertEqual(mgr.intensity_max, 1000.0)
         self.assertEqual(mgr.clamping_floor, 1.0)
-        # 95th percentile of active pixels should be calculated
+        # 60th percentile of active pixels should be calculated
         active = raw[raw > mgr.intensity_min]
-        expected_p95 = float(np.percentile(active, 95.0))
-        self.assertEqual(mgr.clamping_ceiling, expected_p95)
+        expected_p60 = float(np.percentile(active, 60.0))
+        self.assertEqual(mgr.clamping_ceiling, expected_p60)
         self.assertLess(mgr.clamping_ceiling, 1000.0)
 

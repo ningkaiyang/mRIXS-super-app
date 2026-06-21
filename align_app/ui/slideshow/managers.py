@@ -136,18 +136,18 @@ class SlideshowManager:
             self.intensity_min = float(np.min(ref_raw))
             self.intensity_max = float(np.max(ref_raw))
             
-            # Compute 95th percentile strictly on active (non-background) pixels
+            # Compute 60th percentile strictly on active (non-background) pixels
             active_pixels = ref_raw[ref_raw > self.intensity_min]
             if active_pixels.size > 0:
-                p95 = float(np.percentile(active_pixels, 95.0))
+                p60 = float(np.percentile(active_pixels, 60.0))
             else:
-                p95 = self.intensity_max
+                p60 = self.intensity_max
             
             # Final fallback: if still invalid or flat, default to maximum
-            if p95 <= self.intensity_min:
+            if p60 <= self.intensity_min:
                 self.clamping_ceiling = self.intensity_max
             else:
-                self.clamping_ceiling = p95
+                self.clamping_ceiling = p60
         else:
             self.intensity_min = 0.0
             self.intensity_max = 1.0
@@ -549,14 +549,13 @@ class SlideshowManager:
             offsets[idx] = self.get_offset(idx)
         return offsets
 
-    def start_export(self, save_path: str, offsets: dict[int, tuple[float, float]], on_progress, on_complete):
-        """Starts a background thread to generate and save the aligned sum image.
+    def compute_both_sums(self, offsets: dict[int, tuple[float, float]], on_progress, on_complete):
+        """Starts a background thread to generate both aligned and direct sum images.
 
         Args:
-            save_path (str): The absolute file path to save the resulting TIFF.
             offsets (dict[int, tuple[float, float]]): Dictionary of precomputed frame offsets.
-            on_progress (callable): Callback executed with current frame processing progress.
-            on_complete (callable): Callback executed upon success or failure.
+            on_progress (callable): Callback executed with current frame processing progress (string message).
+            on_complete (callable): Callback executed upon success or failure with (True, (aligned, direct)) or (False, err_msg).
         """
         first_file = self.file_list[0]
         ref_raw = self.get_raw(first_file)
@@ -564,18 +563,26 @@ class SlideshowManager:
             on_complete(False, "Could not load reference frame.")
             return
 
-        def _progress(current, total):
-            self.result_queue.put(lambda: on_progress(current, total))
-
         def _worker():
             try:
-                result = generate_aligned_sum(
-                    self.file_list, self.get_raw, offsets,
-                    ref_raw.shape, progress_callback=_progress
+                from align_app.core import generate_direct_sum, generate_aligned_sum
+                
+                # 1. Compute Direct Sum
+                def _progress_direct(current, total):
+                    self.result_queue.put(lambda c=current, t=total: on_progress(f"Computing Direct Sum: {c}/{t}..."))
+                direct_sum = generate_direct_sum(
+                    self.file_list, self.get_raw, ref_raw.shape, progress_callback=_progress_direct
                 )
-                import tifffile
-                tifffile.imwrite(save_path, result)
-                self.result_queue.put(lambda: on_complete(True, save_path))
+
+                # 2. Compute Aligned Sum
+                def _progress_aligned(current, total):
+                    self.result_queue.put(lambda c=current, t=total: on_progress(f"Computing Aligned Sum: {c}/{t}..."))
+                aligned_sum = generate_aligned_sum(
+                    self.file_list, self.get_raw, offsets,
+                    ref_raw.shape, progress_callback=_progress_aligned
+                )
+                
+                self.result_queue.put(lambda: on_complete(True, (aligned_sum, direct_sum)))
             except Exception as e:
                 self.result_queue.put(lambda err=str(e): on_complete(False, err))
 

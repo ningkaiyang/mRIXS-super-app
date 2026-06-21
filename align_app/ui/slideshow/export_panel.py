@@ -27,8 +27,9 @@ class SlideshowExportPanel(customtkinter.CTkFrame):
         self.progress_label.pack(side="left", padx=5)
 
         self.export_button = customtkinter.CTkButton(
-            self, text="💾 Export Aligned Sum",
+            self, text="💾 Compare and Save",
             command=self.controller.trigger_export,
+            width=200, height=35,
             fg_color="#2F72A5", hover_color="#1F5A85"
         )
         self.export_button.pack(side="left", padx=5)

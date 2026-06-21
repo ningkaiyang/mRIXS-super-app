@@ -15,3 +15,15 @@ from align_app.ui.slideshow.tools_panel import SlideshowToolsPanel
 from align_app.ui.slideshow.clamping_panel import SlideshowClampingPanel
 from align_app.ui.slideshow.export_panel import SlideshowExportPanel
 from align_app.ui.slideshow.canvas_panel import SlideshowCanvasPanel
+from align_app.ui.slideshow.export_dialog import ExportComparisonDialog
+
+__all__ = [
+    "SlideshowManager",
+    "SlideshowNavBar",
+    "SlideshowCanvasPanel",
+    "SlideshowToolsPanel",
+    "SlideshowControlPanel",
+    "SlideshowClampingPanel",
+    "SlideshowExportPanel",
+    "ExportComparisonDialog",
+]

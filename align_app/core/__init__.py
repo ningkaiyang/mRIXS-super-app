@@ -25,6 +25,7 @@ from .image_processing import (
     preprocess_image,
     apply_colormap,
     generate_aligned_sum,
+    generate_direct_sum,
 )
 
 __all__ = [
@@ -40,5 +41,6 @@ __all__ = [
     "preprocess_image",
     "apply_colormap",
     "generate_aligned_sum",
+    "generate_direct_sum",
     "ecc_maximization_offset",
 ]
