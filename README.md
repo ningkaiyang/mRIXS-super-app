@@ -33,14 +33,28 @@ To launch the graphical user interface:
 python run.py
 ```
 
+## Key Features
+
+1. **Zarr-Backed Frame Caching:** High-resolution TIFF loading is optimized by caching frame arrays inside a content-addressed `tif-cache/frames.zarr` database in the dataset directory. Cache keys are computed via MD5 hashes of filepaths and modification times, ensuring instantaneous sequence reloads even across different run sessions.
+2. **Multi-Engine Alignment Architecture:**
+   - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component.
+   - **Iterative ECC Maximization:** Uses a 2-stage coarse-to-fine Gaussian pyramid (sigma=5.0 -> sigma=1.0) to register diffuse, line-less spectral clouds.
+3. **Interactive UI Panels:**
+   - **Clamping Controls:** Adjust intensity floor and ceiling sliders in real-time to strip hot pixels or boost low-intensity structural boundaries.
+   - **Auto-Snap Threshold Sweeps:** Sweep PCA thresholds dynamically on a background thread to locate the minimum perpendicular spread and align cleanly.
+   - **Manual Line Alignment:** Draw custom reference lines and click-to-override alignment offsets.
+   - **Zooming & Panning:** Smooth multi-level zoom to target fine sub-pixel features.
+4. **Inline Export Comparison:** Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling, allowing visual validation of alignment efficacy prior to saving.
+
 ## Running the Tests
-To run the E2E test suite:
+To run the entire test suite (including E2E, manager, stress, and core algorithmic tests):
+```bash
+pytest -v
+```
+To run specific test modules, run them individually:
 ```bash
 pytest tests/test_e2e.py -v
-```
-To run the core algorithmic tests:
-```bash
-python test_align.py
+pytest tests/test_align.py -v
 ```
 
 # QERLIN Beamline Spectrometer Scan Alignment Project
