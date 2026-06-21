@@ -67,9 +67,9 @@ Under these conditions, the intensity-weighted PCA is dominated by Poisson noise
 The ultimate objective is to develop a robust, fully automated alignment tool that corrects sub-pixel 2D translations across all scan frames, regardless of the elastic line's intensity or the presence of severe Poisson noise. We will explore and evaluate the following algorithmic and machine learning solutions:
 
 ### A. Advanced Algorithmic Registration
-1. **Fourier-Domain Phase Correlation with Spatial Pre-filtering:** Apply bandpass filtering (e.g., Difference of Gaussians or Butterworth) to isolate the structural boundaries of the inelastic spectral cloud and suppress high-frequency Poisson (shot) noise before calculating phase correlation.
-2. **Sub-Pixel Matrix-Multiply DFT Registration:** Implement single-step DFT upsampling to achieve sub-pixel registration (e.g., 0.01 pixel precision) efficiently.
-3. **Similarity Metric Optimization:** Register frames by optimizing Normalized Mutual Information (NMI) or Mean Squared Error (MSE) over translation parameters, applying Gaussian smoothing pyramids to provide robustness against low signal-to-noise ratios.
+1. **Iterative ECC Maximization (Implemented):** Added a new alignment engine that uses a robust 2-stage coarse-to-fine Gaussian pyramid. This approach effectively aligns datasets where the spectral line is completely absent or obscured by the diffuse inelastic scattering cloud.
+2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering:** Apply bandpass filtering (e.g., Difference of Gaussians or Butterworth) to isolate the structural boundaries of the inelastic spectral cloud and suppress high-frequency Poisson (shot) noise before calculating phase correlation.
+3. **Sub-Pixel Matrix-Multiply DFT Registration:** Implement single-step DFT upsampling to achieve sub-pixel registration (e.g., 0.01 pixel precision) efficiently.
 
 ### B. Machine Learning & Deep Learning Methods
 1. **Self-Supervised Deep Denoising (Noise2Noise / Noise2Void):** Leverage the temporal correlation of successive frames to train a U-Net to denoise sparse, photon-starved frames before registration, without requiring clean ground truth data. Denoised frames can then be aligned reliably using standard sub-pixel techniques.
