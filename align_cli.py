@@ -39,6 +39,7 @@ from align_app.core import (
     compute_line_based_offset,
     phase_correlation_offset,
     ecc_maximization_offset,
+    compute_alignment_priors,
     generate_aligned_sum,
     generate_direct_sum,
     PCAFitFailure,
@@ -443,6 +444,26 @@ def process_directory(
 
         n_frames = len(tif_files)
         offsets: dict[int, tuple[float, float]] = {}
+        
+        # ECC: pre-compute priors
+        ecc_crop_bounds = None
+        ecc_drift_vector = None
+        if engine == 'ECC':
+            print(f"[{dir_name}] Computing sample-agnostic alignment priors for ECC...")
+            num_prior_frames = min(10, max(1, n_frames // 2))
+            if num_prior_frames > 0 and n_frames > 1:
+                early_frames = []
+                late_frames = []
+                for i in range(num_prior_frames):
+                    f = get_raw(tif_files[i])
+                    if f is not None: early_frames.append(f)
+                for i in range(n_frames - num_prior_frames, n_frames):
+                    f = get_raw(tif_files[i])
+                    if f is not None: late_frames.append(f)
+                ecc_crop_bounds, ecc_drift_vector = compute_alignment_priors(early_frames, late_frames)
+                print(f"[{dir_name}] Computed Crop Bounds: {ecc_crop_bounds}")
+                print(f"[{dir_name}] Computed Drift Vector: {ecc_drift_vector}")
+
 
         # PCA: pre-compute reference line
         pca_ref_origin = None
@@ -498,7 +519,7 @@ def process_directory(
 
             try:
                 if engine == 'ECC':
-                    dx, dy = ecc_maximization_offset(ref_raw, raw)
+                    dx, dy = ecc_maximization_offset(ref_raw, raw, crop_bounds=ecc_crop_bounds, drift_vector=ecc_drift_vector)
 
                 elif engine == 'PhaseCorrelation':
                     dx, dy = phase_correlation_offset(ref_raw, raw)

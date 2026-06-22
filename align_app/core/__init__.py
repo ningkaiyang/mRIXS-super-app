@@ -22,6 +22,7 @@ from .alignment import (
     phase_correlation_offset,
     compute_line_based_offset,
     ecc_maximization_offset,
+    compute_alignment_priors,
 )
 from .image_processing import (
     warp_image,
@@ -49,4 +50,5 @@ __all__ = [
     "generate_aligned_sum",
     "generate_direct_sum",
     "ecc_maximization_offset",
+    "compute_alignment_priors",
 ]
