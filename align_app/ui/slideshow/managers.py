@@ -413,20 +413,68 @@ class SlideshowManager:
         ix2 = (cx2 - lb_dx) / lb_scale
         iy2 = (cy2 - lb_dy) / lb_scale
 
-        midpoint = np.array([(ix1 + ix2) / 2.0, (iy1 + iy2) / 2.0])
-        
-        direction = np.array([ix2 - ix1, iy2 - iy1], dtype=np.float64)
-        norm = np.linalg.norm(direction)
-        if norm > 1e-9:
-            direction = direction / norm
-        else:
-            direction = self.ref_direction
-            
+        p1 = np.array([ix1, iy1], dtype=np.float64)
+        p2 = np.array([ix2, iy2], dtype=np.float64)
+
         if self.warp_enabled and self.current_idx > 0 and self.ref_raw is not None:
             dx, dy = self.get_offset(self.current_idx)
-            midpoint = midpoint + np.array([dx, dy])
+            p1 += np.array([dx, dy])
+            p2 += np.array([dx, dy])
+        
+        drawn_direction = p2 - p1
+        norm = np.linalg.norm(drawn_direction)
+        if norm > 1e-9:
+            drawn_direction = drawn_direction / norm
+        else:
+            drawn_direction = self.global_ref_direction
+            
+        if self.current_idx == 0:
+            # Frame 0: Use drawn line exactly, no midpoint needed for the anchor.
+            direction = drawn_direction
+            line_point = p1
+        else:
+            # Frame > 0: Use the midpoint of the clicks, but force the reference direction.
+            if self.global_ref_direction is not None:
+                direction = self.global_ref_direction
+            else:
+                direction = drawn_direction
+            line_point = (p1 + p2) / 2.0
 
-        self.per_frame_manual[self.current_idx] = midpoint
+        raw = self.get_raw(self.file_list[self.current_idx])
+        if raw is not None:
+            h, w = raw.shape
+            # Flexible boundaries based dynamically on the actual image shape
+            x_min, x_max = 0.0, float(w)
+            y_min, y_max = 0.0, float(h)
+            
+            t_candidates = []
+            if abs(direction[0]) > 1e-9:
+                t_candidates.append((x_min - line_point[0]) / direction[0])
+                t_candidates.append((x_max - line_point[0]) / direction[0])
+            if abs(direction[1]) > 1e-9:
+                t_candidates.append((y_min - line_point[1]) / direction[1])
+                t_candidates.append((y_max - line_point[1]) / direction[1])
+                
+            intersections = []
+            for t in t_candidates:
+                p = line_point + t * direction
+                if x_min - 1e-5 <= p[0] <= x_max + 1e-5 and y_min - 1e-5 <= p[1] <= y_max + 1e-5:
+                    is_dup = False
+                    for existing_p in intersections:
+                        if np.linalg.norm(p - existing_p) < 1e-4:
+                            is_dup = True
+                            break
+                    if not is_dup:
+                        intersections.append(p)
+            
+            if len(intersections) >= 2:
+                centroid = (intersections[0] + intersections[1]) / 2.0
+            else:
+                centroid = line_point
+        else:
+            centroid = line_point
+
+        self.per_frame_manual[self.current_idx] = centroid
         if self.current_idx == 0:
             self.per_frame_manual_dir[0] = direction
             self.offset_cache.clear()
