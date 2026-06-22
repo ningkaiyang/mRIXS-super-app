@@ -45,7 +45,7 @@ class SlideshowManager:
         self.result_queue = result_queue
         self.file_list = []
         self.current_idx = 0
-        self.active_engine = "PCA"
+        self.active_engine = "ECC"
         self.pca_threshold = 99.9
         self.colormap = "viridis"
         self.warp_enabled = True

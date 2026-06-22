@@ -96,17 +96,16 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         # Mock ecc_maximization_offset to return a specific offset
         with patch("align_app.ui.slideshow.managers.ecc_maximization_offset", return_value=(3.0, 4.0)) as mock_ecc, \
              patch("align_app.ui.slideshow.managers.SlideshowManager.get_raw", return_value=np.ones((10, 10), dtype=np.float32)):
-            # With active engine = "PCA", should return manual line offset (10 - 5 = 5, 20 - 5 = 15)
-            mgr.active_engine = "PCA"
-            dx, dy = mgr.get_offset(1)
-            self.assertEqual((dx, dy), (5.0, 15.0))
-            
-            # With active engine = "ECC", should ignore manual line and return ECC offset (3.0, 4.0)
-            mgr.active_engine = "ECC"
-            # Invalidate offset cache first as we switched engine
-            mgr._invalidate_offset_cache(1)
+            # ECC is the default engine — should ignore manual line and return ECC offset (3.0, 4.0)
+            self.assertEqual(mgr.active_engine, "ECC")
             dx, dy = mgr.get_offset(1)
             self.assertEqual((dx, dy), (3.0, 4.0))
             mock_ecc.assert_called_once()
+            
+            # Switch to PCA — should return manual line offset (10 - 5 = 5, 20 - 5 = 15)
+            mgr.active_engine = "PCA"
+            mgr._invalidate_offset_cache(1)
+            dx, dy = mgr.get_offset(1)
+            self.assertEqual((dx, dy), (5.0, 15.0))
 
 

@@ -50,6 +50,12 @@ class SortingView(customtkinter.CTkFrame):
         )
         self.remove_button.pack(pady=3)
 
+        self.clear_button = customtkinter.CTkButton(
+            self, text="🗑 Clear All", command=self.clear_all,
+            width=80, fg_color="#883333", hover_color="#662222"
+        )
+        self.clear_button.pack(pady=3)
+
         self.start_button = customtkinter.CTkButton(
             self, text="▶ Start Slideshow", command=self.start_slideshow,
             fg_color="#2FA572", hover_color="#238a5a",
@@ -82,7 +88,8 @@ class SortingView(customtkinter.CTkFrame):
         guide_sections = [
             ("Step 1: Load Files", (
                 "Click '📁 Select Files' to choose your TIFF spectroscopy images.\n"
-                "You can select multiple files at once."
+                "You can select multiple files at once.\n"
+                "Use '🗑 Clear All' to remove all files and start over."
             )),
             ("Step 2: Sort Files", (
                 "Click '↕ Sort Files' to auto-sort by filename (natural sorting).\n"
@@ -92,46 +99,62 @@ class SortingView(customtkinter.CTkFrame):
             )),
             ("Step 3: Start Slideshow", (
                 "Click '▶ Start Slideshow' to begin analysis.\n"
-                "The app computes a PCA reference line from Frame 1 at the\n"
-                "default threshold of 99.9%. The red line shows the detected\n"
-                "spectroscopic peak center. Warp is ON by default."
+                "The default alignment engine is ECC (Enhanced Correlation\n"
+                "Coefficient), which works well for most datasets. Warp is\n"
+                "ON by default — frames are translated to align with Frame 1."
             )),
-            ("Step 4: Auto Optimization", (
-                "'Auto' — optimizes the PCA threshold for the CURRENT frame (~2s).\n"
-                "'Auto All' — optimizes ALL frames at once (~15-20s total).\n"
-                "The search finds the threshold that gives the tightest line fit.\n"
-                "Progress is shown on the button (e.g. '3/10...')."
+            ("Alignment Engines", (
+                "Switch engines using the dropdown in the top-right navbar:\n\n"
+                "• ECC (default) — Iterative Enhanced Correlation Coefficient.\n"
+                "  Uses a 2-stage coarse-to-fine Gaussian pyramid for robust\n"
+                "  sub-pixel alignment. Best for general/diffuse datasets.\n"
+                "  Click 'Precompute' to batch-align all frames.\n\n"
+                "• PCA — Peak-Line Fitting via SVD + Phase Correlation.\n"
+                "  Detects the spectral line via intensity thresholding and\n"
+                "  fits a reference line through Frame 1. Best for datasets\n"
+                "  with a sharp, well-defined spectral line. Use the threshold\n"
+                "  slider to tune sensitivity, or 'Auto' / 'Auto All' to\n"
+                "  optimize automatically.\n\n"
+                "• Phase Correlation — Fast Fourier-domain translation\n"
+                "  estimation. Very fast but less accurate on noisy data.\n"
+                "  Also used internally as a fallback by PCA."
             )),
-            ("Step 5: Navigate & Inspect", (
+            ("Step 4: Navigate & Inspect", (
                 "Use ← → arrow keys or '◀ Prev' / 'Next ▶' to step through frames.\n"
                 "Use the frame slider for quick jumping.\n"
                 "'▶ Play' auto-cycles through all frames.\n\n"
-                "Check that the red reference line aligns with the bright\n"
-                "spectroscopic line on each frame. With Warp ON, frames\n"
-                "should look aligned when flipping between them."
+                "With Warp ON, frames should look aligned when flipping between\n"
+                "them. Toggle Warp OFF to see the original unaligned frames."
             )),
-            ("Step 6: Zoom", (
+            ("Step 5: Zoom", (
                 "'🔍+ Zoom In' steps through 1× → 2× → 4× → 8× → 16×.\n"
                 "Zoom centers on the reference line centroid.\n"
                 "'🔍- Zoom Out' reverses. '⟲ Reset View' returns to 1×.\n"
-                "Use zoom to inspect line fit quality at high magnification."
+                "Use zoom to inspect alignment quality at high magnification."
             )),
-            ("Step 7: Manual Line Correction", (
-                "If the auto-fit doesn't align a frame well:\n\n"
-                "1. Click '✏ Manual Line' (button turns orange)\n"
-                "2. Click TWO points on the spectroscopic line, far apart\n"
+            ("Step 6: Manual Line Correction (PCA only)", (
+                "If PCA auto-fit doesn't align a frame well:\n\n"
+                "1. Switch to PCA engine in the navbar dropdown\n"
+                "2. Click '✏ Manual Line' (button turns orange)\n"
+                "3. Click TWO points on the spectroscopic line, far apart\n"
                 "   (zoom to 8× or 16× for precision)\n"
-                "3. The app computes the midpoint between your clicks and\n"
+                "4. The app computes the midpoint between your clicks and\n"
                 "   draws a line through it using Frame 1's reference slope\n"
-                "4. The warp offset is recalculated automatically\n\n"
+                "5. The warp offset is recalculated automatically\n\n"
                 "You can draw manual lines directly on the warped image —\n"
                 "the app back-calculates the un-warped coordinates.\n\n"
                 "'Clear Manual' removes the manual override for that frame."
             )),
+            ("Step 7: Export", (
+                "Click 'Export' to generate aligned and direct sum images.\n"
+                "A comparison view shows both side-by-side so you can verify\n"
+                "the alignment quality before saving."
+            )),
             ("Tips", (
+                "• ECC is recommended for most workflows\n"
+                "• PCA threshold slider and red line overlay are only visible\n"
+                "  when the PCA engine is selected\n"
                 "• Each frame stores its own PCA threshold independently\n"
-                "• The PCA slider shows/controls the CURRENT frame's threshold\n"
-                "• Type exact values in the threshold text box + press Enter\n"
                 "• Warp is purely translational (no rotation or stretching)\n"
                 "• Use viridis colormap for best visibility of faint features"
             )),
@@ -229,6 +252,17 @@ class SortingView(customtkinter.CTkFrame):
             else:
                 self.selected_index = -1
             self.update_listbox()
+
+    def clear_all(self):
+        """
+        Clear all selected files from the list and reset selection state.
+
+        This provides a quick way to deselect all files instead of removing
+        them one-by-one with the Remove button.
+        """
+        self.file_list.clear()
+        self.selected_index = -1
+        self.update_listbox()
 
     def start_slideshow(self):
         """

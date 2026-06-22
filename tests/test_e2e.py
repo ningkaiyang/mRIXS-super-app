@@ -217,11 +217,15 @@ class TestE2E(unittest.TestCase):
     def test_f3_01_pca_centroid_drawn_on_canvas(self):
         self.app.show_slideshow(self.temp_files)
         pump_events(self.app)
+        self.app.slideshow_view.change_engine("PCA")
+        pump_events(self.app)
         centroids = self.app.slideshow_view.canvas.find_withtag("centroid")
         self.assertGreater(len(centroids), 0)
 
     def test_f3_02_pca_peak_line_drawn_on_canvas(self):
         self.app.show_slideshow(self.temp_files)
+        pump_events(self.app)
+        self.app.slideshow_view.change_engine("PCA")
         pump_events(self.app)
         lines = self.app.slideshow_view.canvas.find_withtag("peak_line")
         self.assertGreater(len(lines), 0)
@@ -236,6 +240,8 @@ class TestE2E(unittest.TestCase):
 
     def test_f3_04_pca_threshold_slider_renders_new_peak(self):
         self.app.show_slideshow(self.temp_files)
+        pump_events(self.app)
+        self.app.slideshow_view.change_engine("PCA")
         pump_events(self.app)
         line_id = self.app.slideshow_view.canvas.find_withtag("peak_line")[0]
         coords_before = self.app.slideshow_view.canvas.coords(line_id)
@@ -300,6 +306,7 @@ class TestE2E(unittest.TestCase):
 
     def test_f4_03_warp_toggle_triggers_redraw(self):
         self.app.show_slideshow(self.temp_files)
+        self.app.slideshow_view.change_engine("PCA")
         self.app.slideshow_view.next_button.invoke()
         pump_events(self.app)
         
@@ -520,6 +527,8 @@ class TestE2E(unittest.TestCase):
         self.assertTrue(os.path.exists(real_path_1))
         self.assertTrue(os.path.exists(real_path_2))
         self.app.show_slideshow([real_path_1, real_path_2])
+        pump_events(self.app)
+        self.app.slideshow_view.change_engine("PCA")
         pump_events(self.app)
         self.app.slideshow_view.warp_switch.select()
         self.app.slideshow_view.toggle_warp()

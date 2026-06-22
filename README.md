@@ -37,12 +37,14 @@ python run.py
 
 1. **Zarr-Backed Frame Caching:** High-resolution TIFF loading is optimized by caching frame arrays inside a content-addressed `tif-cache/frames.zarr` database in the dataset directory. Cache keys are computed via MD5 hashes of filepaths and modification times, ensuring instantaneous sequence reloads even across different run sessions.
 2. **Multi-Engine Alignment Architecture:**
-   - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component.
-   - **Iterative ECC Maximization:** Uses a 2-stage coarse-to-fine Gaussian pyramid (sigma=5.0 -> sigma=1.0) to register diffuse, line-less spectral clouds.
+   - **Iterative ECC Maximization (Default):** Uses a 2-stage coarse-to-fine Gaussian pyramid (sigma=5.0 -> sigma=1.0) to register diffuse, line-less spectral clouds. Recommended for most general/diffuse datasets.
+   - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component. Ideal for datasets with a sharp, prominent spectral line.
+   - **Phase Correlation:** Direct Fourier-domain translation estimation for fast initial offset computation (also used as a fallback by PCA).
 3. **Interactive UI Panels:**
+   - **File Selection View:** Add and order files dynamically, with a **"Clear All"** button to quickly empty the queue, and natural sorting to sort by filename.
    - **Clamping Controls:** Adjust intensity floor and ceiling sliders in real-time to strip hot pixels or boost low-intensity structural boundaries.
    - **Auto-Snap Threshold Sweeps:** Sweep PCA thresholds dynamically on a background thread to locate the minimum perpendicular spread and align cleanly.
-   - **Manual Line Alignment:** Draw custom reference lines and click-to-override alignment offsets.
+   - **Manual Line Alignment (PCA only):** Draw custom reference lines and click-to-override alignment offsets.
    - **Zooming & Panning:** Smooth multi-level zoom to target fine sub-pixel features.
 4. **Inline Export Comparison:** Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling, allowing visual validation of alignment efficacy prior to saving.
 
@@ -68,14 +70,16 @@ To resolve fine-grained electronic features (such as phonons, magnons, and d-d e
 To prevent spatial drift from broadening and blurring the spectral features, long scans are acquired as a sequence of shorter, sliced exposures (e.g., 200 frames per scan merged together in TIFF format). However, because the camera and optics shift dynamically during the process, these individual slices undergo 2D translations (Δx, Δy) relative to one another. If summed directly without alignment, the resulting spectrum suffers from severe resolution loss.
 
 ## 3. Current Implementation & Limitations
-The current prototype aligner corrects these shifts using two modes:
-- **Manual Mode:** The user manually draws a line corresponding to a visible spectral feature to guide the frame-by-frame alignment.
-- **Auto Mode:** Computes the translation offset by locating the spectroscopic line via intensity-weighted PCA (SVD) on pixels that exceed a designated intensity percentile threshold.
+The alignment application corrects these shifts using three auto-alignment engines and manual override modes:
+- **Iterative ECC Engine (Default):** Iterative Enhanced Correlation Coefficient maximization registering diffuse, line-less spectral clouds. This is the recommended default workflow.
+- **PCA Engine:** Locates the spectroscopic line via intensity-weighted PCA (SVD) on pixels that exceed an intensity percentile threshold. Best for sharp, prominent lines.
+- **Phase Correlation Engine:** Computes translation offsets directly in the Fourier domain. Fast, but less robust to noise.
+- **Manual Mode (PCA only):** The user manually draws a line corresponding to a visible spectral feature to guide or override PCA alignment offsets.
 
-### The Limitation:
-The current auto-alignment logic assumes the **elastic scattering line** (zero energy loss) is the brightest feature on the detector. However, in many experimental regimes (such as certain transition metal L-edges or highly absorbing samples), elastic scattering is weak. As a result, the elastic line is dim, sparse, or completely absent. 
+### The PCA Limitation:
+The intensity-weighted PCA auto-alignment engine assumes the **elastic scattering line** (zero energy loss) is the brightest feature on the detector. However, in many experimental regimes (such as certain transition metal L-edges or highly absorbing samples), elastic scattering is weak. As a result, the elastic line is dim, sparse, or completely absent. 
 
-Under these conditions, the intensity-weighted PCA is dominated by Poisson noise, cosmic rays, or the diffuse 2D inelastic scattering cloud in the center of the detector. This leads to erratic centroid determinations on noise spikes, failed line fits, and incorrect alignment offsets.
+Under these conditions, the intensity-weighted PCA is dominated by Poisson noise, cosmic rays, or the diffuse 2D inelastic scattering cloud in the center of the detector. This leads to erratic centroid determinations on noise spikes, failed line fits, and incorrect alignment offsets. To bypass this limitation, users should use the default **ECC Engine**, which precomputes robust sub-pixel alignment over diffuse, line-less spectral clouds.
 
 ## 4. Technical Goals & Roadmap
 The ultimate objective is to develop a robust, fully automated alignment tool that corrects sub-pixel 2D translations across all scan frames, regardless of the elastic line's intensity or the presence of severe Poisson noise. We will explore and evaluate the following algorithmic and machine learning solutions:

@@ -64,5 +64,5 @@ class SlideshowNavBar(customtkinter.CTkFrame):
             values=["PCA", "ECC", "Phase Correlation"],
             command=self.controller.change_engine
         )
-        self.engine_menu.set("PCA")
+        self.engine_menu.set("ECC")
         self.engine_menu.pack(side="right", padx=5)

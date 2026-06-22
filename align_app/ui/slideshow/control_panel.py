@@ -135,8 +135,8 @@ class SlideshowControlPanel(customtkinter.CTkFrame):
         self.ecc_panel = EccSettingsPanel(self, controller)
         self.phase_correlation_panel = PhaseCorrelationSettingsPanel(self, controller)
         
-        # Start with PCA visible
-        self.active_engine_panel = self.pca_panel
+        # Start with ECC visible (the default engine)
+        self.active_engine_panel = self.ecc_panel
         self.active_engine_panel.pack(fill="x", pady=2)
 
         # Frame slider row
