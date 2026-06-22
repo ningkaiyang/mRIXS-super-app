@@ -79,3 +79,34 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         self.assertEqual(mgr.clamping_ceiling, expected_p60)
         self.assertLess(mgr.clamping_ceiling, 1000.0)
 
+    def test_manual_pca_line_does_not_affect_ecc_engine(self):
+        """
+        Verify that manual lines defined for PCA do not override or affect
+        the offset calculations of the ECC engine.
+        """
+        q = queue.Queue()
+        mgr = SlideshowManager(q)
+        mgr.file_list = ["dummy1.tif", "dummy2.tif"]
+        mgr.ref_raw = np.ones((10, 10), dtype=np.float32)
+        
+        # Setup manual alignment for frame 1
+        mgr.per_frame_manual[1] = np.array([10.0, 20.0])
+        mgr.ref_origin = np.array([5.0, 5.0])
+        
+        # Mock ecc_maximization_offset to return a specific offset
+        with patch("align_app.ui.slideshow.managers.ecc_maximization_offset", return_value=(3.0, 4.0)) as mock_ecc, \
+             patch("align_app.ui.slideshow.managers.SlideshowManager.get_raw", return_value=np.ones((10, 10), dtype=np.float32)):
+            # With active engine = "PCA", should return manual line offset (10 - 5 = 5, 20 - 5 = 15)
+            mgr.active_engine = "PCA"
+            dx, dy = mgr.get_offset(1)
+            self.assertEqual((dx, dy), (5.0, 15.0))
+            
+            # With active engine = "ECC", should ignore manual line and return ECC offset (3.0, 4.0)
+            mgr.active_engine = "ECC"
+            # Invalidate offset cache first as we switched engine
+            mgr._invalidate_offset_cache(1)
+            dx, dy = mgr.get_offset(1)
+            self.assertEqual((dx, dy), (3.0, 4.0))
+            mock_ecc.assert_called_once()
+
+

@@ -231,7 +231,7 @@ class SlideshowManager:
             tuple[float, float]: A tuple containing the (dx, dy) translation offsets.
         """
         filepath = self.file_list[frame_idx]
-        if frame_idx in self.per_frame_manual:
+        if self.active_engine == "PCA" and frame_idx in self.per_frame_manual:
             manual_centroid = self.per_frame_manual[frame_idx]
             if self.global_ref_origin is None:
                 return (0.0, 0.0)
