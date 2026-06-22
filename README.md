@@ -1,6 +1,6 @@
 # Spectroscopy Image Alignment GUI
 
-A desktop application designed to load, sort, and align a sequence of spectroscopy images (TIFF format) using peak-line fitting (via PCA/SVD) and Hanning-windowed phase correlation offset computation.
+A desktop application and headless CLI tool designed to load, sort, and align sequences of spectroscopy images (TIFF format) using multiple alignment engines including ECC Maximization, PCA/SVD peak-line fitting, and Fourier-domain Phase Correlation.
 
 ## Setup Instructions
 
@@ -37,9 +37,9 @@ python run.py
 
 1. **Zarr-Backed Frame Caching:** High-resolution TIFF loading is optimized by caching frame arrays inside a content-addressed `tif-cache/frames.zarr` database in the dataset directory. Cache keys are computed via MD5 hashes of filepaths and modification times, ensuring instantaneous sequence reloads even across different run sessions.
 2. **Multi-Engine Alignment Architecture:**
-   - **Iterative ECC Maximization (Default):** Uses a 2-stage coarse-to-fine Gaussian pyramid (sigma=5.0 -> sigma=1.0) to register diffuse, line-less spectral clouds. Recommended for most general/diffuse datasets.
+   - **Iterative ECC Maximization (Default):** Uses a 2-stage coarse-to-fine multi-resolution pyramid. The coarse pass downsamples images by 2x and applies a light Gaussian blur (sigma=2.0) with relaxed convergence criteria for fast rough alignment. The fine pass operates at full resolution with sigma=1.0 blur for exact sub-pixel precision.
    - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component. Ideal for datasets with a sharp, prominent spectral line.
-   - **Phase Correlation:** Direct Fourier-domain translation estimation for fast initial offset computation (also used as a fallback by PCA).
+   - **Phase Correlation:** DoG bandpass-filtered Fourier-domain translation estimation with a Tukey (tapered cosine) window that preserves spectral line features near detector edges.
 3. **Interactive UI Panels:**
    - **File Selection View:** Add and order files dynamically, with a **"Clear All"** button to quickly empty the queue, and natural sorting to sort by filename.
    - **Clamping Controls:** Adjust intensity floor and ceiling sliders in real-time to strip hot pixels or boost low-intensity structural boundaries.
@@ -49,7 +49,7 @@ python run.py
 4. **Inline Export Comparison:** Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling, allowing visual validation of alignment efficacy prior to saving.
 
 ## Running the Tests
-To run the entire test suite (including E2E, manager, stress, and core algorithmic tests):
+To run the entire test suite (including E2E, manager, stress, CLI, and core algorithmic tests):
 ```bash
 pytest -v
 ```
@@ -57,6 +57,58 @@ To run specific test modules, run them individually:
 ```bash
 pytest tests/test_e2e.py -v
 pytest tests/test_align.py -v
+pytest tests/test_cli.py -v
+```
+
+## Headless CLI Tool
+
+A standalone command-line interface (`align_cli.py`) is provided for batch-processing TIFF sequences without a GUI. This is ideal for remote servers, HPC clusters, or automated workflows.
+
+### CLI Usage
+
+**Process a single directory:**
+```bash
+python3 align_cli.py -d "tif-files/Fe L" -e ECC --png
+```
+
+**Recursively process all subdirectories:**
+```bash
+python3 align_cli.py -d tif-files/ -r -e ECC --png
+```
+
+**Run multiple engines:**
+```bash
+python3 align_cli.py -d tif-files/ -r -e ECC PhaseCorrelation PCA --png
+```
+
+**Use automatic PCA threshold optimization:**
+```bash
+python3 align_cli.py -d tif-files/ -r -e PCA -t auto --png
+```
+
+### CLI Arguments
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `-d`, `--dir` | Root directory containing TIFF files | *(required)* |
+| `-r`, `--recursive` | Recurse into subdirectories | `False` |
+| `-e`, `--engines` | Alignment engines to run (`ECC`, `PCA`, `PhaseCorrelation`, `all`) | `ECC` |
+| `-t`, `--threshold` | PCA percentile threshold (float or `auto` for auto-optimization) | `99.9` |
+| `--png` | Save side-by-side comparison PNG (Direct Sum vs Aligned Sum) | `False` |
+| `--json` | Save per-frame offset log as a JSON file | `False` |
+| `--ephemeral-cache` | Delete `tif-cache/` after processing | `False` |
+| `--overwrite` | Overwrite existing `sum/` output files | `False` |
+
+### CLI Output Structure
+
+For each processed directory, the CLI creates a `sum/` subdirectory containing:
+```
+dataset_folder/
+└── sum/
+    ├── base_sum.tif                     # Unaligned direct sum
+    ├── aligned_sum_ECC.tif              # Aligned sum (per engine)
+    ├── aligned_offsets_ECC.json         # Per-frame (dx, dy) offsets + metadata (only if --json)
+    └── comparison_ECC.png               # Side-by-side comparison (if --png)
 ```
 
 # QERLIN Beamline Spectrometer Scan Alignment Project
@@ -71,9 +123,9 @@ To prevent spatial drift from broadening and blurring the spectral features, lon
 
 ## 3. Current Implementation & Limitations
 The alignment application corrects these shifts using three auto-alignment engines and manual override modes:
-- **Iterative ECC Engine (Default):** Iterative Enhanced Correlation Coefficient maximization registering diffuse, line-less spectral clouds. This is the recommended default workflow.
-- **PCA Engine:** Locates the spectroscopic line via intensity-weighted PCA (SVD) on pixels that exceed an intensity percentile threshold. Best for sharp, prominent lines.
-- **Phase Correlation Engine:** Computes translation offsets directly in the Fourier domain. Fast, but less robust to noise.
+- **Iterative ECC Engine (Default):** 2-stage coarse-to-fine multi-resolution ECC maximization. The coarse pass uses 2x downsampled images for speed; the fine pass runs at full resolution for sub-pixel accuracy.
+- **PCA Engine:** Locates the spectroscopic line via intensity-weighted PCA (SVD) on pixels that exceed an intensity percentile threshold. Best for sharp, prominent lines. Supports automatic threshold optimization.
+- **Phase Correlation Engine:** Computes translation offsets in the Fourier domain with DoG bandpass pre-filtering and Tukey (tapered cosine) windowing for improved accuracy under low SNR.
 - **Manual Mode (PCA only):** The user manually draws a line corresponding to a visible spectral feature to guide or override PCA alignment offsets.
 
 ### The PCA Limitation:
@@ -85,9 +137,10 @@ Under these conditions, the intensity-weighted PCA is dominated by Poisson noise
 The ultimate objective is to develop a robust, fully automated alignment tool that corrects sub-pixel 2D translations across all scan frames, regardless of the elastic line's intensity or the presence of severe Poisson noise. We will explore and evaluate the following algorithmic and machine learning solutions:
 
 ### A. Advanced Algorithmic Registration
-1. **Iterative ECC Maximization (Implemented):** Added a new alignment engine that uses a robust 2-stage coarse-to-fine Gaussian pyramid. This approach effectively aligns datasets where the spectral line is completely absent or obscured by the diffuse inelastic scattering cloud.
-2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering:** Apply bandpass filtering (e.g., Difference of Gaussians or Butterworth) to isolate the structural boundaries of the inelastic spectral cloud and suppress high-frequency Poisson (shot) noise before calculating phase correlation.
-3. **Sub-Pixel Matrix-Multiply DFT Registration:** Implement single-step DFT upsampling to achieve sub-pixel registration (e.g., 0.01 pixel precision) efficiently.
+1. **Iterative ECC Maximization (Implemented):** A 2-stage coarse-to-fine multi-resolution pyramid. The coarse pass downsamples by 2x and uses relaxed convergence criteria; the fine pass operates at full resolution for sub-pixel precision. This approach effectively aligns datasets where the spectral line is absent or obscured.
+2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering (Implemented):** DoG (Difference of Gaussians) bandpass filtering isolates structural boundaries while a Tukey (tapered cosine) window preserves signal near detector edges.
+3. **Headless CLI Batch Processing (Implemented):** Standalone `align_cli.py` script for batch-processing TIFF sequences without a GUI, with recursive directory scanning, multi-engine support, and automatic PCA threshold optimization.
+4. **Sub-Pixel Matrix-Multiply DFT Registration:** Implement single-step DFT upsampling to achieve sub-pixel registration (e.g., 0.01 pixel precision) efficiently.
 
 ### B. Machine Learning & Deep Learning Methods
 1. **Self-Supervised Deep Denoising (Noise2Noise / Noise2Void):** Leverage the temporal correlation of successive frames to train a U-Net to denoise sparse, photon-starved frames before registration, without requiring clean ground truth data. Denoised frames can then be aligned reliably using standard sub-pixel techniques.

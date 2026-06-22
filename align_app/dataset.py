@@ -89,6 +89,7 @@ class ZarrSequenceManager:
         self.n_frames = len(file_list)
         self.zarr_group = None
         self.median_frame = None
+        self._loading_done = threading.Event()
         self._init_zarr()
 
     # ------------------------------------------------------------------
@@ -103,6 +104,7 @@ class ZarrSequenceManager:
         directory.  Individual frames are keyed by :func:`_frame_key`.
         """
         if not self.file_list:
+            self._loading_done.set()
             return
 
         tif_dir = os.path.dirname(os.path.abspath(self.file_list[0]))
@@ -124,16 +126,19 @@ class ZarrSequenceManager:
         :meth:`compute_median` is called.
         """
         def _worker():
-            for filepath in self.file_list:
-                key = _frame_key(filepath)
-                if key not in self.zarr_group:
-                    try:
-                        raw = tifffile.imread(filepath).astype(np.float32)
-                        raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-                        self.zarr_group[key] = raw
-                    except Exception:
-                        pass
-            self.compute_median()
+            try:
+                for filepath in self.file_list:
+                    key = _frame_key(filepath)
+                    if key not in self.zarr_group:
+                        try:
+                            raw = tifffile.imread(filepath).astype(np.float32)
+                            raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+                            self.zarr_group[key] = raw
+                        except Exception:
+                            pass
+                self.compute_median()
+            finally:
+                self._loading_done.set()
 
         threading.Thread(target=_worker, daemon=True).start()
 
