@@ -1,6 +1,17 @@
+import sys
 import numpy as np
 import cv2
 from align_app.core.math_utils import _weighted_pca
+
+
+class PCAFitFailure(Exception):
+    """Raised when PCA line fitting fails due to insufficient points above threshold.
+
+    This occurs when fewer than 2 pixels survive the intensity percentile thresholding,
+    meaning the image is too noisy, flat, or the threshold is too aggressive for a
+    reliable SVD-based line fit.
+    """
+    pass
 
 def _cross_section_center(points: np.ndarray, weights: np.ndarray,
                           centroid: np.ndarray, direction: np.ndarray) -> np.ndarray:
@@ -108,7 +119,8 @@ def find_peak_line(image_data: np.ndarray, percentile_threshold: float) -> tuple
         raise ValueError("image_data must be 2D numpy array")
         
     if image_data.shape[0] == 0 or image_data.shape[1] == 0:
-        return np.array([0.0, 0.0]), np.array([1.0, 0.0])
+        print("PCA warning: empty image, cannot fit peak line.", file=sys.stderr)
+        raise PCAFitFailure("Empty image: cannot fit peak line.")
         
     image_data = np.nan_to_num(image_data, nan=0.0, posinf=0.0, neginf=0.0)
         
@@ -117,16 +129,16 @@ def find_peak_line(image_data: np.ndarray, percentile_threshold: float) -> tuple
         
     # Flat image check
     if np.max(image_data) <= np.min(image_data) + 1e-9:
-        h, w = image_data.shape
-        return np.array([w / 2.0, h / 2.0]), np.array([1.0, 0.0])
+        print("PCA warning: flat image (max ≈ min), cannot fit peak line.", file=sys.stderr)
+        raise PCAFitFailure("Flat image: cannot fit peak line.")
         
     threshold_val = np.percentile(image_data, percentile_threshold)
     rows, cols = np.where(image_data >= threshold_val)
     points = np.column_stack((cols, rows)).astype(np.float64)
     
     if len(points) < 2:
-        h, w = image_data.shape
-        return np.array([w / 2.0, h / 2.0]), np.array([1.0, 0.0])
+        print(f"PCA warning: fewer than 2 points above threshold ({percentile_threshold}%), cannot fit peak line.", file=sys.stderr)
+        raise PCAFitFailure(f"Fewer than 2 points above threshold ({percentile_threshold}%).")
 
     # Get intensity weights for these points (normalized to [0, 1])
     if percentile_threshold == 0.0:
@@ -183,7 +195,7 @@ def find_peak_line(image_data: np.ndarray, percentile_threshold: float) -> tuple
 
 def find_peak_line_fast(points: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
     """
-    Lightweight, high-performance PCA designed for threshold sweep operations.
+    Lightweight, high-performance PCA designed for auto-all threshold sweep operations.
 
     Mathematics & Performance:
     Bypasses the iterative outlier rejection and cross-section profile centering steps to minimize SVD 
@@ -267,25 +279,24 @@ def compute_line_based_offset(ref_raw: np.ndarray, target_raw: np.ndarray,
                                ref_direction: np.ndarray, ref_origin: np.ndarray,
                                ref_threshold: float, target_threshold: float
                                ) -> tuple[float, float]:
-    """
-    Calculate the translation vector (dx, dy) between a target frame and reference frame using line-based projection.
+    """Calculate the translation vector (dx, dy) between a target frame and reference frame using pure PCA centroid projection.
 
     Physics & Mathematics Context:
-    - RIXS Drift Characteristics: Spectroscopic lines are highly anisotropic. Shift perpendicular to the line 
-      (cross-dispersion drift) is physical beam drift that directly degrades resolution. Shift along the line 
+    - RIXS Drift Characteristics: Spectroscopic lines are highly anisotropic. Shift perpendicular to the line
+      (cross-dispersion drift) is physical beam drift that directly degrades resolution. Shift along the line
       (dispersion direction) represents spatial features and is less constrained by the line profile.
     - Decomposition Strategy:
-      1. Perpendicular Drift: Determines the target frame's line centroid using PCA. The distance vector from 
+      1. Perpendicular Drift: Determines the target frame's line centroid using PCA. The distance vector from
          reference centroid to target centroid is projected onto the perpendicular direction vector:
          perp_offset = delta_centroid · perp_vector
          This captures the critical sub-pixel cross-dispersion drift.
-      2. Parallel Drift: Computes the whole-frame shift via phase correlation, then projects this translation 
-         onto the line's parallel direction vector:
-         parallel_offset = phase_correlation_offset · direction_vector
+      2. Parallel Drift: Projects the same centroid delta onto the line direction vector:
+         parallel_offset = delta_centroid · direction_vector
+         This captures drift along the spectral line using PCA centroid positions.
       3. Vector Synthesis: Reconstructs the complete sub-pixel displacement vector as:
          displacement_vector = (perp_offset * perp_vector) + (parallel_offset * direction_vector)
-      This hybrid method combines high-accuracy PCA for the resolution-critical perpendicular axis with 
-      robust whole-image phase correlation for the parallel axis.
+      This method uses pure PCA centroid differences for both axes, providing a clean
+      evaluation of PCA-only alignment without phase correlation assistance.
 
     Args:
         ref_raw: 2D float32 array of the reference image.
@@ -297,34 +308,28 @@ def compute_line_based_offset(ref_raw: np.ndarray, target_raw: np.ndarray,
 
     Returns:
         tuple[float, float]: Sub-pixel translation vector (dx, dy).
+
+    Raises:
+        PCAFitFailure: If the target frame's PCA line fitting fails.
     """
     perp = np.array([-ref_direction[1], ref_direction[0]])
-    
+
     # Find the target frame's line using PCA (gets its own center)
     try:
         target_origin, target_dir = find_peak_line(target_raw, target_threshold)
-    except Exception:
-        return phase_correlation_offset(ref_raw, target_raw)
-    
-    # Compute the perpendicular offset from reference origin to target origin
+    except PCAFitFailure:
+        print(f"PCA warning: target frame line fitting failed at threshold {target_threshold}%, returning (0.0, 0.0).", file=sys.stderr)
+        return (0.0, 0.0)
+
+    # Compute the full offset from reference centroid to target centroid
     delta = target_origin - ref_origin
     perp_offset = delta[0] * perp[0] + delta[1] * perp[1]
-    
-    # Also compute the along-line offset using phase correlation for the
-    # parallel component (line center shifts along the line don't change
-    # the line's appearance, but the image content shifts)
-    try:
-        pc_dx, pc_dy = phase_correlation_offset(ref_raw, target_raw)
-    except Exception:
-        pc_dx, pc_dy = 0.0, 0.0
-    
-    # The parallel component from phase correlation
-    parallel_offset = pc_dx * ref_direction[0] + pc_dy * ref_direction[1]
-    
+    parallel_offset = delta[0] * ref_direction[0] + delta[1] * ref_direction[1]
+
     # Reconstruct (dx, dy) = perpendicular_component + parallel_component
     dx = perp_offset * perp[0] + parallel_offset * ref_direction[0]
     dy = perp_offset * perp[1] + parallel_offset * ref_direction[1]
-    
+
     return float(dx), float(dy)
 
 def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray) -> tuple[float, float]:

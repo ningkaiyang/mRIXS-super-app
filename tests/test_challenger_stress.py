@@ -13,7 +13,8 @@ from align_app.core import (
     find_peak_line,
     phase_correlation_offset,
     warp_image,
-    preprocess_image
+    preprocess_image,
+    PCAFitFailure
 )
 
 def pump_events(root):
@@ -31,19 +32,17 @@ class TestMathCoreAdvancedStress(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_find_peak_line_extreme_nans_infs(self):
-        # Image consisting entirely of NaNs
+        # Image consisting entirely of NaNs -> nan_to_num makes it flat -> PCAFitFailure
         img_all_nan = np.full((10, 10), np.nan, dtype=np.float32)
-        origin, direction = find_peak_line(img_all_nan, 90.0)
-        self.assertEqual(list(origin), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img_all_nan, 90.0)
 
-        # Image consisting entirely of Infs
+        # Image consisting entirely of Infs -> nan_to_num makes it flat -> PCAFitFailure
         img_all_inf = np.full((10, 10), np.inf, dtype=np.float32)
-        origin, direction = find_peak_line(img_all_inf, 90.0)
-        self.assertEqual(list(origin), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img_all_inf, 90.0)
 
-        # Mixed NaNs, Infs, and finite values
+        # Mixed NaNs, Infs, and finite values with a beam line
         img_mixed = np.zeros((10, 10), dtype=np.float32)
         img_mixed[2, 2] = np.nan
         img_mixed[3, 3] = np.inf
@@ -58,20 +57,18 @@ class TestMathCoreAdvancedStress(unittest.TestCase):
         img = np.zeros((10, 10), dtype=np.float32)
         img[4, 4] = 100.0
         # Percentile 99.9% should only select that single pixel
-        # Since we have < 2 points, it should trigger the fallback
-        origin, direction = find_peak_line(img, 99.9)
-        self.assertEqual(list(origin), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        # Since we have < 2 points, it should raise PCAFitFailure
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img, 99.9)
 
     def test_find_peak_line_huge_dimensions(self):
         # 1000x1000 flat image performance check
         img = np.zeros((1000, 1000), dtype=np.float32)
         t0 = time.time()
-        origin, direction = find_peak_line(img, 99.0)
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img, 99.0)
         t1 = time.time()
         self.assertLess(t1 - t0, 0.5)  # should be fast (less than 500ms)
-        self.assertEqual(list(origin), [500.0, 500.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
 
     def test_phase_correlation_offset_all_nan_or_inf(self):
         ref = np.full((64, 64), np.nan, dtype=np.float32)
@@ -327,14 +324,11 @@ class TestGUIEdgeCasesStress(unittest.TestCase):
 
     def test_find_peak_line_single_hot_pixel_origin(self):
         # When there is only 1 point matching (e.g. 100th percentile of a single hot pixel),
-        # it falls back to the center of the image instead of the hot pixel.
-        # We assert this behavior here.
+        # it raises PCAFitFailure since PCA cannot fit a line through < 2 points.
         img = np.zeros((10, 10), dtype=np.float32)
         img[2, 7] = 50.0
-        origin, direction = find_peak_line(img, 100.0)
-        # Center of image is [5.0, 5.0]
-        self.assertEqual(list(origin), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img, 100.0)
 
     def test_natural_sort_mixed_case_stability(self):
         # Ensure that sorting handles duplicate names stably

@@ -14,7 +14,8 @@ from align_app.core import (
     find_peak_line,
     phase_correlation_offset,
     warp_image,
-    preprocess_image
+    preprocess_image,
+    PCAFitFailure
 )
 
 def pump_events(root):
@@ -250,21 +251,18 @@ class TestE2E(unittest.TestCase):
 
     def test_f3_05_pca_flat_image_fallback_centroid(self):
         flat_img = np.zeros((10, 10), dtype=np.float32)
-        origin, _ = find_peak_line(flat_img, 99.0)
-        self.assertEqual(origin[0], 5.0)
-        self.assertEqual(origin[1], 5.0)
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(flat_img, 99.0)
 
     def test_f3_06_pca_flat_image_fallback_line(self):
         flat_img = np.zeros((10, 10), dtype=np.float32)
-        _, direction = find_peak_line(flat_img, 99.0)
-        self.assertEqual(direction[0], 1.0)
-        self.assertEqual(direction[1], 0.0)
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(flat_img, 99.0)
 
     def test_f3_07_pca_insufficient_points_fallback(self):
         flat_img = np.zeros((10, 10), dtype=np.float32)
-        origin, direction = find_peak_line(flat_img, 99.0)
-        self.assertEqual(origin[0], 5.0)
-        self.assertEqual(direction[0], 1.0)
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(flat_img, 99.0)
 
     def test_f3_08_pca_threshold_out_of_bounds_raises(self):
         img = np.zeros((10, 10), dtype=np.float32)

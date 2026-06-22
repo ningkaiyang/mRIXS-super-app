@@ -9,7 +9,9 @@ import tifffile
 from align_app.core import (
     natural_sort,
     find_peak_line,
+    PCAFitFailure,
     phase_correlation_offset,
+    compute_line_based_offset,
     warp_image,
     preprocess_image,
     apply_colormap,
@@ -89,14 +91,11 @@ class TestFindPeakLine(unittest.TestCase):
         self.assertAlmostEqual(abs(direction[0]), expected_comp, places=3)
         self.assertAlmostEqual(abs(direction[1]), expected_comp, places=3)
 
-    def test_insufficient_points_fallback(self):
+    def test_insufficient_points_raises_pca_fit_failure(self):
+        """PCA failure on flat images should raise PCAFitFailure, not return fallback values."""
         flat_img = np.zeros((10, 10), dtype=np.float32)
-        origin, direction = find_peak_line(flat_img, 99.0)
-        
-        self.assertEqual(origin[0], 5.0)
-        self.assertEqual(origin[1], 5.0)
-        self.assertEqual(direction[0], 1.0)
-        self.assertEqual(direction[1], 0.0)
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(flat_img, 99.0)
 
     def test_invalid_arguments(self):
         with self.assertRaises(ValueError):
@@ -394,6 +393,97 @@ class TestGenerateAlignedSum(unittest.TestCase):
             self.temp_files[:1], self._get_raw, offsets, (10, 10)
         )
         np.testing.assert_allclose(result, 1.0)
+
+
+class TestPCAFitFailureException(unittest.TestCase):
+    """Tests that PCAFitFailure is raised correctly in find_peak_line under various failure conditions."""
+
+    def test_flat_image_raises(self):
+        """A completely flat image should raise PCAFitFailure."""
+        flat = np.ones((50, 50), dtype=np.float32) * 42.0
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(flat, 99.0)
+
+    def test_empty_image_raises(self):
+        """An image with zero dimensions should raise PCAFitFailure."""
+        empty = np.zeros((0, 10), dtype=np.float32)
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(empty, 99.0)
+
+    def test_aggressive_threshold_raises(self):
+        """An extremely aggressive threshold leaving < 2 points should raise PCAFitFailure."""
+        img = np.zeros((100, 100), dtype=np.float32)
+        img[50, 50] = 1.0  # Only 1 bright pixel
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img, 99.9999)
+
+    def test_normal_image_does_not_raise(self):
+        """A well-formed image with a clear line should not raise PCAFitFailure."""
+        img = np.zeros((100, 100), dtype=np.float32)
+        img[:, 50] = 10.0  # Vertical beam
+        origin, direction = find_peak_line(img, 99.0)
+        self.assertFalse(np.isnan(origin).any())
+        self.assertFalse(np.isnan(direction).any())
+
+
+class TestComputeLineBasedOffsetNoFallback(unittest.TestCase):
+    """Tests that compute_line_based_offset returns (0, 0) on PCA failure without falling back to phase correlation."""
+
+    def setUp(self):
+        # Reference image with a clear vertical line at x=50
+        self.ref = np.zeros((100, 100), dtype=np.float32)
+        self.ref[:, 50] = 10.0
+        self.ref_direction = np.array([0.0, 1.0])
+        self.ref_origin = np.array([50.0, 49.5])
+
+    def test_pca_failure_returns_zero_offset(self):
+        """When PCA fails on the target frame, offset should be (0, 0), not a phase-correlation estimate."""
+        # Target is a flat image — PCA will fail
+        target = np.ones((100, 100), dtype=np.float32) * 5.0
+        dx, dy = compute_line_based_offset(
+            self.ref, target,
+            self.ref_direction, self.ref_origin,
+            99.0, 99.0
+        )
+        self.assertEqual(dx, 0.0)
+        self.assertEqual(dy, 0.0)
+
+    def test_successful_offset_with_known_shift(self):
+        """When PCA succeeds, the offset should reflect centroid differences."""
+        # Target image with a shifted vertical line at x=55
+        target = np.zeros((100, 100), dtype=np.float32)
+        target[:, 55] = 10.0
+        dx, dy = compute_line_based_offset(
+            self.ref, target,
+            self.ref_direction, self.ref_origin,
+            99.0, 99.0
+        )
+        # The line moved 5 pixels in x (perpendicular to vertical line direction)
+        self.assertAlmostEqual(dx, 5.0, places=0)
+        self.assertAlmostEqual(dy, 0.0, places=0)
+
+    def test_no_phase_correlation_call_on_pca_failure(self):
+        """Verify that phase correlation is NOT called when PCA fails.
+
+        We do this by providing images with a known shift that phase correlation
+        would detect — but since PCA fails, the result should be (0, 0) not
+        the phase correlation estimate.
+        """
+        # Target has structure that phase correlation would detect as a shift,
+        # but no clear peak line for PCA
+        ref_structured = np.random.RandomState(42).rand(100, 100).astype(np.float32)
+        target_shifted = np.roll(ref_structured, 5, axis=1)  # 5px horizontal shift
+
+        # With a flat/noisy target, PCA should fail
+        target_flat = np.ones((100, 100), dtype=np.float32) * 5.0
+        dx, dy = compute_line_based_offset(
+            ref_structured, target_flat,
+            np.array([0.0, 1.0]), np.array([50.0, 50.0]),
+            99.0, 99.0
+        )
+        # Should be (0, 0), NOT a phase correlation result
+        self.assertEqual(dx, 0.0)
+        self.assertEqual(dy, 0.0)
 
 
 if __name__ == "__main__":

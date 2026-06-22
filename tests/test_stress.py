@@ -11,7 +11,8 @@ from align_app.core import (
     find_peak_line,
     phase_correlation_offset,
     warp_image,
-    preprocess_image
+    preprocess_image,
+    PCAFitFailure
 )
 
 class TestNaturalSortStress(unittest.TestCase):
@@ -107,29 +108,25 @@ class TestPCAPeakFindingStress(unittest.TestCase):
 
 
     def test_flat_image_variations(self):
-        # Extremely large flat values
+        # Extremely large flat values -> flat image -> PCAFitFailure
         img_large = np.full((10, 10), 1e30, dtype=np.float32)
-        centroid, direction = find_peak_line(img_large, 90.0)
-        self.assertEqual(list(centroid), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img_large, 90.0)
 
-        # Extremely small flat values
+        # Extremely small flat values -> flat image -> PCAFitFailure
         img_small = np.full((10, 10), 1e-30, dtype=np.float32)
-        centroid, direction = find_peak_line(img_small, 90.0)
-        self.assertEqual(list(centroid), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img_small, 90.0)
 
     def test_nan_inf_values(self):
         # Image with inf/nan values
         img = np.zeros((10, 10), dtype=np.float32)
         img[2, 2] = np.nan
         img[5, 5] = np.inf
-        # Test if find_peak_line crashes
-        # NumPy's np.percentile with np.nan returns np.nan, which causes image_data >= threshold_val
-        # to return all False. That triggers fallback. Let's verify fallback is returned.
-        centroid, direction = find_peak_line(img, 90.0)
-        self.assertEqual(list(centroid), [5.0, 5.0])
-        self.assertEqual(list(direction), [1.0, 0.0])
+        # nan_to_num converts NaN->0, Inf->large_number. After conversion the image
+        # is effectively flat (only one non-zero pixel from inf), which raises PCAFitFailure.
+        with self.assertRaises(PCAFitFailure):
+            find_peak_line(img, 90.0)
 
 
 class TestPhaseCorrelationOffsetStress(unittest.TestCase):

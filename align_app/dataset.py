@@ -29,6 +29,7 @@ import zarr
 import tifffile
 import numpy as np
 import os
+import pathlib
 import hashlib
 import threading
 
@@ -110,7 +111,8 @@ class ZarrSequenceManager:
         group_path = os.path.join(cache_dir, "frames.zarr")
 
         # Open in append mode: creates the group if absent, re-opens if present.
-        self.zarr_group = zarr.open_group(group_path, mode="a")
+        # Wrap in pathlib.Path to bypass URL/URI parsing and correctly support '#' in directory paths.
+        self.zarr_group = zarr.open_group(pathlib.Path(group_path), mode="a")
         self._load_all_async()
 
     def _load_all_async(self) -> None:

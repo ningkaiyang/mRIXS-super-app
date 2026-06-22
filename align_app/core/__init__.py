@@ -13,6 +13,7 @@ from .io import load_raw
 from .utils import natural_sort
 from .math_utils import _weighted_pca
 from .alignment import (
+    PCAFitFailure,
     _cross_section_center,
     find_peak_line,
     find_peak_line_fast,
@@ -29,6 +30,7 @@ from .image_processing import (
 )
 
 __all__ = [
+    "PCAFitFailure",
     "load_raw",
     "natural_sort",
     "_weighted_pca",

@@ -86,6 +86,43 @@ class EccSettingsPanel(customtkinter.CTkFrame):
         self.precompute_button.configure(state=state)
 
 
+class PhaseCorrelationSettingsPanel(customtkinter.CTkFrame):
+    """Settings panel for the Phase Correlation alignment engine.
+
+    Provides an informational label describing the algorithm and a
+    'Precompute All' button to batch-compute offsets for all frames.
+    """
+    def __init__(self, parent, controller, **kwargs):
+        """Initializes the PhaseCorrelationSettingsPanel.
+
+        Args:
+            parent: The parent widget.
+            controller: The controller managing the slideshow logic.
+            **kwargs: Additional keyword arguments for CTkFrame.
+        """
+        super().__init__(parent, **kwargs)
+        self.controller = controller
+
+        self.info_label = customtkinter.CTkLabel(
+            self, text="Phase Correlation uses Fourier-domain cross-correlation for sub-pixel drift estimation."
+        )
+        self.info_label.pack(side="left", fill="x", expand=True, padx=5)
+
+        self.precompute_button = customtkinter.CTkButton(
+            self, text="Precompute All", command=self.controller.trigger_auto_snap_all,
+            width=100, fg_color="#2F72A5", hover_color="#1F5A85"
+        )
+        self.precompute_button.pack(side="right", padx=2)
+
+    def set_ui_state(self, state: str):
+        """Sets the interactive state of all child widgets.
+
+        Args:
+            state (str): 'normal' or 'disabled'.
+        """
+        self.precompute_button.configure(state=state)
+
+
 class SlideshowControlPanel(customtkinter.CTkFrame):
     """
     GUI panel hosting Engine settings and timeline navigation elements.
@@ -96,6 +133,7 @@ class SlideshowControlPanel(customtkinter.CTkFrame):
 
         self.pca_panel = PcaSettingsPanel(self, controller)
         self.ecc_panel = EccSettingsPanel(self, controller)
+        self.phase_correlation_panel = PhaseCorrelationSettingsPanel(self, controller)
         
         # Start with PCA visible
         self.active_engine_panel = self.pca_panel
@@ -116,11 +154,23 @@ class SlideshowControlPanel(customtkinter.CTkFrame):
         self.frame_slider.pack(side="left", fill="x", expand=True, padx=5)
 
     def switch_engine(self, engine_name: str):
+        """Switches the visible engine settings panel based on the selected engine.
+
+        Args:
+            engine_name (str): The name of the engine to switch to ('PCA', 'ECC', or 'Phase Correlation').
+
+        Raises:
+            ValueError: If engine_name is not a recognized engine.
+        """
         self.active_engine_panel.pack_forget()
-        if engine_name == "ECC":
-            self.active_engine_panel = self.ecc_panel
-        else:
+        if engine_name == "PCA":
             self.active_engine_panel = self.pca_panel
+        elif engine_name == "ECC":
+            self.active_engine_panel = self.ecc_panel
+        elif engine_name == "Phase Correlation":
+            self.active_engine_panel = self.phase_correlation_panel
+        else:
+            raise ValueError(f"Unknown engine: {engine_name}")
         self.active_engine_panel.pack(fill="x", pady=2, before=self.frame_nav_frame)
 
     def set_ui_state(self, state: str):

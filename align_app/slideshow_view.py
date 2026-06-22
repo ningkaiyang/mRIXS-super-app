@@ -169,7 +169,7 @@ class SlideshowView(customtkinter.CTkFrame):
                 origin, _ = find_peak_line(raw, t)
                 self.manager.per_frame_origin[self.manager.current_idx] = origin
             except Exception:
-                pass
+                self.manager.per_frame_origin[self.manager.current_idx] = self.manager.ref_origin
 
         # 5. Extract displacement offsets
         dx, dy = 0.0, 0.0
@@ -273,7 +273,7 @@ class SlideshowView(customtkinter.CTkFrame):
 
     def trigger_auto_snap(self):
         """Triggers the auto-snap operation to find the best threshold for the current frame."""
-        if self.manager.active_engine == "ECC":
+        if self.manager.active_engine in ("ECC", "Phase Correlation"):
             self.manager._invalidate_offset_cache(self.manager.current_idx)
             self.canvas_panel.clear_photo_cache()
             self.load_and_render()
@@ -292,7 +292,7 @@ class SlideshowView(customtkinter.CTkFrame):
         """Triggers the auto-snap operation for all loaded frames asynchronously."""
         n_frames = len(self.manager.file_list)
         
-        if self.manager.active_engine == "ECC":
+        if self.manager.active_engine in ("ECC", "Phase Correlation"):
             self.control_panel.active_engine_panel.precompute_button.configure(text=f"0/{n_frames}...", state="disabled")
             def _worker():
                 for idx in range(n_frames):

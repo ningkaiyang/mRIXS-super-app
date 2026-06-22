@@ -4,9 +4,11 @@ import os
 import queue
 import threading
 import numpy as np
+import sys
 
 from align_app.dataset import ZarrSequenceManager
 from align_app.core import (
+    PCAFitFailure,
     apply_colormap,
     generate_aligned_sum,
     find_peak_line,
@@ -161,7 +163,12 @@ class SlideshowManager:
 
         t = self.per_frame_threshold.get(0, self.pca_threshold)
         self.ref_threshold = t
-        self.ref_origin, self.ref_direction = find_peak_line(ref_raw, t)
+        try:
+            self.ref_origin, self.ref_direction = find_peak_line(ref_raw, t)
+        except PCAFitFailure:
+            print(f"PCA warning: reference frame line fitting failed at threshold {t}%, using default horizontal line at origin.", file=sys.stderr)
+            self.ref_origin = np.array([0.0, 0.0])
+            self.ref_direction = np.array([1.0, 0.0])
         self.per_frame_origin[0] = self.ref_origin.copy()
 
     def get_raw(self, filepath: str) -> np.ndarray:
@@ -234,8 +241,12 @@ class SlideshowManager:
         if self.active_engine == "PCA":
             target_threshold = self.per_frame_threshold.get(frame_idx, self.ref_threshold)
             cache_key = (filepath, frame_idx, "PCA", self.ref_threshold, target_threshold)
-        else:
+        elif self.active_engine == "ECC":
             cache_key = (filepath, frame_idx, "ECC")
+        elif self.active_engine == "Phase Correlation":
+            cache_key = (filepath, frame_idx, "PhaseCorrelation")
+        else:
+            raise ValueError(f"Unknown engine: {self.active_engine}")
 
         if cache_key in self.offset_cache:
             return self.offset_cache[cache_key]
@@ -255,13 +266,15 @@ class SlideshowManager:
                     self.ref_threshold, target_threshold
                 )
             except Exception:
-                try:
-                    dx, dy = phase_correlation_offset(self.ref_raw, raw)
-                except Exception:
-                    dx, dy = 0.0, 0.0
-        else:
+                print(f"PCA warning: offset computation failed for frame {frame_idx}, defaulting to (0.0, 0.0).", file=sys.stderr)
+                dx, dy = 0.0, 0.0
+        elif self.active_engine == "ECC":
             dx, dy = ecc_maximization_offset(self.ref_raw, raw)
-            
+        elif self.active_engine == "Phase Correlation":
+            dx, dy = phase_correlation_offset(self.ref_raw, raw)
+        else:
+            raise ValueError(f"Unknown engine: {self.active_engine}")
+
         self.offset_cache[cache_key] = (dx, dy)
         return (dx, dy)
 
