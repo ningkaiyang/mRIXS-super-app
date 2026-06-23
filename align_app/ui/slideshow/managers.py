@@ -15,7 +15,8 @@ from align_app.core import (
     find_peak_line_fast,
     compute_line_based_offset,
     phase_correlation_offset,
-    ecc_maximization_offset
+    ecc_maximization_offset,
+    find_best_threshold
 )
 
 class SlideshowManager:
@@ -505,7 +506,7 @@ class SlideshowManager:
             return
 
         def _worker():
-            best = self._find_best_threshold(raw)
+            best = find_best_threshold(raw)
             self.result_queue.put(lambda: on_complete(best))
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -522,77 +523,12 @@ class SlideshowManager:
             for idx in range(n_frames):
                 raw = self.get_raw(self.file_list[idx])
                 if raw is not None:
-                    results[idx] = self._find_best_threshold(raw)
+                    results[idx] = find_best_threshold(raw)
                 self.result_queue.put(lambda idx_c=idx+1: on_progress(idx_c, n_frames))
             
             self.result_queue.put(lambda: on_complete(results))
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _find_best_threshold(self, raw: np.ndarray) -> float:
-        """Finds the PCA threshold that minimizes the perpendicular spread of the peak line.
-
-        Args:
-            raw (np.ndarray): The raw 2D intensity array.
-
-        Returns:
-            float: The optimal PCA threshold percentage.
-        """
-        h, w = raw.shape
-        flat = raw.ravel()
-        sorted_idx = np.argsort(flat)
-        sorted_rows = sorted_idx // w
-        sorted_cols = sorted_idx % w
-        n_total = len(flat)
-
-        best_threshold = 99.9
-        best_spread = float('inf')
-
-        def _eval_at(t_pct):
-            cutoff = int(t_pct / 100.0 * n_total)
-            if n_total - cutoff < 5:
-                return None
-            rows = sorted_rows[cutoff:]
-            cols = sorted_cols[cutoff:]
-            points = np.column_stack((cols, rows)).astype(np.float64)
-            weights = raw[rows, cols].astype(np.float64)
-            w_min, w_max = np.min(weights), np.max(weights)
-            if w_max - w_min > 1e-9:
-                weights = ((weights - w_min) / (w_max - w_min)) ** 2
-            else:
-                weights = np.ones(len(points))
-            weights = np.clip(weights, 1e-6, None)
-            _, _, spread = find_peak_line_fast(points, weights)
-            return spread
-
-        # Coarse pass
-        for t_int in range(9800, 10000):
-            t = t_int / 100.0
-            spread = _eval_at(t)
-            if spread is not None and spread < best_spread:
-                best_spread = spread
-                best_threshold = t
-
-        # Fine pass
-        fine_lo = max(98.0, best_threshold - 0.1)
-        fine_hi = min(99.999, best_threshold + 0.1)
-        for t_int in range(int(fine_lo * 1000), int(fine_hi * 1000) + 1):
-            t = t_int / 1000.0
-            spread = _eval_at(t)
-            if spread is not None and spread < best_spread:
-                best_spread = spread
-                best_threshold = t
-
-        # Ultra-fine pass
-        uf_lo = max(98.0, best_threshold - 0.005)
-        uf_hi = min(99.9999, best_threshold + 0.005)
-        for t_int in range(int(uf_lo * 10000), int(uf_hi * 10000) + 1):
-            t = t_int / 10000.0
-            spread = _eval_at(t)
-            if spread is not None and spread < best_spread:
-                best_spread = spread
-                best_threshold = t
-
-        return best_threshold
 
     def compute_all_offsets_for_export(self, progress_callback) -> dict[int, tuple[float, float]]:
         """Synchronously computes sub-pixel translation offsets for all frames relative to the reference.

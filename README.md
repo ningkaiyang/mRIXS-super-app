@@ -37,7 +37,7 @@ python run.py
 
 1. **Zarr-Backed Frame Caching:** High-resolution TIFF loading is optimized by caching frame arrays inside a content-addressed `tif-cache/frames.zarr` database in the dataset directory. Cache keys are computed via MD5 hashes of filepaths and modification times, ensuring instantaneous sequence reloads even across different run sessions.
 2. **Multi-Engine Alignment Architecture:**
-   - **Iterative ECC Maximization (Default):** Uses a 2-stage coarse-to-fine multi-resolution pyramid. The coarse pass downsamples images by 2x and applies a light Gaussian blur (sigma=2.0) with relaxed convergence criteria for fast rough alignment. The fine pass operates at full resolution with sigma=1.0 blur for exact sub-pixel precision.
+   - **Iterative ECC Maximization (Default):** Uses a 3-level Gaussian Pyramid for robust sub-pixel alignment. It applies a Scharr gradient magnitude pre-filter after a Gaussian blur (sigma=4.0) to convert the image into a clean peak-edge intensity map, crops horizontally to the spectral band, and projects the 2D offset onto a 1D physical drift vector.
    - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component. Ideal for datasets with a sharp, prominent spectral line.
    - **Phase Correlation:** DoG bandpass-filtered Fourier-domain translation estimation with a Tukey (tapered cosine) window that preserves spectral line features near detector edges.
 3. **Interactive UI Panels:**
@@ -137,7 +137,7 @@ Under these conditions, the intensity-weighted PCA is dominated by Poisson noise
 The ultimate objective is to develop a robust, fully automated alignment tool that corrects sub-pixel 2D translations across all scan frames, regardless of the elastic line's intensity or the presence of severe Poisson noise. We will explore and evaluate the following algorithmic and machine learning solutions:
 
 ### A. Advanced Algorithmic Registration
-1. **Iterative ECC Maximization (Implemented):** A 2-stage coarse-to-fine multi-resolution pyramid. The coarse pass downsamples by 2x and uses relaxed convergence criteria; the fine pass operates at full resolution for sub-pixel precision. This approach effectively aligns datasets where the spectral line is absent or obscured.
+1. **Iterative ECC Maximization (Implemented):** A 3-level Gaussian Pyramid that pre-filters frames using a Scharr gradient magnitude filter after a Gaussian blur (sigma=4.0). It dynamically crops to the valid spectral region and projects the computed shift onto a 1D physical drift vector. This approach effectively aligns datasets where the spectral line is absent or obscured by trapping Poisson noise.
 2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering (Implemented):** DoG (Difference of Gaussians) bandpass filtering isolates structural boundaries while a Tukey (tapered cosine) window preserves signal near detector edges.
 3. **Headless CLI Batch Processing (Implemented):** Standalone `align_cli.py` script for batch-processing TIFF sequences without a GUI, with recursive directory scanning, multi-engine support, and automatic PCA threshold optimization.
 4. **Sub-Pixel Matrix-Multiply DFT Registration:** Implement single-step DFT upsampling to achieve sub-pixel registration (e.g., 0.01 pixel precision) efficiently.

@@ -23,6 +23,7 @@ from .alignment import (
     compute_line_based_offset,
     ecc_maximization_offset,
     compute_alignment_priors,
+    find_best_threshold,
 )
 from .image_processing import (
     warp_image,
@@ -51,4 +52,5 @@ __all__ = [
     "generate_direct_sum",
     "ecc_maximization_offset",
     "compute_alignment_priors",
+    "find_best_threshold",
 ]

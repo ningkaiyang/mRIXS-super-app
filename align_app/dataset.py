@@ -207,3 +207,36 @@ class ZarrSequenceManager:
                     pass
         if frames:
             self.median_frame = np.median(np.stack(frames, axis=0), axis=0)
+
+
+class CLIZarrSequenceManager(ZarrSequenceManager):
+    """Synchronous variant of ZarrSequenceManager for headless CLI operation.
+
+    Overrides the asynchronous background loading with a synchronous loop
+    to ensure all frames are cached and the temporal median is computed
+    before alignment begins.
+    """
+
+    def _load_all_async(self):
+        """Load all frames synchronously and compute the temporal median.
+
+        Iterates over every file in *file_list*, caching each one in the
+        Zarr group if it is not already present.  After all frames are
+        cached, :meth:`compute_median` is called so that
+        :attr:`median_frame` is available immediately.
+        """
+        for filepath in self.file_list:
+            key = _frame_key(filepath)
+            if key not in self.zarr_group:
+                try:
+                    raw = tifffile.imread(filepath).astype(np.float32)
+                    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+                    self.zarr_group[key] = raw
+                except Exception as e:
+                    import sys
+                    print(
+                        f"  Warning: Failed to cache {os.path.basename(filepath)}: {e}",
+                        file=sys.stderr,
+                    )
+        self.compute_median()
+        self._loading_done.set()

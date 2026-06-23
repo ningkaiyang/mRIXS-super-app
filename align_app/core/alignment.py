@@ -640,3 +640,90 @@ def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray, crop_bo
         return float(dx), float(dy)
     except Exception:
         return (0.0, 0.0)
+
+def find_best_threshold(raw: np.ndarray) -> float:
+    """Find the PCA percentile threshold that minimises perpendicular spread.
+
+    Performs a 3-stage sweep (coarse → fine → ultra-fine) over the
+    percentile space, evaluating the median perpendicular distance from
+    the intensity-weighted PCA line at each candidate threshold.  The
+    threshold that yields the tightest (minimum spread) line fit is
+    returned.
+
+    Stages:
+        1. **Coarse** — 98.00 to 99.99 in steps of 0.01  (200 evaluations)
+        2. **Fine** — ±0.1 around the coarse winner in steps of 0.001
+        3. **Ultra-fine** — ±0.005 around the fine winner in steps of 0.0001
+
+    Args:
+        raw: 2-D ``float32`` image array.
+
+    Returns:
+        Optimal percentile threshold in the range [98.0, ~100.0].
+    """
+    h, w = raw.shape
+    flat = raw.ravel()
+    sorted_idx = np.argsort(flat)
+    sorted_rows = sorted_idx // w
+    sorted_cols = sorted_idx % w
+    n_total = len(flat)
+
+    best_threshold = 99.9
+    best_spread = float('inf')
+
+    def _eval_at(t_pct):
+        """Evaluate line spread at a single percentile threshold.
+
+        Args:
+            t_pct: Percentile threshold value (e.g. 99.5).
+
+        Returns:
+            Median perpendicular spread, or ``None`` if fewer than 5
+            pixels survive the threshold.
+        """
+        cutoff = int(t_pct / 100.0 * n_total)
+        if n_total - cutoff < 5:
+            return None
+        rows = sorted_rows[cutoff:]
+        cols = sorted_cols[cutoff:]
+        points = np.column_stack((cols, rows)).astype(np.float64)
+        weights = raw[rows, cols].astype(np.float64)
+        w_min, w_max = np.min(weights), np.max(weights)
+        if w_max - w_min > 1e-9:
+            weights = ((weights - w_min) / (w_max - w_min)) ** 2
+        else:
+            weights = np.ones(len(points))
+        weights = np.clip(weights, 1e-6, None)
+        _, _, spread = find_peak_line_fast(points, weights)
+        return spread
+
+    # Coarse pass: 98.00 → 99.99 in steps of 0.01
+    for t_int in range(9800, 10000):
+        t = t_int / 100.0
+        spread = _eval_at(t)
+        if spread is not None and spread < best_spread:
+            best_spread = spread
+            best_threshold = t
+
+    # Fine pass: ±0.1 around coarse best in steps of 0.001
+    fine_lo = max(98.0, best_threshold - 0.1)
+    fine_hi = min(99.999, best_threshold + 0.1)
+    for t_int in range(int(fine_lo * 1000), int(fine_hi * 1000) + 1):
+        t = t_int / 1000.0
+        spread = _eval_at(t)
+        if spread is not None and spread < best_spread:
+            best_spread = spread
+            best_threshold = t
+
+    # Ultra-fine pass: ±0.005 around fine best in steps of 0.0001
+    uf_lo = max(98.0, best_threshold - 0.005)
+    uf_hi = min(99.9999, best_threshold + 0.005)
+    for t_int in range(int(uf_lo * 10000), int(uf_hi * 10000) + 1):
+        t = t_int / 10000.0
+        spread = _eval_at(t)
+        if spread is not None and spread < best_spread:
+            best_spread = spread
+            best_threshold = t
+
+    return best_threshold
+
