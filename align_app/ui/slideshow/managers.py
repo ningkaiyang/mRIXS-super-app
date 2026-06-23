@@ -16,7 +16,8 @@ from align_app.core import (
     compute_line_based_offset,
     phase_correlation_offset,
     ecc_maximization_offset,
-    find_best_threshold
+    find_best_threshold,
+    precompute_ecc_reference
 )
 
 class SlideshowManager:
@@ -73,6 +74,8 @@ class SlideshowManager:
         self.zarr_manager = None
         self.rgb_cache = {}
         self.offset_cache = {}
+        self.ref_ecc_pyr = None
+        self.ecc_lock = threading.Lock()
 
         # Current frame data (for compatibility and logic)
         self.current_raw = None
@@ -109,6 +112,7 @@ class SlideshowManager:
         self.zarr_manager = ZarrSequenceManager(file_list)
         self.rgb_cache.clear()
         self.offset_cache.clear()
+        self.ref_ecc_pyr = None
         self.per_frame_threshold.clear()
         self.per_frame_manual.clear()
         self.per_frame_manual_dir.clear()
@@ -270,7 +274,10 @@ class SlideshowManager:
                 print(f"PCA warning: offset computation failed for frame {frame_idx}, defaulting to (0.0, 0.0).", file=sys.stderr)
                 dx, dy = 0.0, 0.0
         elif self.active_engine == "ECC":
-            dx, dy = ecc_maximization_offset(self.ref_raw, raw)
+            with self.ecc_lock:
+                if self.ref_ecc_pyr is None:
+                    self.ref_ecc_pyr = precompute_ecc_reference(self.ref_raw)
+            dx, dy = ecc_maximization_offset(self.ref_ecc_pyr, raw)
         elif self.active_engine == "Phase Correlation":
             dx, dy = phase_correlation_offset(self.ref_raw, raw)
         else:

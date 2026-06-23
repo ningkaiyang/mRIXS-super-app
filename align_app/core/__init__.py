@@ -24,6 +24,7 @@ from .alignment import (
     ecc_maximization_offset,
     compute_alignment_priors,
     find_best_threshold,
+    precompute_ecc_reference,
 )
 from .image_processing import (
     warp_image,
@@ -53,4 +54,5 @@ __all__ = [
     "ecc_maximization_offset",
     "compute_alignment_priors",
     "find_best_threshold",
+    "precompute_ecc_reference",
 ]

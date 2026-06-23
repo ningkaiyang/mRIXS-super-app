@@ -30,6 +30,7 @@ from pathlib import Path
 # ── Third-party ──────────────────────────────────────────────────────────────
 import numpy as np
 import tifffile
+import cv2
 
 # ── Project-internal (core only — no GUI) ────────────────────────────────────
 from align_app.core import (
@@ -39,6 +40,7 @@ from align_app.core import (
     compute_line_based_offset,
     phase_correlation_offset,
     ecc_maximization_offset,
+    precompute_ecc_reference,
     compute_alignment_priors,
     generate_aligned_sum,
     generate_direct_sum,
@@ -323,6 +325,7 @@ def process_directory(
         # ECC: pre-compute priors
         ecc_crop_bounds = None
         ecc_drift_vector = None
+        ref_ecc_pyr = None
         if engine == 'ECC':
             print(f"[{dir_name}] Computing sample-agnostic alignment priors for ECC...")
             num_prior_frames = min(10, max(1, n_frames // 2))
@@ -338,6 +341,8 @@ def process_directory(
                 ecc_crop_bounds, ecc_drift_vector = compute_alignment_priors(early_frames, late_frames)
                 print(f"[{dir_name}] Computed Crop Bounds: {ecc_crop_bounds}")
                 print(f"[{dir_name}] Computed Drift Vector: {ecc_drift_vector}")
+            
+            ref_ecc_pyr = precompute_ecc_reference(ref_raw, ecc_crop_bounds)
 
 
         # PCA: pre-compute reference line
@@ -369,32 +374,24 @@ def process_directory(
 
         # Compute offsets for each frame (frame 0 is the reference)
         offsets[0] = (0.0, 0.0)
-        for idx in range(1, n_frames):
+        
+        cv2.setNumThreads(1)
+        import concurrent.futures
+        
+        def process_frame(idx):
             raw = get_raw(tif_files[idx])
             if raw is None:
-                print(f"[{dir_name}] Warning: frame {idx} unreadable — "
-                      "using (0, 0).", file=sys.stderr)
-                offsets[idx] = (0.0, 0.0)
-                continue
+                print(f"[{dir_name}] Warning: frame {idx} unreadable — using (0, 0).", file=sys.stderr)
+                return idx, (0.0, 0.0)
 
             # Shape mismatch guard
             if raw.shape != ref_shape:
-                print(
-                    f"[{dir_name}] Warning: frame {idx} shape {raw.shape} "
-                    f"!= reference {ref_shape} — using (0, 0).",
-                    file=sys.stderr,
-                )
-                offsets[idx] = (0.0, 0.0)
-                continue
-
-            print(
-                f"[{dir_name}] Processing frame {idx + 1}/{n_frames} "
-                f"({engine})…"
-            )
+                print(f"[{dir_name}] Warning: frame {idx} shape {raw.shape} != reference {ref_shape} — using (0, 0).", file=sys.stderr)
+                return idx, (0.0, 0.0)
 
             try:
                 if engine == 'ECC':
-                    dx, dy = ecc_maximization_offset(ref_raw, raw, crop_bounds=ecc_crop_bounds, drift_vector=ecc_drift_vector)
+                    dx, dy = ecc_maximization_offset(ref_ecc_pyr, raw, crop_bounds=ecc_crop_bounds, drift_vector=ecc_drift_vector)
 
                 elif engine == 'PhaseCorrelation':
                     dx, dy = phase_correlation_offset(ref_raw, raw)
@@ -416,21 +413,25 @@ def process_directory(
                     dx, dy = 0.0, 0.0
 
             except PCAFitFailure as e:
-                print(
-                    f"[{dir_name}] PCA fit failure on frame {idx}: {e} "
-                    "— falling back to (0, 0).",
-                    file=sys.stderr,
-                )
+                print(f"[{dir_name}] PCA fit failure on frame {idx}: {e} — falling back to (0, 0).", file=sys.stderr)
                 dx, dy = 0.0, 0.0
             except Exception as e:
-                print(
-                    f"[{dir_name}] Error computing offset for frame {idx} "
-                    f"({engine}): {e} — falling back to (0, 0).",
-                    file=sys.stderr,
-                )
+                print(f"[{dir_name}] Error computing offset for frame {idx} ({engine}): {e} — falling back to (0, 0).", file=sys.stderr)
                 dx, dy = 0.0, 0.0
 
-            offsets[idx] = (float(dx), float(dy))
+            return idx, (float(dx), float(dy))
+
+        max_workers = max(1, os.cpu_count() - 2) if os.cpu_count() else 4
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {executor.submit(process_frame, i): i for i in range(1, n_frames)}
+            for future in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    res_idx, offset = future.result()
+                    offsets[res_idx] = offset
+                    print(f"[{dir_name}] Finished frame {res_idx + 1}/{n_frames} ({engine})…")
+                except Exception:
+                    offsets[idx] = (0.0, 0.0)
 
         # ── Generate aligned sum ─────────────────────────────────────────
         print(f"[{dir_name}] Generating aligned sum ({engine})…")

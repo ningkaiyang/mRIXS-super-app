@@ -531,7 +531,43 @@ def compute_alignment_priors(early_frames: list[np.ndarray], late_frames: list[n
         
     return crop_bounds, drift_vector
 
-def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray, crop_bounds: tuple[int, int] | None = None, drift_vector: tuple[float, float] | None = None) -> tuple[float, float]:
+def precompute_ecc_reference(ref_img: np.ndarray, crop_bounds: tuple[int, int] | None = None) -> list[np.ndarray]:
+    """Precompute the Gaussian pyramid for the reference frame."""
+    if ref_img.ndim != 2:
+        return []
+    
+    h_img, w_img = ref_img.shape
+    if crop_bounds is not None:
+        crop_start, crop_end = crop_bounds
+    else:
+        crop_start, crop_end = 0, w_img
+        
+    x = crop_start
+    w = crop_end - crop_start
+    
+    pad_start_x = max(0, x - 8)
+    pad_end_x = min(w_img, x + w + 8)
+    left_pad = x - pad_start_x
+    
+    ref_pad = ref_img[:, pad_start_x:pad_end_x].astype(np.float32)
+    
+    sigma = 4.0
+    ksize = max(3, int(sigma * 3) | 1)
+    r_blur = cv2.GaussianBlur(ref_pad, (ksize, ksize), sigma, borderType=cv2.BORDER_REPLICATE)
+    r_scharr_x = cv2.Scharr(r_blur, cv2.CV_32F, 1, 0)
+    r_scharr_y = cv2.Scharr(r_blur, cv2.CV_32F, 0, 1)
+    r_magnitude = np.sqrt(r_scharr_x**2 + r_scharr_y**2)
+    
+    r_cropped = r_magnitude[:, left_pad : left_pad + w]
+    
+    levels = 3
+    ref_pyr = [r_cropped]
+    for _ in range(1, levels):
+        ref_pyr.append(cv2.pyrDown(ref_pyr[-1]))
+        
+    return ref_pyr
+
+def ecc_maximization_offset(ref_img: np.ndarray | list[np.ndarray], target_img: np.ndarray, crop_bounds: tuple[int, int] | None = None, drift_vector: tuple[float, float] | None = None) -> tuple[float, float]:
     """
     Calculate the translation vector (dx, dy) using a multi-scale Scharr-prefiltered ECC Maximization
     with 1D physical drift projection.
@@ -550,64 +586,66 @@ def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray, crop_bo
        This rejects off-axis, noise-induced registration drift, achieving sub-pixel precision under 5.0 px max error.
 
     Args:
-        ref_img: 2D float32/float64 reference frame.
+        ref_img: 2D float32/float64 reference frame or precomputed pyramid.
         target_img: 2D float32/float64 target frame.
         
     Returns:
         tuple[float, float]: Sub-pixel translation vector (dx, dy).
     """
-    if ref_img.shape != target_img.shape or ref_img.ndim != 2 or target_img.ndim != 2:
-        return (0.0, 0.0)
-    
-    if np.std(ref_img) < 1e-5 or np.std(target_img) < 1e-5:
+    if isinstance(ref_img, list):
+        ref_pyr = ref_img
+        levels = len(ref_pyr)
+    else:
+        if ref_img.shape != target_img.shape or ref_img.ndim != 2 or target_img.ndim != 2:
+            return (0.0, 0.0)
+        if np.std(ref_img) < 1e-5:
+            return (0.0, 0.0)
+        ref_pyr = precompute_ecc_reference(ref_img, crop_bounds)
+        levels = len(ref_pyr)
+        
+    if target_img.ndim != 2 or np.std(target_img) < 1e-5:
         return (0.0, 0.0)
         
     try:
-        # Step 1: Apply Scharr pre-filtering (blur + gradient magnitude)
+        h_img, w_img = target_img.shape
+        if crop_bounds is not None:
+            crop_start, crop_end = crop_bounds
+        else:
+            crop_start, crop_end = 0, w_img
+            
+        x = crop_start
+        w = crop_end - crop_start
+        
+        pad_start_x = max(0, x - 8)
+        pad_end_x = min(w_img, x + w + 8)
+        left_pad = x - pad_start_x
+        
+        target_pad = target_img[:, pad_start_x:pad_end_x].astype(np.float32)
+        
         sigma = 4.0
         ksize = max(3, int(sigma * 3) | 1)
-        r_blur = cv2.GaussianBlur(ref_img.astype(np.float32), (ksize, ksize), sigma, borderType=cv2.BORDER_REPLICATE)
-        t_blur = cv2.GaussianBlur(target_img.astype(np.float32), (ksize, ksize), sigma, borderType=cv2.BORDER_REPLICATE)
-        
-        r_scharr_x = cv2.Scharr(r_blur, cv2.CV_32F, 1, 0)
-        r_scharr_y = cv2.Scharr(r_blur, cv2.CV_32F, 0, 1)
-        r_magnitude = np.sqrt(r_scharr_x**2 + r_scharr_y**2)
-        
+        t_blur = cv2.GaussianBlur(target_pad, (ksize, ksize), sigma, borderType=cv2.BORDER_REPLICATE)
         t_scharr_x = cv2.Scharr(t_blur, cv2.CV_32F, 1, 0)
         t_scharr_y = cv2.Scharr(t_blur, cv2.CV_32F, 0, 1)
         t_magnitude = np.sqrt(t_scharr_x**2 + t_scharr_y**2)
         
-        # Step 2: Apply horizontal crop to focus on the peak line region
-        h, w = ref_img.shape
-        if crop_bounds is not None:
-            crop_start, crop_end = crop_bounds
-        else:
-            # Fallback if no priors provided
-            crop_start, crop_end = 0, w
-            
-        r_cropped = r_magnitude[:, crop_start:crop_end]
-        t_cropped = t_magnitude[:, crop_start:crop_end]
+        t_cropped = t_magnitude[:, left_pad : left_pad + w]
         
-        # Step 3: Build 3-level Gaussian Pyramid
-        levels = 3
-        ref_pyr = [r_cropped]
         tar_pyr = [t_cropped]
-        for i in range(1, levels):
-            ref_pyr.append(cv2.pyrDown(ref_pyr[-1]))
+        for _ in range(1, levels):
             tar_pyr.append(cv2.pyrDown(tar_pyr[-1]))
             
         warp_matrix = np.eye(2, 3, dtype=np.float32)
         criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 300, 1e-6)
         
-        # Step 4: Run ECC pyramid alignment
         for level in reversed(range(levels)):
             r_level = ref_pyr[level]
             t_level = tar_pyr[level]
             
             try:
                 _, warp_matrix = cv2.findTransformECC(
-                    r_level.astype(np.float32),
-                    t_level.astype(np.float32),
+                    r_level,
+                    t_level,
                     warp_matrix,
                     cv2.MOTION_TRANSLATION,
                     criteria,
@@ -627,7 +665,6 @@ def ecc_maximization_offset(ref_img: np.ndarray, target_img: np.ndarray, crop_bo
         if np.isnan(dx_raw) or np.isnan(dy_raw):
             return (0.0, 0.0)
             
-        # Step 5: Project calculated 2D offset onto physical drift vector
         if drift_vector is not None:
             dir_unit = np.array(drift_vector)
             dot_product = dx_raw * dir_unit[0] + dy_raw * dir_unit[1]
