@@ -165,10 +165,14 @@ def discover_directories(root_dir: str, recursive: bool) -> list[str]:
         result.append(str(root))
 
     if recursive:
-        for dirpath, _dirnames, _filenames in os.walk(str(root)):
+        for dirpath, dirnames, _filenames in os.walk(str(root)):
+            # Modify dirnames in-place to ignore 'sum' and 'tif-cache'
+            dirnames[:] = [d for d in dirnames if d.lower() not in ('sum', 'tif-cache')]
             dp = Path(dirpath).resolve()
             if dp == root:
                 continue  # already checked
+            if dp.name.lower() in ('sum', 'tif-cache'):
+                continue
             if _has_tif_files(dp):
                 result.append(str(dp))
 

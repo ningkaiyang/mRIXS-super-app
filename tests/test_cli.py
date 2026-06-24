@@ -124,6 +124,26 @@ class TestDiscoverDirectories:
         dirs = discover_directories(str(tmp_path), recursive=False)
         assert len(dirs) == 0
 
+    def test_ignore_sum_and_tif_cache_directories(self, tmp_path):
+        """Verify that sum and tif-cache subdirectories are ignored during recursive discovery."""
+        sub_a = tmp_path / "sub_a"
+        sum_dir = sub_a / "sum"
+        cache_dir = sub_a / "tif-cache"
+        sub_a.mkdir()
+        sum_dir.mkdir()
+        cache_dir.mkdir()
+
+        # Populate directories with >= 2 TIF files
+        _populate_dir(sub_a, n_frames=3)
+        _populate_dir(sum_dir, n_frames=2)
+        _populate_dir(cache_dir, n_frames=2)
+
+        dirs = discover_directories(str(tmp_path), recursive=True)
+
+        # Only sub_a should be discovered; sum and tif-cache must be ignored
+        assert len(dirs) == 1
+        assert dirs[0] == str(sub_a.resolve())
+
 
 class TestProcessDirectory:
     """Tests for :func:`process_directory` output structure."""
