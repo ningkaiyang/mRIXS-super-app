@@ -8,8 +8,8 @@ import tkinter as tk
 from unittest.mock import patch
 import customtkinter
 
-from align_app.main import AlignApp
-from align_app.core import (
+from rixs_app.main import RixsApp
+from rixs_app.core import (
     natural_sort,
     find_peak_line,
     phase_correlation_offset,
@@ -38,7 +38,7 @@ class TestE2E(unittest.TestCase):
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
             
-        self.app = AlignApp(show_window=False)
+        self.app = RixsApp(show_window=False)
         pump_events(self.app)
         
     def tearDown(self):

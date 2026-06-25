@@ -1,6 +1,6 @@
-# Spectroscopy Image Alignment GUI
+# RIXS Beamline Super-App
 
-A desktop application and headless CLI tool designed to load, sort, and align sequences of spectroscopy images (TIFF format) using multiple alignment engines including ECC Maximization, PCA/SVD peak-line fitting, and Fourier-domain Phase Correlation.
+A comprehensive desktop application and headless CLI tool suite designed for LBNL map-RIXS beamlines (e.g., QERLIN). Originally an alignment GUI, this project is evolving into a unified platform to parse and handle all detector data, featuring offline alignment, real-time data streaming, cluster analysis, and sharpness detection.
 
 ## Setup Instructions
 
@@ -123,7 +123,7 @@ To prevent spatial drift from broadening and blurring the spectral features, lon
 
 ## 3. Current Implementation & Limitations
 The alignment application corrects these shifts using three auto-alignment engines and manual override modes:
-- **Iterative ECC Engine (Default):** 2-stage coarse-to-fine multi-resolution ECC maximization. The coarse pass uses 2x downsampled images for speed; the fine pass runs at full resolution for sub-pixel accuracy.
+- **Iterative ECC Engine (Default):** 3-level Gaussian Pyramid for robust sub-pixel alignment. It applies a Scharr gradient magnitude pre-filter after a Gaussian blur to convert the image into a clean peak-edge intensity map, cropping horizontally to the valid spectral band.
 - **PCA Engine:** Locates the spectroscopic line via intensity-weighted PCA (SVD) on pixels that exceed an intensity percentile threshold. Best for sharp, prominent lines. Supports automatic threshold optimization.
 - **Phase Correlation Engine:** Computes translation offsets in the Fourier domain with DoG bandpass pre-filtering and Tukey (tapered cosine) windowing for improved accuracy under low SNR.
 - **Manual Mode (PCA only):** The user manually draws a line corresponding to a visible spectral feature to guide or override PCA alignment offsets.
@@ -134,15 +134,19 @@ The intensity-weighted PCA auto-alignment engine assumes the **elastic scatterin
 Under these conditions, the intensity-weighted PCA is dominated by Poisson noise, cosmic rays, or the diffuse 2D inelastic scattering cloud in the center of the detector. This leads to erratic centroid determinations on noise spikes, failed line fits, and incorrect alignment offsets. To bypass this limitation, users should use the default **ECC Engine**, which precomputes robust sub-pixel alignment over diffuse, line-less spectral clouds.
 
 ## 4. Technical Goals & Roadmap
-The ultimate objective is to develop a robust, fully automated alignment tool that corrects sub-pixel 2D translations across all scan frames, regardless of the elastic line's intensity or the presence of severe Poisson noise. We will explore and evaluate the following algorithmic and machine learning solutions:
+The ultimate objective is to develop a robust, fully automated super-app that handles the entire lifecycle of RIXS detector data, from live acquisition to offline alignment and analysis.
 
-### A. Advanced Algorithmic Registration
-1. **Iterative ECC Maximization (Implemented):** A 3-level Gaussian Pyramid that pre-filters frames using a Scharr gradient magnitude filter after a Gaussian blur (sigma=4.0). It dynamically crops to the valid spectral region and projects the computed shift onto a 1D physical drift vector. This approach effectively aligns datasets where the spectral line is absent or obscured by trapping Poisson noise.
-2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering (Implemented):** DoG (Difference of Gaussians) bandpass filtering isolates structural boundaries while a Tukey (tapered cosine) window preserves signal near detector edges.
-3. **Headless CLI Batch Processing (Implemented):** Standalone `align_cli.py` script for batch-processing TIFF sequences without a GUI, with recursive directory scanning, multi-engine support, and automatic PCA threshold optimization.
-4. **Sub-Pixel Matrix-Multiply DFT Registration:** Implement single-step DFT upsampling to achieve sub-pixel registration (e.g., 0.01 pixel precision) efficiently.
+### A. Core Tool Suite & Diagnostics
+1. **Sharpness Evaluation Metrics:** Implement robust programmatic testing loops (using DoG Laplacian, Directional Tenengrad, and FFT metrics) on extremely noisy raw CCD data to determine optimal mirror angles.
+2. **Live Data Streaming & Cluster Analysis:** Integrate real-time processing pipelines (from legacy scripts) to monitor live data collection. This includes dark background masking, connected-component cluster analysis (identifying single-photon events), and generating live 2D spatial event maps and IntDen histograms.
+3. **Multi-Panel UI:** Expand the GUI beyond the alignment slideshow to host dedicated workspaces for sharpness checking, live streaming dashboards, and histogram visualization.
 
-### B. Machine Learning & Deep Learning Methods
-1. **Self-Supervised Deep Denoising (Noise2Noise / Noise2Void):** Leverage the temporal correlation of successive frames to train a U-Net to denoise sparse, photon-starved frames before registration, without requiring clean ground truth data. Denoised frames can then be aligned reliably using standard sub-pixel techniques.
-2. **Supervised Siamese Regression CNNs:** Train a convolutional network to predict (Δx, Δy) offsets directly from a stacked pair of frames. The model will be trained on synthetic datasets generated by applying random sub-pixel translations and Poisson/Gaussian noise to high-SNR, successfully aligned summed images.
+### B. Advanced Algorithmic Registration
+1. **Iterative ECC Maximization (Implemented):** A 3-level Gaussian Pyramid that pre-filters frames using a Scharr gradient magnitude filter after a Gaussian blur (sigma=4.0).
+2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering (Implemented):** DoG bandpass filtering isolates structural boundaries while a Tukey window preserves signal near detector edges.
+3. **Headless CLI Batch Processing (Implemented):** Standalone `align_cli.py` script for batch-processing.
+
+### C. Machine Learning & Deep Learning Methods
+1. **Self-Supervised Deep Denoising (Noise2Noise / Noise2Void):** Leverage the temporal correlation of successive frames to train a U-Net to denoise sparse, photon-starved frames before registration.
+2. **Supervised Siamese Regression CNNs:** Train a convolutional network to predict (Δx, Δy) offsets directly from a stacked pair of frames.
 3. **Unsupervised Spatial Transformer Networks (STNs):** Train an end-to-end registration network that optimizes similarity metrics (e.g., SSIM) between the reference frame and the warped target frame.

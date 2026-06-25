@@ -7,8 +7,8 @@ import cv2
 import tifffile
 from unittest.mock import patch
 
-from align_app.main import AlignApp
-from align_app.core import (
+from rixs_app.main import RixsApp
+from rixs_app.core import (
     natural_sort,
     find_peak_line,
     phase_correlation_offset,
@@ -170,7 +170,7 @@ class TestUIResizingAndCacheStress(unittest.TestCase):
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
 
-        self.app = AlignApp(show_window=False)
+        self.app = RixsApp(show_window=False)
         pump_events(self.app)
 
     def tearDown(self):
@@ -237,7 +237,7 @@ class TestGUIEdgeCasesStress(unittest.TestCase):
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
 
-        self.app = AlignApp(show_window=False)
+        self.app = RixsApp(show_window=False)
         pump_events(self.app)
 
     def tearDown(self):
@@ -348,7 +348,7 @@ class TestChallengerAdversarialExhaustive(unittest.TestCase):
         tifffile.imwrite(path, data)
         self.temp_files.append(path)
 
-        self.app = AlignApp(show_window=False)
+        self.app = RixsApp(show_window=False)
         pump_events(self.app)
 
     def tearDown(self):
@@ -386,8 +386,8 @@ class TestChallengerAdversarialExhaustive(unittest.TestCase):
     def test_zero_width_height_zero_division(self):
         # 1. Mock the manager's get_raw and get_rgb to return an image with 0 width, but valid shape, to bypass load exceptions
         # and test the draw_canvas zero-division vulnerability
-        with patch('align_app.ui.slideshow.managers.SlideshowManager.get_raw') as mock_raw, \
-             patch('align_app.ui.slideshow.managers.SlideshowManager.get_rgb') as mock_rgb:
+        with patch('rixs_app.ui.slideshow.managers.SlideshowManager.get_raw') as mock_raw, \
+             patch('rixs_app.ui.slideshow.managers.SlideshowManager.get_rgb') as mock_rgb:
             mock_raw.return_value = np.zeros((100, 0), dtype=np.float32)
             mock_rgb.return_value = np.zeros((100, 0, 3), dtype=np.uint8)
             

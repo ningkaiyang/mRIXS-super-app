@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import cv2
 from skimage.registration import phase_cross_correlation
-from align_app.core.math_utils import _weighted_pca
+from rixs_app.core.math_utils import _weighted_pca
 
 
 class PCAFitFailure(Exception):

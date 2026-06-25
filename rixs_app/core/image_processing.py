@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import matplotlib
-from align_app.core.io import load_raw
+from rixs_app.core.io import load_raw
 
 def warp_image(image_data: np.ndarray, dx: float, dy: float) -> np.ndarray:
     """

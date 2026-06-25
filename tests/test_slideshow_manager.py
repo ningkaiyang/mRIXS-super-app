@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 import queue
 import numpy as np
-from align_app.ui.slideshow.managers import SlideshowManager
+from rixs_app.ui.slideshow.managers import SlideshowManager
 
 class TestSlideshowManagerBugs(unittest.TestCase):
     def test_init_defines_manual_variables(self):
@@ -50,7 +50,7 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         except TypeError as e:
             self.fail(f"get_offset raised TypeError when ref_origin is None: {e}")
 
-    @patch("align_app.ui.slideshow.managers.SlideshowManager.get_raw")
+    @patch("rixs_app.ui.slideshow.managers.SlideshowManager.get_raw")
     def test_default_clamping_ceiling_percentile(self, mock_get_raw):
         """
         Verify that default clamping_ceiling starts at the 60th percentile
@@ -94,8 +94,8 @@ class TestSlideshowManagerBugs(unittest.TestCase):
         mgr.ref_origin = np.array([5.0, 5.0])
         
         # Mock ecc_maximization_offset to return a specific offset
-        with patch("align_app.ui.slideshow.managers.ecc_maximization_offset", return_value=(3.0, 4.0)) as mock_ecc, \
-             patch("align_app.ui.slideshow.managers.SlideshowManager.get_raw", return_value=np.ones((10, 10), dtype=np.float32)):
+        with patch("rixs_app.ui.slideshow.managers.ecc_maximization_offset", return_value=(3.0, 4.0)) as mock_ecc, \
+             patch("rixs_app.ui.slideshow.managers.SlideshowManager.get_raw", return_value=np.ones((10, 10), dtype=np.float32)):
             # ECC is the default engine — should ignore manual line and return ECC offset (3.0, 4.0)
             self.assertEqual(mgr.active_engine, "ECC")
             dx, dy = mgr.get_offset(1)

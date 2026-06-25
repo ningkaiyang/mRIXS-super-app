@@ -21,7 +21,7 @@ any order) is reloaded.
 In addition to frame-level access, the manager computes the **temporal
 median** of all frames (once, in a background thread) and exposes it as
 :attr:`median_frame`.  The median is a noise-resistant "average" image that
-:class:`~align_app.ui.slideshow.view.SlideshowView` uses as the alignment
+:class:`~rixs_app.ui.slideshow.view.SlideshowView` uses as the alignment
 reference so that no single noisy frame dominates the registration.
 """
 
@@ -184,7 +184,7 @@ class ZarrSequenceManager:
         Gathers the cached arrays for all frames in :attr:`file_list`, stacks
         them in memory, and computes ``np.median`` along axis 0.  The result
         is stored in :attr:`median_frame` and used by
-        :class:`~align_app.ui.slideshow.view.SlideshowView` as the
+        :class:`~rixs_app.ui.slideshow.view.SlideshowView` as the
         noise-resistant alignment reference.
 
         Note:

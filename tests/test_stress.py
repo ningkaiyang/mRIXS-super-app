@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 import tifffile
 
-from align_app.core import (
+from rixs_app.core import (
     natural_sort,
     find_peak_line,
     phase_correlation_offset,

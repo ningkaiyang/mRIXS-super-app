@@ -1,13 +1,13 @@
 import platform
 import customtkinter
-from align_app.sorting_view import SortingView
-from align_app.slideshow_view import SlideshowView
-from align_app.ui.slideshow.comparison_view import ExportComparisonView
+from rixs_app.sorting_view import SortingView
+from rixs_app.slideshow_view import SlideshowView
+from rixs_app.ui.slideshow.comparison_view import ExportComparisonView
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
 
-class AlignApp(customtkinter.CTk):
+class RixsApp(customtkinter.CTk):
     """
     Main application class for the Spectroscopy Image Alignment GUI.
 
@@ -209,4 +209,4 @@ class AlignApp(customtkinter.CTk):
         self.export_comparison_view._teardown_mpl()
         self.destroy()
 
-MainApplication = AlignApp
+MainApplication = RixsApp

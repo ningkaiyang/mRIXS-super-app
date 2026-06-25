@@ -33,7 +33,7 @@ import tifffile
 import cv2
 
 # ── Project-internal (core only — no GUI) ────────────────────────────────────
-from align_app.core import (
+from rixs_app.core import (
     natural_sort,
     find_peak_line,
     find_peak_line_fast,
@@ -47,7 +47,7 @@ from align_app.core import (
     PCAFitFailure,
     find_best_threshold,
 )
-from align_app.dataset import ZarrSequenceManager, CLIZarrSequenceManager, _frame_key
+from rixs_app.dataset import ZarrSequenceManager, CLIZarrSequenceManager, _frame_key
 
 
 

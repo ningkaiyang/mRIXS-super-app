@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-from align_app.main import AlignApp
+from rixs_app.main import RixsApp
 
 if __name__ == "__main__":
-    app = AlignApp()
+    app = RixsApp()
     app.mainloop()

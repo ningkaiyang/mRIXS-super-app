@@ -1,4 +1,4 @@
-# align_app/ui/slideshow/managers.py
+# rixs_app/ui/slideshow/managers.py
 
 import os
 import queue
@@ -6,8 +6,8 @@ import threading
 import numpy as np
 import sys
 
-from align_app.dataset import ZarrSequenceManager
-from align_app.core import (
+from rixs_app.dataset import ZarrSequenceManager
+from rixs_app.core import (
     PCAFitFailure,
     apply_colormap,
     generate_aligned_sum,
@@ -577,7 +577,7 @@ class SlideshowManager:
 
         def _worker():
             try:
-                from align_app.core import generate_direct_sum, generate_aligned_sum
+                from rixs_app.core import generate_direct_sum, generate_aligned_sum
                 
                 # 1. Compute Direct Sum
                 def _progress_direct(current, total):

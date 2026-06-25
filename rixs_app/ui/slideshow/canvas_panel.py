@@ -1,4 +1,4 @@
-# align_app/ui/slideshow/canvas_panel.py
+# rixs_app/ui/slideshow/canvas_panel.py
 
 import tkinter as tk
 import numpy as np

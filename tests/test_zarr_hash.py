@@ -7,7 +7,7 @@ import tempfile
 import time
 import numpy as np
 import tifffile
-from align_app.dataset import ZarrSequenceManager
+from rixs_app.dataset import ZarrSequenceManager
 
 class TestZarrHashPath(unittest.TestCase):
     """Test suite to verify ZarrSequenceManager's robustness with '#' in directories.

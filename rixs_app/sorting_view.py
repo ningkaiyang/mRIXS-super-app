@@ -1,7 +1,7 @@
 import os
 import customtkinter
 import tkinter.filedialog
-from align_app.core import natural_sort
+from rixs_app.core import natural_sort
 
 class SortingView(customtkinter.CTkFrame):
     """

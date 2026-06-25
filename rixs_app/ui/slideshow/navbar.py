@@ -1,4 +1,4 @@
-# align_app/ui/slideshow/navbar.py
+# rixs_app/ui/slideshow/navbar.py
 
 import customtkinter
 

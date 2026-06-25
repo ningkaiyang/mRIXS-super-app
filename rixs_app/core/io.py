@@ -1,10 +1,10 @@
 """Single-frame TIFF loading utilities.
 
-This module provides low-level image I/O for the align_app pipeline. The
+This module provides low-level image I/O for the rixs_app pipeline. The
 ``load_raw`` function is the sole entry point for reading raw float32 frames
 from disk.  It performs TIFF decoding, converts to ``float32``, and sanitises
 NaN / inf values.  Persistent caching is handled at a higher level by
-:class:`~align_app.dataset.ZarrSequenceManager`.
+:class:`~rixs_app.dataset.ZarrSequenceManager`.
 """
 
 import os
@@ -18,7 +18,7 @@ def load_raw(image_path: str) -> np.ndarray:
     Reads the TIFF via ``tifffile``, converts to ``float32``, and cleans
     ``NaN`` / ``inf`` values before returning.  This function intentionally
     performs **no disk caching** — persistent caching is the responsibility of
-    :class:`~align_app.dataset.ZarrSequenceManager`.
+    :class:`~rixs_app.dataset.ZarrSequenceManager`.
 
     Args:
         image_path: Absolute or relative path to the source ``.tif`` /

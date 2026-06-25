@@ -1,4 +1,4 @@
-# align_app/slideshow_view.py
+# rixs_app/slideshow_view.py
 
 import customtkinter
 import tkinter as tk
@@ -8,7 +8,7 @@ import queue
 import os
 import numpy as np
 
-from align_app.ui.slideshow import (
+from rixs_app.ui.slideshow import (
     SlideshowManager,
     SlideshowNavBar,
     SlideshowControlPanel,
@@ -165,7 +165,7 @@ class SlideshowView(customtkinter.CTkFrame):
             self.manager.current_idx not in self.manager.per_frame_manual):
             t = self.manager.get_current_threshold()
             try:
-                from align_app.core import find_peak_line
+                from rixs_app.core import find_peak_line
                 origin, _ = find_peak_line(raw, t)
                 self.manager.per_frame_origin[self.manager.current_idx] = origin
             except Exception:
@@ -185,7 +185,7 @@ class SlideshowView(customtkinter.CTkFrame):
         disp_rgb = rgb.copy()
         if self.manager.warp_enabled and self.manager.current_idx > 0 and self.manager.ref_raw is not None:
             try:
-                from align_app.core import warp_image
+                from rixs_app.core import warp_image
                 disp_rgb = warp_image(rgb, -dx, -dy)
             except Exception:
                 pass

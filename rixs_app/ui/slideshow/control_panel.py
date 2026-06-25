@@ -1,4 +1,4 @@
-# align_app/ui/slideshow/control_panel.py
+# rixs_app/ui/slideshow/control_panel.py
 
 import customtkinter
 

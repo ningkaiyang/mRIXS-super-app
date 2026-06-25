@@ -1,4 +1,4 @@
-# align_app/ui/slideshow/comparison_view.py
+# rixs_app/ui/slideshow/comparison_view.py
 
 import tkinter as tk
 import customtkinter as ctk
@@ -24,7 +24,7 @@ class ExportComparisonView(ctk.CTkFrame):
         3. Action bar — "Cancel" and "💾 Export Aligned Sum" buttons, right-aligned.
 
     Args:
-        parent: The parent widget (typically ``AlignApp.container``).
+        parent: The parent widget (typically ``RixsApp.container``).
         on_back: Callback invoked when the user cancels or finishes exporting,
             to return to the slideshow view.
         **kwargs: Extra keyword arguments forwarded to ``CTkFrame``.
