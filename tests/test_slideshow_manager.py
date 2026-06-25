@@ -108,4 +108,54 @@ class TestSlideshowManagerBugs(unittest.TestCase):
             dx, dy = mgr.get_offset(1)
             self.assertEqual((dx, dy), (5.0, 15.0))
 
+    def test_zoom_init_and_reset(self):
+        """Verify zoom state properties are properly initialized and reset."""
+        q = queue.Queue()
+        mgr = SlideshowManager(q)
+        self.assertFalse(mgr.zoom_mode)
+        self.assertEqual(mgr.zoom_level, 0)
+        self.assertEqual(mgr.pan_offset_x, 0)
+        self.assertEqual(mgr.pan_offset_y, 0)
+        
+        mgr.zoom_mode = True
+        mgr.zoom_level = 2
+        mgr.pan_offset_x = 10
+        mgr.pan_offset_y = 20
+        mgr.reset_view()
+        
+        self.assertFalse(mgr.zoom_mode)
+        self.assertEqual(mgr.zoom_level, 0)
+        self.assertEqual(mgr.pan_offset_x, 0)
+        self.assertEqual(mgr.pan_offset_y, 0)
+
+    def test_zoom_in_on_point_and_zoom_out(self):
+        """Verify zooming in on a point computes pan, and zoom_out recalculates correctly."""
+        q = queue.Queue()
+        mgr = SlideshowManager(q)
+        # cw=1000, ch=500, image=1000x500 (fits perfectly, scale=1.0 at 1x)
+        # Zoom level 1 is 2x, image is scaled to 2000x1000.
+        # base_dx = (1000 - 2000) / 2 = -500.
+        # ix=500, iy=250.
+        # scale = 2.0.
+        # raw_pan_x = 500 - (-500) - (500 * 2) = 1000 - 1000 = 0.
+        # pan_offset_x = 0 (perfect center).
+        
+        # Test zoom in on (300, 200)
+        mgr.zoom_in_on_point(cw=1000, ch=500, ix=300.0, iy=200.0, iw=1000, ih=500)
+        self.assertEqual(mgr.zoom_level, 1)
+        # scale = 2.0
+        # raw_pan_x = 500 - (-500) - 300 * 2 = 1000 - 600 = 400.
+        # bounds: base_dx = -500. max(base_dx, min(-base_dx, raw_pan_x)) -> max(-500, min(500, 400)) -> 400.
+        self.assertEqual(mgr.pan_offset_x, 400)
+        # raw_pan_y = 250 - (-250) - 200 * 2 = 500 - 400 = 100.
+        # bounds: base_dy = -250. max(-250, min(250, 100)) -> 100.
+        self.assertEqual(mgr.pan_offset_y, 100)
+
+        # Test zoom out (keeps same center)
+        mgr.zoom_out(cw=1000, ch=500, iw=1000, ih=500)
+        self.assertEqual(mgr.zoom_level, 0)
+        self.assertEqual(mgr.pan_offset_x, 0)
+        self.assertEqual(mgr.pan_offset_y, 0)
+
+
 

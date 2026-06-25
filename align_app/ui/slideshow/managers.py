@@ -86,6 +86,7 @@ class SlideshowManager:
         self.zoom_steps = [1, 2, 4, 8, 16]
         self.pan_offset_x = 0
         self.pan_offset_y = 0
+        self.zoom_mode = False
 
         # Autoplay Config
         self.autoplay_active = False
@@ -120,6 +121,7 @@ class SlideshowManager:
         self.zoom_level = 0
         self.pan_offset_x = 0
         self.pan_offset_y = 0
+        self.zoom_mode = False
         self.autoplay_active = False
         self.manual_mode = False
         self.manual_clicks = []
@@ -326,38 +328,40 @@ class SlideshowManager:
             if self.ref_origin is not None:
                 self.per_frame_origin[0] = self.ref_origin.copy()
 
-    def zoom_in(self, canvas_w: int, canvas_h: int):
-        """Increases the zoom level and updates panning offsets to center the view.
-
-        Args:
-            canvas_w (int): Current width of the display canvas.
-            canvas_h (int): Current height of the display canvas.
-        """
+    def zoom_in_on_point(self, cw: int, ch: int, ix: float, iy: float, iw: int = 3840, ih: int = 2048):
+        """Increases zoom level and centers the view on the targeted image point (ix, iy)."""
         if self.zoom_level < len(self.zoom_steps) - 1:
             self.zoom_level += 1
-            if self.zoom_level > 0:
-                self.compute_centroid_pan(canvas_w, canvas_h)
+            self.compute_targeted_pan(cw, ch, ix, iy, iw, ih)
 
-    def zoom_out(self, canvas_w: int, canvas_h: int):
-        """Decreases the zoom level and updates panning offsets to center the view.
-
-        Args:
-            canvas_w (int): Current width of the display canvas.
-            canvas_h (int): Current height of the display canvas.
-        """
+    def zoom_out(self, cw: int, ch: int, iw: int = 3840, ih: int = 2048):
+        """Decreases zoom level, keeping the current canvas center stationary."""
         if self.zoom_level > 0:
+            base_scale_old = min(cw / iw, ch / ih)
+            scale_old = base_scale_old * self.zoom_steps[self.zoom_level]
+            
+            base_dx_old = (cw - (iw * scale_old)) / 2
+            base_dy_old = (ch - (ih * scale_old)) / 2
+            dx_old = base_dx_old + self.pan_offset_x
+            dy_old = base_dy_old + self.pan_offset_y
+            
+            center_ix = (cw / 2 - dx_old) / scale_old
+            center_iy = (ch / 2 - dy_old) / scale_old
+
             self.zoom_level -= 1
+
             if self.zoom_level == 0:
                 self.pan_offset_x = 0
                 self.pan_offset_y = 0
             else:
-                self.compute_centroid_pan(canvas_w, canvas_h)
+                self.compute_targeted_pan(cw, ch, center_ix, center_iy, iw, ih)
 
     def reset_view(self):
         """Resets the zoom level and panning offsets to their default initial state."""
         self.zoom_level = 0
         self.pan_offset_x = 0
         self.pan_offset_y = 0
+        self.zoom_mode = False
 
     def get_display_origin(self) -> np.ndarray:
         """Retrieves the origin pixel coordinates used for centering the display.
@@ -377,28 +381,32 @@ class SlideshowManager:
             return self.per_frame_manual_dir[0]
         return self.global_ref_direction
 
-    def compute_centroid_pan(self, canvas_w: int, canvas_h: int, image_w=3840, image_h=2048):
-        """Computes panning offsets required to keep the spectral peak centered on screen.
-
-        Args:
-            canvas_w (int): Width of the display canvas.
-            canvas_h (int): Height of the display canvas.
-            image_w (int, optional): Original image width. Defaults to 3840.
-            image_h (int, optional): Original image height. Defaults to 2048.
-        """
-        origin = self.get_display_origin()
-        if origin is None or canvas_w <= 1 or canvas_h <= 1:
+    def compute_targeted_pan(self, cw: int, ch: int, ix: float, iy: float, iw: int, ih: int):
+        """Computes and clamps panning offsets to center the view on (ix, iy)."""
+        if cw <= 1 or ch <= 1:
             return
-        base_scale = min(canvas_w / image_w, canvas_h / image_h)
+            
+        base_scale = min(cw / iw, ch / ih)
         scale = base_scale * self.zoom_steps[self.zoom_level]
-        nw = int(image_w * scale)
-        nh = int(image_h * scale)
-        base_dx = (canvas_w - nw) // 2
-        base_dy = (canvas_h - nh) // 2
-        cx = base_dx + origin[0] * scale
-        cy = base_dy + origin[1] * scale
-        self.pan_offset_x = int(canvas_w / 2 - cx)
-        self.pan_offset_y = int(canvas_h / 2 - cy)
+        
+        nw = iw * scale
+        nh = ih * scale
+        
+        base_dx = (cw - nw) / 2
+        base_dy = (ch - nh) / 2
+        
+        raw_pan_x = (cw / 2) - base_dx - (ix * scale)
+        raw_pan_y = (ch / 2) - base_dy - (iy * scale)
+        
+        if nw > cw:
+            self.pan_offset_x = int(max(base_dx, min(-base_dx, raw_pan_x)))
+        else:
+            self.pan_offset_x = 0
+            
+        if nh > ch:
+            self.pan_offset_y = int(max(base_dy, min(-base_dy, raw_pan_y)))
+        else:
+            self.pan_offset_y = 0
 
     def process_manual_click(self, clicks: list[tuple[int, int]], lb_dx: int, lb_dy: int, lb_scale: float):
         """Processes two manual user clicks to set a custom reference midpoint for a frame.

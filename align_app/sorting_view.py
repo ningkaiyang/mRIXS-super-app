@@ -127,10 +127,11 @@ class SortingView(customtkinter.CTkFrame):
                 "them. Toggle Warp OFF to see the original unaligned frames."
             )),
             ("Step 5: Zoom", (
-                "'🔍+ Zoom In' steps through 1× → 2× → 4× → 8× → 16×.\n"
-                "Zoom centers on the reference line centroid.\n"
-                "'🔍- Zoom Out' reverses. '⟲ Reset View' returns to 1×.\n"
-                "Use zoom to inspect alignment quality at high magnification."
+                "Click '🔍+ Zoom In' to toggle interactive zoom mode, then click\n"
+                "anywhere on the image to zoom into that point.\n"
+                "Zoom steps are 1× → 2× → 4× → 8× → 16×.\n"
+                "'🔍- Zoom Out' zooms out from the current view center.\n"
+                "'⟲ Reset View' returns to 1×."
             )),
             ("Step 6: Manual Line Correction (PCA only)", (
                 "If PCA auto-fit doesn't align a frame well:\n\n"

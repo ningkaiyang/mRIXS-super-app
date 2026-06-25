@@ -407,10 +407,24 @@ class SlideshowView(customtkinter.CTkFrame):
         self.canvas_panel.clear_photo_cache()
         self.load_and_render()
 
+    def toggle_zoom_mode(self):
+        """Toggles the interactive click-to-zoom mode."""
+        self.manager.zoom_mode = not getattr(self.manager, 'zoom_mode', False)
+        if self.manager.zoom_mode:
+            if getattr(self.manager, 'manual_mode', False):
+                self.toggle_manual_mode()
+            self.tools_panel.zoom_in_button.configure(fg_color="#cc5500", text="🔍 Click Zoom...")
+            self.canvas_panel.configure(cursor="crosshair")
+        else:
+            self.tools_panel.zoom_in_button.configure(fg_color="#555", text="🔍+ Zoom In")
+            self.canvas_panel.configure(cursor="")
+
     def toggle_manual_mode(self):
         """Toggles the manual 2-point line alignment mode."""
-        self.manager.manual_mode = not self.manager.manual_mode
+        self.manager.manual_mode = not getattr(self.manager, 'manual_mode', False)
         if self.manager.manual_mode:
+            if getattr(self.manager, 'zoom_mode', False):
+                self.toggle_zoom_mode()
             self.tools_panel.manual_line_button.configure(fg_color="#cc5500", text="✏ Click 2 pts...")
             self.manager.manual_clicks.clear()
             self.canvas_panel.configure(cursor="crosshair")
@@ -421,17 +435,32 @@ class SlideshowView(customtkinter.CTkFrame):
     def clear_manual_line(self):
         """Clears any user-defined manual alignment for the current frame."""
         self.manager.clear_manual_line()
-        if self.manager.manual_mode:
+        if getattr(self.manager, 'manual_mode', False):
             self.toggle_manual_mode()
         self.load_and_render()
 
     def handle_canvas_click(self, event):
-        """Processes mouse click events on the canvas during manual mode.
+        """Processes mouse click events on the canvas during interactive modes."""
+        if getattr(self.manager, 'zoom_mode', False):
+            cw = self.canvas_panel.winfo_width()
+            ch = self.canvas_panel.winfo_height()
+            scale = self.canvas_panel._lb_scale
+            dx = self.canvas_panel._lb_dx
+            dy = self.canvas_panel._lb_dy
+            
+            ix = (event.x - dx) / scale
+            iy = (event.y - dy) / scale
+            
+            iw = self.canvas_panel._img_w or 3840
+            ih = self.canvas_panel._img_h or 2048
+            
+            self.manager.zoom_in_on_point(cw, ch, ix, iy, iw, ih)
+            self.tools_panel.sync_zoom_label(self.manager.zoom_steps[self.manager.zoom_level])
+            self.toggle_zoom_mode()
+            self._render_display()
+            return
 
-        Args:
-            event: The Tkinter mouse event object.
-        """
-        if not self.manager.manual_mode:
+        if not getattr(self.manager, 'manual_mode', False):
             return
         self.manager.manual_clicks.append((event.x, event.y))
         
@@ -448,18 +477,17 @@ class SlideshowView(customtkinter.CTkFrame):
             self.load_and_render()
 
     def zoom_in(self):
-        """Increases the canvas zoom level."""
-        cw = self.canvas_panel.winfo_width()
-        ch = self.canvas_panel.winfo_height()
-        self.manager.zoom_in(cw, ch)
-        self.tools_panel.sync_zoom_label(self.manager.zoom_steps[self.manager.zoom_level])
-        self._render_display()
+        """Activates zoom mode if we aren't at max zoom."""
+        if self.manager.zoom_level < len(self.manager.zoom_steps) - 1:
+            self.toggle_zoom_mode()
 
     def zoom_out(self):
-        """Decreases the canvas zoom level."""
+        """Decreases the canvas zoom level, centered on the current canvas center."""
         cw = self.canvas_panel.winfo_width()
         ch = self.canvas_panel.winfo_height()
-        self.manager.zoom_out(cw, ch)
+        iw = self.canvas_panel._img_w or 3840
+        ih = self.canvas_panel._img_h or 2048
+        self.manager.zoom_out(cw, ch, iw, ih)
         self.tools_panel.sync_zoom_label(self.manager.zoom_steps[self.manager.zoom_level])
         self._render_display()
 

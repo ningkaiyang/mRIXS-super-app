@@ -1,6 +1,7 @@
 jpgs
 jpgs_gray
 *.tif
+*.tiff
 !tests/samples/*.tif
 tif-cache/
 IntDen_histogram.png
