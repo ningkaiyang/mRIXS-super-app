@@ -137,7 +137,7 @@ Under these conditions, the intensity-weighted PCA is dominated by Poisson noise
 The ultimate objective is to develop a robust, fully automated super-app that handles the entire lifecycle of RIXS detector data, from live acquisition to offline alignment and analysis.
 
 ### A. Core Tool Suite & Diagnostics
-1. **Sharpness Evaluation Metrics:** Implement robust programmatic testing loops (using DoG Laplacian, Directional Tenengrad, and FFT metrics) on extremely noisy raw CCD data to determine optimal mirror angles.
+1. **Sharpness Evaluation Metrics (Implemented):** A robust programmatic testing loop (`sharpness_cli.py`) has been implemented alongside a state-of-the-art denoising pipeline (`test_denoise.py`) to evaluate mirror angles. Currently iterating on mathematical isolation techniques (e.g., PCA filtering) to stabilize high-frequency metric performance across highly-noisy raw CCD data.
 2. **Live Data Streaming & Cluster Analysis:** Integrate real-time processing pipelines (from legacy scripts) to monitor live data collection. This includes dark background masking, connected-component cluster analysis (identifying single-photon events), and generating live 2D spatial event maps and IntDen histograms.
 3. **Multi-Panel UI:** Expand the GUI beyond the alignment slideshow to host dedicated workspaces for sharpness checking, live streaming dashboards, and histogram visualization.
 
