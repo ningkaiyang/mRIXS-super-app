@@ -1,8 +1,9 @@
 import platform
 import customtkinter
-from rixs_app.sorting_view import SortingView
-from rixs_app.slideshow_view import SlideshowView
-from rixs_app.ui.slideshow.comparison_view import ExportComparisonView
+from rixs_app.ui.sorting_view import SortingView
+from rixs_app.ui.alignment_slideshow.slideshow_view import SlideshowView
+from rixs_app.ui.alignment_slideshow.comparison_view import ExportComparisonView
+from rixs_app.ui.sharpness_slideshow.slideshow_view import SharpnessSlideshowView
 
 customtkinter.set_appearance_mode("dark")
 customtkinter.set_default_color_theme("dark-blue")
@@ -36,7 +37,8 @@ class RixsApp(customtkinter.CTk):
 
         self.sorting_view = SortingView(
             self.container,
-            on_start_slideshow=self.show_slideshow
+            on_start_slideshow=self.show_slideshow,
+            on_evaluate_sharpness=self.show_sharpness_slideshow
         )
         self.slideshow_view = SlideshowView(
             self.container,
@@ -47,10 +49,15 @@ class RixsApp(customtkinter.CTk):
             self.container,
             on_back=self.show_slideshow_from_comparison
         )
+        self.sharpness_view = SharpnessSlideshowView(
+            self.container,
+            on_back_to_sorting=self.show_sorting
+        )
 
         self.sorting_view.grid(row=0, column=0, sticky="nsew")
         self.slideshow_view.grid(row=0, column=0, sticky="nsew")
         self.export_comparison_view.grid(row=0, column=0, sticky="nsew")
+        self.sharpness_view.grid(row=0, column=0, sticky="nsew")
 
         # Global keyboard navigation binding (bind_all captures events
         # regardless of which widget has focus)
@@ -95,6 +102,8 @@ class RixsApp(customtkinter.CTk):
             pass
         if self.slideshow_view.winfo_ismapped():
             self.slideshow_view.prev_frame()
+        elif self.sharpness_view.winfo_ismapped():
+            self.sharpness_view.prev_frame()
 
     def _on_right_key(self, event):
         """
@@ -119,6 +128,8 @@ class RixsApp(customtkinter.CTk):
             pass
         if self.slideshow_view.winfo_ismapped():
             self.slideshow_view.next_frame()
+        elif self.sharpness_view.winfo_ismapped():
+            self.sharpness_view.next_frame()
 
     def show_sorting(self):
         """
@@ -128,6 +139,7 @@ class RixsApp(customtkinter.CTk):
         """
         self.slideshow_view.grid_remove()
         self.export_comparison_view.grid_remove()
+        self.sharpness_view.grid_remove()
         self.sorting_view.grid()
         self.sorting_view.update_listbox()
 
@@ -140,8 +152,22 @@ class RixsApp(customtkinter.CTk):
         """
         self.sorting_view.grid_remove()
         self.export_comparison_view.grid_remove()
+        self.sharpness_view.grid_remove()
         self.slideshow_view.grid()
         self.slideshow_view.start(file_list)
+
+    def show_sharpness_slideshow(self, file_list):
+        """
+        Display the sharpness slideshow view and start the evaluation.
+
+        Args:
+            file_list (list of str): A list of file paths to be analyzed.
+        """
+        self.sorting_view.grid_remove()
+        self.slideshow_view.grid_remove()
+        self.export_comparison_view.grid_remove()
+        self.sharpness_view.grid()
+        self.sharpness_view.start(file_list)
 
     def show_export_comparison(self, aligned_sum, direct_sum, initial_dir):
         """Transition from the slideshow view to the in-app comparison view.

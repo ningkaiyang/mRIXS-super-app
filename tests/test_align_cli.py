@@ -25,7 +25,7 @@ from align_cli import (
     save_comparison_png,
     _parse_args,
 )
-from rixs_app.dataset import _frame_key
+from rixs_app.core.dataset import _frame_key
 
 
 # ─────────────────────────────────────────────────────────────────────────────

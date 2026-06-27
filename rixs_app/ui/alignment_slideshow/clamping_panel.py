@@ -1,7 +1,7 @@
 # rixs_app/ui/slideshow/clamping_panel.py
 
 import customtkinter
-from rixs_app.widgets import RangeSlider
+from rixs_app.ui.widgets import RangeSlider
 
 class SlideshowClampingPanel(customtkinter.CTkFrame):
     """

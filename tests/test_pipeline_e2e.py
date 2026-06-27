@@ -27,22 +27,20 @@ def test_evaluate_sharpness_signature():
     from rixs_app.core.sharpness import evaluate_sharpness
     
     img = np.ones((50, 50), dtype=np.float32)
-    score = evaluate_sharpness(img, "dog_laplacian")
+    score = evaluate_sharpness(img, "norm_sum_sq_grad")
     
     assert isinstance(score, float) or isinstance(score, np.floating)
 
 def test_winning_metric_integration():
-    """Verify that the winning sharpness metric (e.g. DoG Laplacian or directional Tenengrad) is integrated and callable."""
+    """Verify that the 1D sharpness metrics are integrated and callable."""
     from rixs_app.core.sharpness import evaluate_sharpness
     
     img = np.random.rand(50, 50).astype(np.float32)
-    score_dog = evaluate_sharpness(img, "dog_laplacian")
-    score_ten = evaluate_sharpness(img, "directional_tenengrad")
-    score_fft = evaluate_sharpness(img, "fft_bandpass")
+    score_grad = evaluate_sharpness(img, "norm_sum_sq_grad")
+    score_peak = evaluate_sharpness(img, "peak_height")
     
-    assert score_dog is not None
-    assert score_ten is not None
-    assert score_fft is not None
+    assert score_grad is not None
+    assert score_peak is not None
 
 def test_preprocessing_backend_integration():
     """Verify that the full denoising pipeline is properly executed within the backend module."""
@@ -64,7 +62,7 @@ def test_invalid_input_exception_propagation():
         denoise_image(invalid_img)
         
     with pytest.raises(ValueError):
-        evaluate_sharpness(invalid_img, "dog_laplacian")
+        evaluate_sharpness(invalid_img, "norm_sum_sq_grad")
 
 
 # --- Tier 2: Feature 4 Coverage ---
@@ -75,7 +73,7 @@ def test_extreme_intensity_overflow():
     
     img = np.ones((50, 50), dtype=np.float32) * 1e9
     out = denoise_image(img)
-    score = evaluate_sharpness(img, "dog_laplacian")
+    score = evaluate_sharpness(img, "norm_sum_sq_grad")
     
     assert not np.isnan(out).any()
     assert not np.isinf(out).any()
@@ -88,7 +86,7 @@ def test_non_square_aspect_ratio():
     
     img = np.ones((100, 50), dtype=np.float32)
     out = denoise_image(img)
-    score = evaluate_sharpness(img, "dog_laplacian")
+    score = evaluate_sharpness(img, "norm_sum_sq_grad")
     
     assert out.shape == (100, 50)
     assert score is not None
@@ -100,7 +98,7 @@ def test_custom_datatype_compatibility():
     for dtype in [np.float32, np.float64, np.int16, np.int32]:
         img = (np.random.rand(50, 50) * 100).astype(dtype)
         out = denoise_image(img)
-        score = evaluate_sharpness(img, "dog_laplacian")
+        score = evaluate_sharpness(img, "norm_sum_sq_grad")
         
         assert out is not None
         assert score is not None
@@ -115,7 +113,7 @@ def test_zero_empty_image_input():
         denoise_image(empty_img)
         
     with pytest.raises(ValueError):
-        evaluate_sharpness(empty_img, "dog_laplacian")
+        evaluate_sharpness(empty_img, "norm_sum_sq_grad")
 
 def test_invalid_metric_name():
     """Boundary Case: Passing an invalid/unsupported metric name to evaluate_sharpness raises ValueError."""
@@ -184,17 +182,14 @@ def test_f3_f4_cli_backend_comparison(tmp_path):
     data = np.random.rand(50, 50).astype(np.float32)
     tifffile.imwrite(input_path, data)
     
-    # Run sharpness CLI and capture output (it could write to JSON or print scores)
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(tmp_path), "--metrics", "dog_laplacian", "--print-scores"]
+    # Run sharpness CLI and capture output
+    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(tmp_path), "--metrics", "norm_sum_sq_grad", "--print-scores"]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
-    backend_score = evaluate_sharpness(data, "dog_laplacian")
+    backend_score = evaluate_sharpness(data, "norm_sum_sq_grad")
     
     # Parse CLI score from output and verify it is close to backend score
     assert str(round(backend_score, 2)) in res.stdout
-
-
-
 
 
 def test_evaluate_sharpness_nan_inf_handling():
@@ -206,9 +201,8 @@ def test_evaluate_sharpness_nan_inf_handling():
     img[1, 1] = np.inf
     img[2, 2] = -np.inf
     
-    for metric in ["dog_laplacian", "directional_tenengrad", "fft_bandpass"]:
+    for metric in ["norm_sum_sq_grad", "peak_height"]:
         score = evaluate_sharpness(img, metric)
         assert score is not None
         assert not np.isnan(score)
         assert not np.isinf(score)
-

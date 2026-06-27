@@ -1,4 +1,4 @@
-# rixs_app/slideshow_view.py
+# rixs_app/ui/alignment_slideshow/slideshow_view.py
 
 import customtkinter
 import tkinter as tk
@@ -8,7 +8,7 @@ import queue
 import os
 import numpy as np
 
-from rixs_app.ui.slideshow import (
+from rixs_app.ui.alignment_slideshow import (
     SlideshowManager,
     SlideshowNavBar,
     SlideshowControlPanel,

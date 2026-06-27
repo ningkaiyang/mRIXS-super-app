@@ -40,13 +40,17 @@ python run.py
    - **Iterative ECC Maximization (Default):** Uses a 3-level Gaussian Pyramid for robust sub-pixel alignment. It applies a Scharr gradient magnitude pre-filter after a Gaussian blur (sigma=4.0) to convert the image into a clean peak-edge intensity map, crops horizontally to the spectral band, and projects the 2D offset onto a 1D physical drift vector.
    - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component. Ideal for datasets with a sharp, prominent spectral line.
    - **Phase Correlation:** DoG bandpass-filtered Fourier-domain translation estimation with a Tukey (tapered cosine) window that preserves spectral line features near detector edges.
+   - **Background Precomputation:** The UI supports batch precomputation of alignment offsets and sharpness scores on background threads, keeping the GUI responsive while progress is updated via thread-safe queues.
 3. **Interactive UI Panels:**
    - **File Selection View:** Add and order files dynamically, with a **"Clear All"** button to quickly empty the queue, and natural sorting to sort by filename.
+   - **Sharpness Evaluation Slideshow:** A specialized view (`SharpnessSlideshowView`) for evaluating mirror angle sharpness. It visualizes the internal states of the sharpness pipeline (Raw, Denoised, Masked) alongside 1D profile correlation metrics, allowing visual inspection against human-ranked ground truth.
    - **Clamping Controls:** Adjust intensity floor and ceiling sliders in real-time to strip hot pixels or boost low-intensity structural boundaries.
    - **Auto-Snap Threshold Sweeps:** Sweep PCA thresholds dynamically on a background thread to locate the minimum perpendicular spread and align cleanly.
    - **Manual Line Alignment (PCA only):** Draw custom reference lines and click-to-override alignment offsets.
    - **Zooming & Panning:** Smooth multi-level zoom to target fine sub-pixel features.
-4. **Inline Export Comparison:** Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling, allowing visual validation of alignment efficacy prior to saving.
+4. **Inline Export Comparison & Multi-Plot Export:** 
+   - Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling via the isolated `ExportComparisonView`, allowing visual validation of alignment efficacy prior to saving.
+   - The Sharpness Slideshow supports bulk exporting of multi-plot diagnostic PNGs summarizing the entire sharpness pipeline for each frame.
 
 ## Running the Tests
 To run the entire test suite (including E2E, manager, stress, CLI, and core algorithmic tests):

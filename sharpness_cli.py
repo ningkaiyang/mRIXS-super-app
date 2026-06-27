@@ -12,37 +12,10 @@ import re
 import numpy as np
 import tifffile
 from scipy.stats import spearmanr
-from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+from rixs_app.core.sharpness import denoise_image, evaluate_sharpness, fit_line_robustly
 
 def extract_frame_index(filename: str) -> int:
-    """Extract the frame index from a filename.
-
-    This function attempts to find and return the numeric index from a filename
-    using two main regex matching phases, followed by a fallback mechanism.
-
-    Matching Phases:
-    1. CMOS Detector Prefix: Looks for the case-insensitive pattern 
-       'CMOS[\\s_-]+?Detector[\\s_-]+?(-?\\d+)' to extract the index.
-    2. Frame Prefix: Looks for the case-insensitive pattern 'frame[\\s_-]+?(-?\\d+)' 
-       to extract the index.
-
-    Fallback Behavior:
-    If neither prefix is matched, the function removes the file extension and
-    searches the remaining filename for any contiguous blocks of digits (possibly
-    with a leading negative sign) using the pattern '-?\\d+'. If found, it returns
-    the last digit block as the index. If no digit blocks are found, it raises a
-    ValueError.
-
-    Args:
-        filename (str): The name of the file to parse.
-
-    Returns:
-        int: The parsed frame index.
-
-    Raises:
-        ValueError: If no digit index can be found using the regex patterns or 
-            the fallback logic.
-    """
+    """Extract the frame index from a filename."""
     match = re.search(r'CMOS[\s_-]+?Detector[\s_-]+?(-?\d+)', filename, re.IGNORECASE)
     if match:
         return int(match.group(1))
@@ -50,7 +23,6 @@ def extract_frame_index(filename: str) -> int:
     if match:
         return int(match.group(1))
     
-    # 2. If no prefix matches, split extension off, find all blocks of digits
     name_without_ext, _ = os.path.splitext(filename)
     digits = re.findall(r'-?\d+', name_without_ext)
     if digits:
@@ -69,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--metrics",
         default=None,
-        help="Comma-separated list of metrics to run (e.g., dog_laplacian,directional_tenengrad)."
+        help="Comma-separated list of metrics to run (e.g., norm_sum_sq_grad,peak_height)."
     )
     parser.add_argument(
         "--correlation",
@@ -92,7 +64,7 @@ def main():
     args = parse_args()
     
     # Validate metrics
-    VALID_METRICS = {"dog_laplacian", "directional_tenengrad", "fft_bandpass"}
+    VALID_METRICS = {"norm_sum_sq_grad", "peak_height"}
     if args.metrics:
         metrics = [m.strip() for m in args.metrics.split(',')]
         for m in metrics:
@@ -100,7 +72,7 @@ def main():
                 sys.stderr.write(f"Error: Invalid metric: '{m}'. Valid metrics are: {list(VALID_METRICS)}\n")
                 sys.exit(1)
     else:
-        metrics = ["dog_laplacian", "directional_tenengrad", "fft_bandpass"]
+        metrics = ["norm_sum_sq_grad", "peak_height"]
         
     base_dir = args.dir
     if not os.path.exists(base_dir):
@@ -214,14 +186,46 @@ def main():
         if ground_truth:
             fractional_ranks = ground_truth.get("fractional_ranks", {})
             
+        # Load and cache frame images
+        loaded_imgs = {}
+        for idx, path in frame_data:
+            loaded_imgs[idx] = tifffile.imread(path)
+            
+        # Calculate raw_std from the first frame
+        if frame_data:
+            first_idx = frame_data[0][0]
+            raw_std = np.std(loaded_imgs[first_idx])
+        else:
+            raw_std = 0.0
+        
+        # Perform summed line fitting for directories where raw_std > 500.0
+        ref_line = None
+        if raw_std > 500.0:
+            sum_img = None
+            for idx, img in loaded_imgs.items():
+                denoised_frame = denoise_image(
+                    img,
+                    clip=True,
+                    despike=False,
+                    anscombe=True,
+                    bilateral=False,
+                    inverse_anscombe=True
+                )
+                if sum_img is None:
+                    sum_img = denoised_frame
+                else:
+                    sum_img += denoised_frame
+            ref_line = fit_line_robustly(sum_img, crop_y=200)
+            
         for metric in metrics:
             scores = []
             ranks = []
             for idx, path in frame_data:
-                img = tifffile.imread(path)
+                img = loaded_imgs[idx]
                 if args.denoise:
                     img = denoise_image(img)
-                score = evaluate_sharpness(img, metric)
+                # Pass ref_line and raw_std to avoid global state tracking
+                score = evaluate_sharpness(img, metric, ref_line=ref_line, raw_std=raw_std)
                 
                 if args.print_scores:
                     print(f"Frame {idx} ({metric}): {score} (rounded: {score:.2f})")

@@ -1145,8 +1145,8 @@ class TestChallengerAdversarialExhaustive(unittest.TestCase):
     def test_zero_width_height_zero_division(self):
         # 1. Mock the manager's get_raw and get_rgb to return an image with 0 width, but valid shape, to bypass load exceptions
         # and test the draw_canvas zero-division vulnerability
-        with patch('rixs_app.ui.slideshow.managers.SlideshowManager.get_raw') as mock_raw, \
-             patch('rixs_app.ui.slideshow.managers.SlideshowManager.get_rgb') as mock_rgb:
+        with patch('rixs_app.ui.alignment_slideshow.alignment_manager.SlideshowManager.get_raw') as mock_raw, \
+             patch('rixs_app.ui.alignment_slideshow.alignment_manager.SlideshowManager.get_rgb') as mock_rgb:
             mock_raw.return_value = np.zeros((100, 0), dtype=np.float32)
             mock_rgb.return_value = np.zeros((100, 0, 3), dtype=np.uint8)
             

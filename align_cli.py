@@ -47,7 +47,7 @@ from rixs_app.core import (
     PCAFitFailure,
     find_best_threshold,
 )
-from rixs_app.dataset import ZarrSequenceManager, CLIZarrSequenceManager, _frame_key
+from rixs_app.core.dataset import ZarrSequenceManager, CLIZarrSequenceManager, _frame_key
 
 
 

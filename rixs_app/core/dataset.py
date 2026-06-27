@@ -21,7 +21,7 @@ any order) is reloaded.
 In addition to frame-level access, the manager computes the **temporal
 median** of all frames (once, in a background thread) and exposes it as
 :attr:`median_frame`.  The median is a noise-resistant "average" image that
-:class:`~rixs_app.ui.slideshow.view.SlideshowView` uses as the alignment
+:class:`~rixs_app.ui.alignment_slideshow.slideshow_view.SlideshowView` uses as the alignment
 reference so that no single noisy frame dominates the registration.
 """
 
@@ -108,13 +108,19 @@ class ZarrSequenceManager:
             return
 
         tif_dir = os.path.dirname(os.path.abspath(self.file_list[0]))
-        cache_dir = os.path.join(tif_dir, "tif-cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        group_path = os.path.join(cache_dir, "frames.zarr")
-
-        # Open in append mode: creates the group if absent, re-opens if present.
-        # Wrap in pathlib.Path to bypass URL/URI parsing and correctly support '#' in directory paths.
-        self.zarr_group = zarr.open_group(pathlib.Path(group_path), mode="a")
+        try:
+            cache_dir = os.path.join(tif_dir, "tif-cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            group_path = os.path.join(cache_dir, "frames.zarr")
+            self.zarr_group = zarr.open_group(pathlib.Path(group_path), mode="a")
+        except (PermissionError, OSError):
+            try:
+                import tempfile
+                dir_hash = hashlib.md5(tif_dir.encode("utf-8")).hexdigest()
+                group_path = os.path.join(tempfile.gettempdir(), f"rixs_cache_{dir_hash}")
+                self.zarr_group = zarr.open_group(pathlib.Path(group_path), mode="a")
+            except Exception:
+                self.zarr_group = None
         self._load_all_async()
 
     def _load_all_async(self) -> None:
@@ -129,11 +135,12 @@ class ZarrSequenceManager:
             try:
                 for filepath in self.file_list:
                     key = _frame_key(filepath)
-                    if key not in self.zarr_group:
+                    if self.zarr_group is not None and key not in self.zarr_group:
                         try:
                             raw = tifffile.imread(filepath).astype(np.float32)
                             raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-                            self.zarr_group[key] = raw
+                            if self.zarr_group is not None:
+                                self.zarr_group[key] = raw
                         except Exception:
                             pass
                 self.compute_median()
@@ -166,17 +173,60 @@ class ZarrSequenceManager:
         filepath = self.file_list[index]
         key = _frame_key(filepath)
 
-        if key in self.zarr_group:
+        if self.zarr_group is not None and key in self.zarr_group:
             return self.zarr_group[key][:]
 
         # Cache miss: read from disk and write into cache for next time.
         try:
             raw = tifffile.imread(filepath).astype(np.float32)
             raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-            self.zarr_group[key] = raw
-            return raw
         except Exception:
             return None
+
+        if self.zarr_group is not None:
+            try:
+                self.zarr_group[key] = raw
+            except Exception:
+                pass
+
+        return raw
+
+    def get_derived_frame(self, index: int, suffix: str) -> np.ndarray | None:
+        """Retrieve a derived preprocessed frame (e.g. 'denoised', 'masked') from cache.
+
+        Args:
+            index: Zero-based frame index.
+            suffix: Suffix for the key (e.g. 'denoised', 'masked').
+
+        Returns:
+            2-D float32 numpy array or None if not cached.
+        """
+        if index < 0 or index >= self.n_frames or self.zarr_group is None:
+            return None
+        filepath = self.file_list[index]
+        raw_key = _frame_key(filepath)
+        key = f"{raw_key}_{suffix}"
+        if key in self.zarr_group:
+            return self.zarr_group[key][:]
+        return None
+
+    def set_derived_frame(self, index: int, suffix: str, data: np.ndarray) -> None:
+        """Store a derived preprocessed frame in the cache.
+
+        Args:
+            index: Zero-based frame index.
+            suffix: Suffix for the key (e.g. 'denoised', 'masked').
+            data: 2-D numpy array to store.
+        """
+        if index < 0 or index >= self.n_frames or self.zarr_group is None:
+            return
+        filepath = self.file_list[index]
+        raw_key = _frame_key(filepath)
+        key = f"{raw_key}_{suffix}"
+        try:
+            self.zarr_group[key] = data
+        except Exception:
+            pass
 
     def compute_median(self) -> None:
         """Compute the pixel-wise temporal median over the current sequence.
@@ -184,7 +234,7 @@ class ZarrSequenceManager:
         Gathers the cached arrays for all frames in :attr:`file_list`, stacks
         them in memory, and computes ``np.median`` along axis 0.  The result
         is stored in :attr:`median_frame` and used by
-        :class:`~rixs_app.ui.slideshow.view.SlideshowView` as the
+        :class:`~rixs_app.ui.alignment_slideshow.slideshow_view.SlideshowView` as the
         noise-resistant alignment reference.
 
         Note:
@@ -193,9 +243,21 @@ class ZarrSequenceManager:
             by :meth:`_load_all_async`) to avoid freezing the UI.
         """
         frames = []
+        if self.zarr_group is None:
+            for filepath in self.file_list:
+                try:
+                    raw = tifffile.imread(filepath).astype(np.float32)
+                    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+                    frames.append(raw)
+                except Exception:
+                    pass
+            if frames:
+                self.median_frame = np.median(np.stack(frames, axis=0), axis=0)
+            return
+
         for filepath in self.file_list:
             key = _frame_key(filepath)
-            if key in self.zarr_group:
+            if self.zarr_group is not None and key in self.zarr_group:
                 frames.append(self.zarr_group[key][:])
             else:
                 # Frame not yet cached — fall back to live read for median.
@@ -225,18 +287,20 @@ class CLIZarrSequenceManager(ZarrSequenceManager):
         cached, :meth:`compute_median` is called so that
         :attr:`median_frame` is available immediately.
         """
-        for filepath in self.file_list:
-            key = _frame_key(filepath)
-            if key not in self.zarr_group:
-                try:
-                    raw = tifffile.imread(filepath).astype(np.float32)
-                    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-                    self.zarr_group[key] = raw
-                except Exception as e:
-                    import sys
-                    print(
-                        f"  Warning: Failed to cache {os.path.basename(filepath)}: {e}",
-                        file=sys.stderr,
-                    )
+        if self.zarr_group is not None:
+            for filepath in self.file_list:
+                key = _frame_key(filepath)
+                if key not in self.zarr_group:
+                    try:
+                        raw = tifffile.imread(filepath).astype(np.float32)
+                        raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+                        if self.zarr_group is not None:
+                            self.zarr_group[key] = raw
+                    except Exception as e:
+                        import sys
+                        print(
+                            f"  Warning: Failed to cache {os.path.basename(filepath)}: {e}",
+                            file=sys.stderr,
+                        )
         self.compute_median()
         self._loading_done.set()

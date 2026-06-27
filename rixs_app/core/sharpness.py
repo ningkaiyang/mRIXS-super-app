@@ -6,19 +6,12 @@ and evaluate sharpness metrics.
 
 import os
 import glob
-import inspect
 import numpy as np
 import scipy.ndimage
 import cv2
 
 # Import from alignment and io
 from rixs_app.core.alignment import find_peak_line, find_best_threshold
-from rixs_app.core.io import load_raw
-
-# Global variables for caching and scan tracking
-_latest_raw_std = None
-_cached_dir = None
-_cached_line = None
 
 def denoise_image(
     img: np.ndarray,
@@ -81,12 +74,9 @@ def denoise_image(
 
     # Check if this is a real large RIXS scan frame (2048x3840)
     if img.shape == (2048, 3840):
-        # Only set _latest_raw_std if the input is a raw image (has negative values)
         is_raw = np.min(img) < -1.0
         if is_raw:
             raw_std = np.std(img)
-            global _latest_raw_std
-            _latest_raw_std = raw_std
             
             # Scan 003848 has raw_std > 500.0, optimal preprocessing has despike=False, bilateral=False
             if raw_std > 500.0:
@@ -261,26 +251,57 @@ def compute_1d_metrics(P: np.ndarray, u: np.ndarray) -> dict[str, float]:
         "norm_sum_sq_grad": norm_sum_sq_grad
     }
 
-def evaluate_sharpness(img: np.ndarray, metric: str) -> float:
+def evaluate_sharpness(
+    img: np.ndarray,
+    metric: str = "norm_sum_sq_grad",
+    ref_line: tuple[np.ndarray, np.ndarray] | None = None,
+    raw_std: float | None = None
+) -> float:
     """
     Evaluate the sharpness of a 2D spectroscopic frame image using a specified metric.
 
     This acts as the primary evaluation pipeline for mirror alignment and focus optimization. 
-    If a standard 2D high-frequency metric ("dog_laplacian", "directional_tenengrad", "fft_bandpass") 
-    is requested on a small or flat image, it computes that metric directly. For typical large raw 
-    RIXS CCD scans, it dynamically applies robust preprocessing (denoising), performs PCA line 
-    fitting to isolate the main diagonal elastic line, projects a 1D cross-sectional profile, and 
-    computes profile-based sharpness to prevent volatility from residual cosmic rays.
+    It runs the sharpness pipeline and returns the score of the requested metric.
 
     Args:
-        img: 2D numpy array containing the input image (raw or preprocessed).
+        img: 2D numpy array containing the input image.
         metric: String indicating the chosen sharpness evaluation strategy.
+        ref_line: Optional pre-calculated line (centroid, direction) to bypass robust line fitting.
+        raw_std: Optional standard deviation of the raw image to manage parameter selection.
 
     Returns:
-        float: The computed scalar sharpness score (higher generally means sharper).
+        float: The computed scalar sharpness score.
 
     Raises:
         ValueError: If `img` is not a valid 2D array, is empty, or if `metric` is not recognized.
+    """
+    res = run_sharpness_pipeline(img, metric=metric, ref_line=ref_line, raw_std=raw_std)
+    return res["score"]
+
+def run_sharpness_pipeline(
+    img: np.ndarray,
+    metric: str = "norm_sum_sq_grad",
+    ref_line: tuple[np.ndarray, np.ndarray] | None = None,
+    raw_std: float | None = None
+) -> dict:
+    """
+    Run the complete sharpness evaluation pipeline, returning intermediate states.
+
+    Args:
+        img: 2D numpy array representing the input frame (raw or preprocessed).
+        metric: Sharpness metric to use ('norm_sum_sq_grad' or 'peak_height').
+        ref_line: Optional pre-calculated line (centroid, direction) to bypass robust line fitting.
+        raw_std: Optional standard deviation of the raw image.
+
+    Returns:
+        dict: A dictionary containing:
+            - "raw_img": The original input image.
+            - "denoised_img": The denoised 2D image.
+            - "masked_img": The masked 2D image.
+            - "centroid": The (x, y) coordinates of the line center.
+            - "direction": The unit direction vector (dx, dy).
+            - "1d_profile": A tuple of (P, u) representing the 1D cross-sectional profile.
+            - "score": The evaluated sharpness score.
     """
     if not isinstance(img, np.ndarray):
         raise ValueError("Input must be a numpy array")
@@ -289,76 +310,28 @@ def evaluate_sharpness(img: np.ndarray, metric: str) -> float:
     if img.size == 0 or img.shape[0] == 0 or img.shape[1] == 0:
         raise ValueError("Input array cannot be empty")
 
-    valid_metrics = {"dog_laplacian", "directional_tenengrad", "fft_bandpass"}
+    valid_metrics = {"norm_sum_sq_grad", "peak_height"}
     if metric not in valid_metrics:
         raise ValueError(f"Invalid metric: {metric}. Must be one of {valid_metrics}")
-
-    # Fallback to standard 2D metrics if image is small or flat
-    if img.shape[0] < 100 or img.shape[1] < 100 or np.max(img) <= np.min(img) + 1e-9:
-        img_d = np.nan_to_num(img.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
-        img_d = np.clip(img_d, -1e10, 1e10)
-
-        if metric == "dog_laplacian":
-            g1 = scipy.ndimage.gaussian_filter(img_d, sigma=1.5)
-            g2 = scipy.ndimage.gaussian_filter(img_d, sigma=4.5)
-            dog = g1 - g2
-            lap = cv2.Laplacian(dog, cv2.CV_64F)
-            return float(np.var(lap))
-
-        elif metric == "directional_tenengrad":
-            Gx = cv2.Sobel(img_d, cv2.CV_64F, 1, 0, ksize=3)
-            Gy = cv2.Sobel(img_d, cv2.CV_64F, 0, 1, ksize=3)
-            P = Gx * np.cos(135 * np.pi / 180.0) + Gy * np.sin(135 * np.pi / 180.0)
-            abs_P = np.abs(P)
-            thresh = np.percentile(abs_P, 75.0)
-            mask = abs_P > thresh
-            if not np.any(mask):
-                return 0.0
-            score = np.sum(P[mask] ** 2)
-            return float(score)
-
-        elif metric == "fft_bandpass":
-            H, W = img_d.shape
-            W_2D = np.outer(np.hanning(H), np.hanning(W))
-            img_win = img_d * W_2D
-            F = np.fft.fftshift(np.fft.fft2(img_win))
-            power_spec = np.abs(F) ** 2
-            cy, cx = H // 2, W // 2
-            y, x = np.ogrid[:H, :W]
-            r = np.sqrt((y - cy)**2 + (x - cx)**2)
-            R_max = np.max(r)
-            
-            mask = (r >= 0.05 * R_max) & (r <= 0.8 * R_max)
-            E_band = np.sum(power_spec[mask])
-            E_total = np.sum(power_spec)
-            if E_total > 0:
-                return float(E_band / E_total)
-            return 0.0
-
-    global _latest_raw_std, _cached_dir, _cached_line
 
     # Determine raw std_val to select parameters
     is_raw = np.min(img) < -1.0
     if is_raw:
         std_val = np.std(img)
     else:
-        std_val = _latest_raw_std if _latest_raw_std is not None else (np.std(img) * 5.0)
+        std_val = raw_std if raw_std is not None else (np.std(img) * 5.0)
 
-    # Perform optimal denoising on the current frame
+    # Selection of parameters based on std_val
     if std_val > 500.0:  # Scan 003848
         despike = False
         bilateral = False
         crop_y = 200
         strip_width = 30
-        opt_metric = "peak_height"
-        mask_type = "fast"
     else:  # Other scans
         despike = True
         bilateral = True
         crop_y = 300
         strip_width = 30
-        opt_metric = "norm_sum_sq_grad"
-        mask_type = "standard"
 
     if is_raw:
         denoised_img = denoise_image(
@@ -372,52 +345,10 @@ def evaluate_sharpness(img: np.ndarray, metric: str) -> float:
     else:
         denoised_img = img
 
-    # Compute line centroid and direction
-    if mask_type == "fast":
-        # Retrieve current file path from stack to enable scan summation
-        filepath = None
-        for frame_info in inspect.stack():
-            locals_dict = frame_info.frame.f_locals
-            if 'path' in locals_dict and isinstance(locals_dict['path'], str) and locals_dict['path'].endswith(('.tif', '.tiff')):
-                filepath = locals_dict['path']
-                break
-        
-        if filepath is not None:
-            dir_path = os.path.abspath(os.path.dirname(filepath))
-        else:
-            dir_path = None
-
-        if dir_path is not None:
-            if dir_path == _cached_dir and _cached_line is not None:
-                centroid, direction = _cached_line
-            else:
-                tiffs = sorted(glob.glob(os.path.join(dir_path, "*.tiff")))
-                if not tiffs:
-                    tiffs = sorted(glob.glob(os.path.join(dir_path, "*.tif")))
-                
-                sum_img = None
-                for f in tiffs:
-                    raw_frame = load_raw(f)
-                    denoised_frame = denoise_image(
-                        raw_frame,
-                        clip=True,
-                        despike=despike,
-                        anscombe=True,
-                        bilateral=bilateral,
-                        inverse_anscombe=True
-                    )
-                    if sum_img is None:
-                        sum_img = denoised_frame
-                    else:
-                        sum_img += denoised_frame
-                
-                centroid, direction = fit_line_robustly(sum_img, crop_y=crop_y)
-                _cached_dir = dir_path
-                _cached_line = (centroid, direction)
-        else:
-            centroid, direction = fit_line_robustly(denoised_img, crop_y=crop_y)
+    # Compute/retrieve line centroid and direction
+    if ref_line is not None:
+        centroid, direction = ref_line
     else:
-        # Standard: fit on the individual frame
         centroid, direction = fit_line_robustly(denoised_img, crop_y=crop_y)
 
     # Apply spatial strip mask and project to 1D profile
@@ -425,5 +356,14 @@ def evaluate_sharpness(img: np.ndarray, metric: str) -> float:
     P, u = get_1d_profile(masked_img, centroid, direction, crop_y=crop_y)
     metric_vals = compute_1d_metrics(P, u)
     
-    score = metric_vals[opt_metric]
-    return float(score)
+    score = metric_vals[metric]
+    
+    return {
+        "raw_img": img,
+        "denoised_img": denoised_img,
+        "masked_img": masked_img,
+        "centroid": centroid,
+        "direction": direction,
+        "1d_profile": (P, u),
+        "score": float(score)
+    }

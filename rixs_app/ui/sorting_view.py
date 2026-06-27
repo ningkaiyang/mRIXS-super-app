@@ -11,7 +11,7 @@ class SortingView(customtkinter.CTkFrame):
     naturally, reorder them manually (up/down), and remove them. It acts as the
     entry point before launching the main image analysis slideshow.
     """
-    def __init__(self, parent, on_start_slideshow=None, **kwargs):
+    def __init__(self, parent, on_start_slideshow=None, on_evaluate_sharpness=None, **kwargs):
         """
         Initialize the sorting view and set up the user interface.
 
@@ -19,10 +19,13 @@ class SortingView(customtkinter.CTkFrame):
             parent: The parent widget that contains this frame.
             on_start_slideshow (callable, optional): Callback triggered when the
                 start slideshow button is clicked.
+            on_evaluate_sharpness (callable, optional): Callback triggered when the
+                evaluate sharpness button is clicked.
             **kwargs: Additional keyword arguments passed to the CTkFrame constructor.
         """
         super().__init__(parent, **kwargs)
         self.on_start_slideshow = on_start_slideshow
+        self.on_evaluate_sharpness = on_evaluate_sharpness
         self.file_list = []
         self.selected_index = -1
 
@@ -57,12 +60,20 @@ class SortingView(customtkinter.CTkFrame):
         self.clear_button.pack(pady=3)
 
         self.start_button = customtkinter.CTkButton(
-            self, text="▶ Start Slideshow", command=self.start_slideshow,
+            self, text="▶ Start Alignment Slideshow", command=self.start_slideshow,
             fg_color="#2FA572", hover_color="#238a5a",
             font=customtkinter.CTkFont(size=16, weight="bold"),
             height=44
         )
         self.start_button.pack(pady=10)
+
+        self.sharpness_button = customtkinter.CTkButton(
+            self, text="🔍 Evaluate Sharpness", command=self.start_sharpness,
+            fg_color="#1F6AA5", hover_color="#165a8a",
+            font=customtkinter.CTkFont(size=16, weight="bold"),
+            height=44
+        )
+        self.sharpness_button.pack(pady=10)
 
         self.help_button = customtkinter.CTkButton(
             self, text="❓ Help / Guide", command=self.show_help,
@@ -98,17 +109,22 @@ class SortingView(customtkinter.CTkFrame):
                 "will be aligned to it."
             )),
             ("Step 3: Start Slideshow", (
-                "Click '▶ Start Slideshow' to begin analysis.\n"
+                "Click '▶ Start Alignment Slideshow' to begin analysis.\n"
                 "The default alignment engine is ECC (Enhanced Correlation\n"
                 "Coefficient), which works well for most datasets. Warp is\n"
                 "ON by default — frames are translated to align with Frame 1."
+            )),
+            ("Sharpness Evaluation", (
+                "Click '🔍 Evaluate Sharpness' from the main menu to open the sharpness view.\n"
+                "This mode visualizes the sharpness pipeline (Raw, Denoised, Masked) for each\n"
+                "frame, alongside the 1D profile curve. You can evaluate the computed sharpness\n"
+                "against human-ranked ground truth."
             )),
             ("Alignment Engines", (
                 "Switch engines using the dropdown in the top-right navbar:\n\n"
                 "• ECC (default) — Iterative Enhanced Correlation Coefficient.\n"
                 "  Uses a 2-stage coarse-to-fine Gaussian pyramid for robust\n"
-                "  sub-pixel alignment. Best for general/diffuse datasets.\n"
-                "  Click 'Precompute' to batch-align all frames.\n\n"
+                "  sub-pixel alignment. Best for general/diffuse datasets.\n\n"
                 "• PCA — Peak-Line Fitting via SVD + Phase Correlation.\n"
                 "  Detects the spectral line via intensity thresholding and\n"
                 "  fits a reference line through Frame 1. Best for datasets\n"
@@ -117,7 +133,10 @@ class SortingView(customtkinter.CTkFrame):
                 "  optimize automatically.\n\n"
                 "• Phase Correlation — Fast Fourier-domain translation\n"
                 "  estimation. Very fast but less accurate on noisy data.\n"
-                "  Also used internally as a fallback by PCA."
+                "  Also used internally as a fallback by PCA.\n\n"
+                "Precomputation:\n"
+                "Click the 'Precompute' button in the navbar to batch-process alignments\n"
+                "for all frames in the background. This caches the results for instant playback."
             )),
             ("Step 4: Navigate & Inspect", (
                 "Use ← → arrow keys or '◀ Prev' / 'Next ▶' to step through frames.\n"
@@ -146,10 +165,12 @@ class SortingView(customtkinter.CTkFrame):
                 "the app back-calculates the un-warped coordinates.\n\n"
                 "'Clear Manual' removes the manual override for that frame."
             )),
-            ("Step 7: Export", (
-                "Click 'Export' to generate aligned and direct sum images.\n"
-                "A comparison view shows both side-by-side so you can verify\n"
-                "the alignment quality before saving."
+            ("Step 7: Multi-plot Export Comparison", (
+                "Click 'Export' to generate and review final images.\n"
+                "This opens a multi-plot comparison window showing the Aligned Sum\n"
+                "vs the Direct (Unaligned) Sum side-by-side. This workflow lets you\n"
+                "visually verify the alignment quality improvements before choosing\n"
+                "to save the resulting sums and alignment shifts to disk."
             )),
             ("Tips", (
                 "• ECC is recommended for most workflows\n"
@@ -273,6 +294,15 @@ class SortingView(customtkinter.CTkFrame):
         """
         if self.on_start_slideshow and self.file_list:
             self.on_start_slideshow(self.file_list)
+
+    def start_sharpness(self):
+        """
+        Trigger the callback to start the sharpness evaluation with the current file list.
+
+        Only executes if the file list is not empty and a callback is provided.
+        """
+        if self.on_evaluate_sharpness and self.file_list:
+            self.on_evaluate_sharpness(self.file_list)
 
     def update_listbox(self):
         """

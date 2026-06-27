@@ -1,4 +1,4 @@
-# rixs_app/ui/slideshow/managers.py
+# rixs_app/ui/alignment_slideshow/alignment_manager.py
 
 import os
 import queue
@@ -6,7 +6,7 @@ import threading
 import numpy as np
 import sys
 
-from rixs_app.dataset import ZarrSequenceManager
+from rixs_app.core.dataset import ZarrSequenceManager
 from rixs_app.core import (
     PCAFitFailure,
     apply_colormap,
