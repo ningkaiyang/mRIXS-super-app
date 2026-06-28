@@ -42,14 +42,15 @@ class SharpnessManager:
         self.current_idx = 0
         self.colormap = "viridis"
         self.pipeline_stage = "Raw"
+        self.engine = "Line-finding and Scoring"
         self.metric = "norm_sum_sq_grad"
         self.autoplay_active = False
 
-        # Clamping
+        # Slicing
         self.intensity_min = 0.0
         self.intensity_max = 1.0
-        self.clamping_floor = 0.0
-        self.clamping_ceiling = 1.0
+        self.slicing_floor = 0.0
+        self.slicing_ceiling = 1.0
 
         # Precomputed/cached values in RAM
         self.scores = {}
@@ -103,8 +104,8 @@ class SharpnessManager:
         if ref_raw is None:
             self.intensity_min = 0.0
             self.intensity_max = 1.0
-            self.clamping_floor = 0.0
-            self.clamping_ceiling = 1.0
+            self.slicing_floor = 0.0
+            self.slicing_ceiling = 1.0
             self.global_raw_std = 1.0
             return
 
@@ -114,11 +115,11 @@ class SharpnessManager:
         # Compute 60th percentile on active pixels
         active_pixels = ref_raw[ref_raw > self.intensity_min]
         if active_pixels.size > 0:
-            self.clamping_ceiling = float(np.percentile(active_pixels, 60.0))
+            self.slicing_ceiling = float(np.percentile(active_pixels, 60.0))
         else:
-            self.clamping_ceiling = self.intensity_max
+            self.slicing_ceiling = self.intensity_max
 
-        self.clamping_floor = self.intensity_min
+        self.slicing_floor = self.intensity_min
         self.global_raw_std = float(np.std(ref_raw))
 
     def get_frame_pipeline_data(self, idx: int) -> dict:
@@ -317,13 +318,18 @@ class SharpnessManager:
                     ax3 = fig.add_subplot(223)
                     ax4 = fig.add_subplot(224)
 
+                    # Sliced images for display (only values in [vmin, vmax] are kept, rest zeroed out)
+                    raw_disp = np.where((data["raw_img"] >= vmin) & (data["raw_img"] <= vmax), data["raw_img"], 0.0) if data.get("raw_img") is not None else None
+                    denoised_disp = np.where((data["denoised_img"] >= vmin) & (data["denoised_img"] <= vmax), data["denoised_img"], 0.0) if data.get("denoised_img") is not None else None
+                    masked_disp = np.where((data["masked_img"] >= vmin) & (data["masked_img"] <= vmax), data["masked_img"], 0.0) if data.get("masked_img") is not None else None
+
                     # Plot Raw
-                    ax1.imshow(data["raw_img"], cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
+                    ax1.imshow(raw_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
                     ax1.set_title("Raw Image")
                     ax1.axis("off")
 
                     # Denoised with overlays
-                    ax2.imshow(data["denoised_img"], cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
+                    ax2.imshow(denoised_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
                     ax2.set_title("Denoised Image")
                     ax2.plot(data["centroid"][0], data["centroid"][1], 'ro')
                     dx, dy = data["direction"]
@@ -332,7 +338,7 @@ class SharpnessManager:
                     ax2.axis("off")
 
                     # Masked with overlays
-                    ax3.imshow(data["masked_img"], cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
+                    ax3.imshow(masked_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
                     ax3.set_title("Masked Image")
                     ax3.plot(data["centroid"][0], data["centroid"][1], 'ro')
                     if abs(dx) > 1e-5:

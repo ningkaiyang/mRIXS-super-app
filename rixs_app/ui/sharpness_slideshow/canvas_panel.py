@@ -21,6 +21,14 @@ class SharpnessCanvasPanel(tk.Frame):
         self.ax_1d = self.figure.add_subplot(122)
         self.figure.tight_layout()
 
+        self.canvas.mpl_connect("button_press_event", self.on_click)
+
+    def on_click(self, event):
+        if event.inaxes == self.ax_2d:
+            if event.xdata is not None and event.ydata is not None:
+                if hasattr(self.controller, 'handle_canvas_click'):
+                    self.controller.handle_canvas_click(event.xdata, event.ydata)
+
     def draw_plots(self, img_2d, profile_1d, stage, colormap, vmin, vmax, centroid=None, direction=None):
         """Redraws both subplots inside the canvas layout.
 
@@ -43,7 +51,12 @@ class SharpnessCanvasPanel(tk.Frame):
             matplotlib_cmap = "gray"
 
         # 1. Plot 2D stage
-        self.ax_2d.imshow(img_2d, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
+        if img_2d is not None:
+            # Slicing: only points between lower bound (vmin) and upper bound (vmax) are shown, rest zeroed out.
+            img_display = np.where((img_2d >= vmin) & (img_2d <= vmax), img_2d, 0.0)
+        else:
+            img_display = None
+        self.ax_2d.imshow(img_display, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
         self.ax_2d.set_title(f"2D View: {stage}")
         self.ax_2d.axis("off")
 
@@ -57,11 +70,12 @@ class SharpnessCanvasPanel(tk.Frame):
 
         # Apply zoom if zoomed in
         zoom = getattr(self.controller, "zoom_factor", 1.0)
+        zoom_center = getattr(self.controller, "zoom_center", None)
         if zoom > 1.0 and img_2d is not None:
             h, w = img_2d.shape[:2]
             cx, cy = w / 2.0, h / 2.0
-            if centroid is not None:
-                cx, cy = centroid[0], centroid[1]
+            if zoom_center is not None:
+                cx, cy = zoom_center
             half_w = (w / 2.0) / zoom
             half_h = (h / 2.0) / zoom
             self.ax_2d.set_xlim(cx - half_w, cx + half_w)

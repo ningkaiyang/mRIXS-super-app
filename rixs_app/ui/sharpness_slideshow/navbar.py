@@ -49,3 +49,13 @@ class SharpnessNavBar(customtkinter.CTkFrame):
         )
         self.stage_menu.set("Raw")
         self.stage_menu.pack(side="right", padx=5)
+
+        # Right side: engine selection dropdown
+        self.engine_menu = customtkinter.CTkOptionMenu(
+            self,
+            values=["Line-finding and Scoring"],
+            command=self.controller.change_engine
+        )
+        self.engine_menu.set("Line-finding and Scoring")
+        self.engine_menu.pack(side="right", padx=5)
+

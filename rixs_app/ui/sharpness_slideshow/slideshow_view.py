@@ -29,6 +29,8 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self._autoplay_job = None
         self.autoplay_speed_ms = 600
         self.zoom_factor = 1.0
+        self.zoom_center = None
+        self.zoom_mode = False
 
         self._build_ui()
         self._poll_queue()
@@ -74,9 +76,13 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         
         self.control_panel.frame_slider.set(0)
         self.zoom_factor = 1.0
+        self.zoom_center = None
+        self.zoom_mode = False
+        self.tools_panel.zoom_in_button.configure(fg_color="#555", text="🔍+ Zoom In")
+        self.canvas_panel.canvas.get_tk_widget().configure(cursor="")
         self.tools_panel.sync_zoom_label(self.zoom_factor)
         self.tools_panel.range_slider.configure_range(self.manager.intensity_min, self.manager.intensity_max)
-        self.tools_panel.sync_clamping_inputs(self.manager.clamping_floor, self.manager.clamping_ceiling)
+        self.tools_panel.sync_slicing_inputs(self.manager.slicing_floor, self.manager.slicing_ceiling)
 
         self.load_and_render()
 
@@ -107,8 +113,8 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             profile_1d=data["1d_profile"],
             stage=stage,
             colormap=self.manager.colormap,
-            vmin=self.manager.clamping_floor,
-            vmax=self.manager.clamping_ceiling,
+            vmin=self.manager.slicing_floor,
+            vmax=self.manager.slicing_ceiling,
             centroid=data["centroid"],
             direction=data["direction"]
         )
@@ -176,51 +182,74 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self.control_panel.set_stage_description(val)
         self.load_and_render()
 
-    def handle_clamping_change(self, floor, ceiling):
-        self.manager.clamping_floor = floor
-        self.manager.clamping_ceiling = ceiling
-        self.tools_panel.sync_clamping_inputs(floor, ceiling)
+    def change_engine(self, val):
+        self.manager.engine = val
+
+    def handle_slicing_change(self, floor, ceiling):
+        self.manager.slicing_floor = floor
+        self.manager.slicing_ceiling = ceiling
+        self.tools_panel.sync_slicing_inputs(floor, ceiling)
 
         if self._clamping_debounce_id is not None:
             self.after_cancel(self._clamping_debounce_id)
-        self._clamping_debounce_id = self.after(80, self._apply_clamping_change)
+        self._clamping_debounce_id = self.after(80, self._apply_slicing_change)
 
-    def _apply_clamping_change(self):
+    def _apply_slicing_change(self):
         self._clamping_debounce_id = None
         self.load_and_render()
 
     def handle_floor_entry_submit(self, val_str):
         try:
             val = float(val_str)
-            val = max(self.manager.intensity_min, min(self.manager.clamping_ceiling - 1e-4, val))
-            self.manager.clamping_floor = val
-            self.tools_panel.range_slider.set_values(val, self.manager.clamping_ceiling)
-            self._apply_clamping_change()
+            val = max(self.manager.intensity_min, min(self.manager.slicing_ceiling - 1e-4, val))
+            self.manager.slicing_floor = val
+            self.tools_panel.range_slider.set_values(val, self.manager.slicing_ceiling)
+            self._apply_slicing_change()
         except ValueError:
             pass
 
     def handle_ceiling_entry_submit(self, val_str):
         try:
             val = float(val_str)
-            val = max(self.manager.clamping_floor + 1e-4, min(self.manager.intensity_max, val))
-            self.manager.clamping_ceiling = val
-            self.tools_panel.range_slider.set_values(self.manager.clamping_floor, val)
-            self._apply_clamping_change()
+            val = max(self.manager.slicing_floor + 1e-4, min(self.manager.intensity_max, val))
+            self.manager.slicing_ceiling = val
+            self.tools_panel.range_slider.set_values(self.manager.slicing_floor, val)
+            self._apply_slicing_change()
         except ValueError:
             pass
 
+    def toggle_zoom_mode(self):
+        self.zoom_mode = not getattr(self, 'zoom_mode', False)
+        if self.zoom_mode:
+            self.tools_panel.zoom_in_button.configure(fg_color="#cc5500", text="🔍 Click Zoom...")
+            self.canvas_panel.canvas.get_tk_widget().configure(cursor="crosshair")
+        else:
+            self.tools_panel.zoom_in_button.configure(fg_color="#555", text="🔍+ Zoom In")
+            self.canvas_panel.canvas.get_tk_widget().configure(cursor="")
+
+    def handle_canvas_click(self, xdata, ydata):
+        if getattr(self, 'zoom_mode', False):
+            self.zoom_center = (xdata, ydata)
+            self.zoom_factor = min(10.0, self.zoom_factor * 1.5)
+            self.tools_panel.sync_zoom_label(self.zoom_factor)
+            self.toggle_zoom_mode()
+            self.load_and_render()
+
     def zoom_in(self):
-        self.zoom_factor = min(10.0, self.zoom_factor * 1.5)
-        self.tools_panel.sync_zoom_label(self.zoom_factor)
-        self.load_and_render()
+        self.toggle_zoom_mode()
 
     def zoom_out(self):
         self.zoom_factor = max(1.0, self.zoom_factor / 1.5)
+        if self.zoom_factor == 1.0:
+            self.zoom_center = None
         self.tools_panel.sync_zoom_label(self.zoom_factor)
         self.load_and_render()
 
     def reset_view(self):
         self.zoom_factor = 1.0
+        self.zoom_center = None
+        if getattr(self, 'zoom_mode', False):
+            self.toggle_zoom_mode()
         self.tools_panel.sync_zoom_label(self.zoom_factor)
         self.load_and_render()
 
@@ -275,8 +304,8 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
 
         self.manager.run_export_worker(
             export_dir=export_dir,
-            vmin=self.manager.clamping_floor,
-            vmax=self.manager.clamping_ceiling,
+            vmin=self.manager.slicing_floor,
+            vmax=self.manager.slicing_ceiling,
             on_progress=on_progress,
             on_complete=on_complete
         )

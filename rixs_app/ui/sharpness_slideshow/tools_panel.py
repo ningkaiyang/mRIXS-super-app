@@ -32,16 +32,16 @@ class SharpnessToolsPanel(customtkinter.CTkFrame):
         self.zoom_label = customtkinter.CTkLabel(self, text="Zoom: 1.0×")
         self.zoom_label.pack(side="left", padx=5)
 
-        # Right side: Clamping adjustments
-        self.clamping_label = customtkinter.CTkLabel(self, text="Clamping:")
-        self.clamping_label.pack(side="left", padx=(20, 5))
+        # Right side: Slicing adjustments
+        self.slicing_label = customtkinter.CTkLabel(self, text="Slicing:")
+        self.slicing_label.pack(side="left", padx=(20, 5))
 
         self.floor_entry = customtkinter.CTkEntry(self, width=80)
         self.floor_entry.pack(side="left", padx=5)
         self.floor_entry.bind("<Return>", self._on_floor_submit)
 
         self.range_slider = RangeSlider(
-            self, height=25, command=self.controller.handle_clamping_change
+            self, height=25, command=self.controller.handle_slicing_change
         )
         self.range_slider.pack(side="left", fill="x", expand=True, padx=5)
 
@@ -52,7 +52,7 @@ class SharpnessToolsPanel(customtkinter.CTkFrame):
     def sync_zoom_label(self, val):
         self.zoom_label.configure(text=f"Zoom: {val:.1f}×")
 
-    def sync_clamping_inputs(self, floor, ceiling):
+    def sync_slicing_inputs(self, floor, ceiling):
         self.floor_entry.delete(0, "end")
         self.floor_entry.insert(0, f"{floor:.4f}")
         self.ceiling_entry.delete(0, "end")

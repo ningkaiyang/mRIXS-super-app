@@ -98,7 +98,7 @@ class TestSharpnessGUI(unittest.TestCase):
         view.load_and_render()
         self.assertIn("Score: 0.42", view.control_panel.score_label.cget("text"))
 
-    def test_clamping_changes(self):
+    def test_slicing_changes(self):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
@@ -106,11 +106,11 @@ class TestSharpnessGUI(unittest.TestCase):
         # Test input submissions
         view.handle_floor_entry_submit("0.1")
         view.handle_ceiling_entry_submit("0.9")
-        self.assertAlmostEqual(view.manager.clamping_floor, 0.1)
-        self.assertAlmostEqual(view.manager.clamping_ceiling, 0.9)
+        self.assertAlmostEqual(view.manager.slicing_floor, 0.1)
+        self.assertAlmostEqual(view.manager.slicing_ceiling, 0.9)
 
         # Debouncing apply
-        view._apply_clamping_change()
+        view._apply_slicing_change()
         self.assertIsNone(view._clamping_debounce_id)
 
     def test_colormap_changes(self):
@@ -131,14 +131,23 @@ class TestSharpnessGUI(unittest.TestCase):
         
         self.assertEqual(view.zoom_factor, 1.0)
         view.zoom_in()
+        self.assertTrue(view.zoom_mode)
+        self.assertEqual(view.zoom_factor, 1.0)
+        
+        view.handle_canvas_click(50, 50)
         self.assertGreater(view.zoom_factor, 1.0)
+        self.assertFalse(view.zoom_mode)
+        self.assertEqual(view.zoom_center, (50, 50))
         
         view.zoom_out()
         self.assertEqual(view.zoom_factor, 1.0)
+        self.assertIsNone(view.zoom_center)
         
         view.zoom_in()
+        view.handle_canvas_click(50, 50)
         view.reset_view()
         self.assertEqual(view.zoom_factor, 1.0)
+        self.assertIsNone(view.zoom_center)
 
     @patch("os.makedirs")
     def test_zarr_cache_fallback(self, mock_makedirs):
