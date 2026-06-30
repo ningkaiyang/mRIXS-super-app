@@ -104,7 +104,7 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         if stage == "Raw":
             img_2d = data["raw_img"]
         elif stage == "Denoised":
-            img_2d = data["denoised_img"]
+            img_2d = data.get("grad_img", data.get("denoised_img", data["raw_img"]))
         else:
             img_2d = data["masked_img"]
 

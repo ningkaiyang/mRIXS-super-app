@@ -90,6 +90,26 @@ def main() -> None:
         "--inverse-anscombe", action="store_true", help="Flag to apply inverse Anscombe."
     )
 
+    # Geometric Gradient parameters
+    parser.add_argument(
+        "--feature-low", type=float, default=0.0, help="Feature low threshold (default 0.0)."
+    )
+    parser.add_argument(
+        "--feature-high", type=float, default=100.0, help="Feature high threshold (default 100.0)."
+    )
+    parser.add_argument(
+        "--edge-margin", type=int, default=50, help="Edge margin pixels to mask (default 50)."
+    )
+    parser.add_argument(
+        "--high-dilate", type=int, default=8, help="Dilation radius for high bad/edges (default 8)."
+    )
+    parser.add_argument(
+        "--bg-sigma", type=float, default=None, help="Background blur sigma for high-pass (default None)."
+    )
+    parser.add_argument(
+        "--smooth-sigma", type=float, default=1.2, help="Smoothing blur sigma (default 1.2)."
+    )
+
     args = parser.parse_args()
 
     # --- Argument Validation ---
@@ -109,7 +129,9 @@ def main() -> None:
         sys.exit(1)
 
     # 2. Non-negative numeric options
-    if args.d < 0 or args.sigma_color < 0.0 or args.sigma_space < 0.0 or args.mad_threshold < 0.0:
+    if (args.d < 0 or args.sigma_color < 0.0 or args.sigma_space < 0.0 or args.mad_threshold < 0.0 or
+            args.edge_margin < 0 or args.high_dilate < 0 or
+            (args.bg_sigma is not None and args.bg_sigma < 0.0) or args.smooth_sigma < 0.0):
         sys.stderr.write("Error: All numeric options must be non-negative.\n")
         sys.exit(1)
 
@@ -161,6 +183,8 @@ def main() -> None:
         # Output subdirectory
         out_dir = os.path.join(args.dir, "denoised")
         os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, ".denoise_version"), "w") as f:
+            f.write("2.0-gradient-magnitude\n")
 
         for file_path in tiff_files:
             try:
@@ -231,6 +255,8 @@ def main() -> None:
         out_dir = os.path.dirname(os.path.abspath(args.output))
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, ".denoise_version"), "w") as f:
+                f.write("2.0-gradient-magnitude\n")
 
         tifffile.imwrite(args.output, denoised_img.astype(np.float32))
         print(f"Saved denoised image to: {args.output}\n")

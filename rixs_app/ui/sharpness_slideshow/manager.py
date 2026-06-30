@@ -7,7 +7,7 @@ import numpy as np
 import hashlib
 import inspect
 from rixs_app.core.dataset import ZarrSequenceManager
-from rixs_app.core.sharpness import run_sharpness_pipeline, denoise_image, fit_line_robustly
+from rixs_app.core.sharpness import run_sharpness_pipeline, denoise_image
 
 def _call_on_complete(on_complete, success, err_msg=None):
     try:
@@ -43,7 +43,7 @@ class SharpnessManager:
         self.colormap = "viridis"
         self.pipeline_stage = "Raw"
         self.engine = "Line-finding and Scoring"
-        self.metric = "norm_sum_sq_grad"
+        self.metric = "score"
         self.autoplay_active = False
 
         # Slicing
@@ -157,8 +157,9 @@ class SharpnessManager:
         # 2. Get frames from Zarr cache
         if current_zarr_manager is None:
             return None
-        denoised_img = current_zarr_manager.get_derived_frame(idx, "denoised")
-        masked_img = current_zarr_manager.get_derived_frame(idx, "masked")
+        denoised_img = current_zarr_manager.get_derived_frame(idx, "denoised_img")
+        masked_img = current_zarr_manager.get_derived_frame(idx, "masked_img")
+        grad_img = current_zarr_manager.get_derived_frame(idx, "grad_img")
         raw_img = current_zarr_manager.get_frame(idx)
 
         if raw_img is None:
@@ -168,7 +169,7 @@ class SharpnessManager:
             if self.session_id is not current_session:
                 return None
             self._local.file_list = session_file_list
-            return {
+            res = {
                 "raw_img": raw_img,
                 "denoised_img": denoised_img,
                 "masked_img": masked_img,
@@ -177,6 +178,9 @@ class SharpnessManager:
                 "direction": cached_data["direction"],
                 "1d_profile": cached_data["1d_profile"]
             }
+            if grad_img is not None:
+                res["grad_img"] = grad_img
+            return res
 
         # 3. Cache Miss: Run processing pipeline
         if self.global_raw_std is not None and self.global_raw_std > 500.0 and not self._global_ref_line_calculated:
@@ -241,10 +245,10 @@ class SharpnessManager:
             if self.session_id is current_session:
                 # Save derived frames to disk cache
                 if current_zarr_manager is not None:
-                    current_zarr_manager.set_derived_frame(idx, "denoised", res["denoised_img"])
-                    current_zarr_manager.set_derived_frame(idx, "masked", res["masked_img"])
-
-                # Update in-memory metadata
+                    current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
+                    current_zarr_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
+                    current_zarr_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
+                    # Update in-memory metadata
                 with self.lock:
                     if self.session_id is current_session:
                         self.centroids[idx] = res["centroid"]
@@ -320,37 +324,56 @@ class SharpnessManager:
 
                     # Sliced images for display (only values in [vmin, vmax] are kept, rest zeroed out)
                     raw_disp = np.where((data["raw_img"] >= vmin) & (data["raw_img"] <= vmax), data["raw_img"], 0.0) if data.get("raw_img") is not None else None
-                    denoised_disp = np.where((data["denoised_img"] >= vmin) & (data["denoised_img"] <= vmax), data["denoised_img"], 0.0) if data.get("denoised_img") is not None else None
-                    masked_disp = np.where((data["masked_img"] >= vmin) & (data["masked_img"] <= vmax), data["masked_img"], 0.0) if data.get("masked_img") is not None else None
 
                     # Plot Raw
                     ax1.imshow(raw_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
                     ax1.set_title("Raw Image")
+                    
+                    from rixs_app.core.sharpness import detect_elastic_line_bottom_right
+                    line_res = detect_elastic_line_bottom_right(data["raw_img"])
+                    
+                    if line_res is not None:
+                        p_start = line_res['endpoints'][0]
+                        p_end = line_res['endpoints'][1]
+                        ax1.plot([p_start[0], p_end[0]], [p_start[1], p_end[1]], 'r-', linewidth=2)
+                    else:
+                        dx, dy = data["direction"]
+                        if abs(dx) > 1e-5:
+                            ax1.axline((data["centroid"][0], data["centroid"][1]), slope=dy/dx, color="red", linestyle="--")
                     ax1.axis("off")
 
-                    # Denoised with overlays
-                    ax2.imshow(denoised_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
+                    # Plot Denoised Image
+                    denoised = data.get("denoised_img")
+                    if denoised is not None:
+                        p99 = np.percentile(denoised, 99.5)
+                        if p99 == 0: p99 = 1.0
+                        ax2.imshow(denoised, cmap=matplotlib_cmap, vmin=0, vmax=p99, aspect='auto')
+                        if line_res is not None:
+                            ax2.plot([p_start[0], p_end[0]], [p_start[1], p_end[1]], 'w-', linewidth=2)
+                    else:
+                        ax2.text(0.5, 0.5, "No Denoised Image", ha='center', va='center')
                     ax2.set_title("Denoised Image")
-                    ax2.plot(data["centroid"][0], data["centroid"][1], 'ro')
-                    dx, dy = data["direction"]
-                    if abs(dx) > 1e-5:
-                        ax2.axline((data["centroid"][0], data["centroid"][1]), slope=dy/dx, color="red", linestyle="--")
                     ax2.axis("off")
 
-                    # Masked with overlays
-                    ax3.imshow(masked_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
-                    ax3.set_title("Masked Image")
-                    ax3.plot(data["centroid"][0], data["centroid"][1], 'ro')
-                    if abs(dx) > 1e-5:
-                        ax3.axline((data["centroid"][0], data["centroid"][1]), slope=dy/dx, color="red", linestyle="--")
+                    # Plot Masked Gradient
+                    masked_img = data.get("masked_img")
+                    if masked_img is not None:
+                        p99_g = np.percentile(masked_img, 99.9)
+                        if p99_g == 0: p99_g = 1.0
+                        ax3.imshow(masked_img, cmap=matplotlib_cmap, vmin=0, vmax=p99_g, aspect='auto')
+                    else:
+                        ax3.text(0.5, 0.5, "No Masked Image", ha='center', va='center')
+                    ax3.set_title("Masked Gradient")
                     ax3.axis("off")
 
-                    # 1D Profile
+                    # Plot 1D Profile + Fit
                     P, u = data["1d_profile"]
-                    ax4.plot(u, P, color="blue")
-                    ax4.set_title(f"1D Profile (Score: {data['score']:.6f})")
+                    ax4.plot(u, P, 'k-', linewidth=2, label='1D Profile')
+                    
+                    ax4.set_title(f"1D Profile (Peak Sharpness: {data['score']:.2f})")
                     ax4.set_xlabel("Perpendicular Distance (u)")
-                    ax4.set_ylabel("Intensity")
+                    ax4.set_ylabel("Gradient Sum")
+                    ax4.legend(fontsize=8)
 
                     fig.tight_layout()
                     save_path = os.path.join(export_dir, f"frame_{idx:03d}_diagnostic.png")

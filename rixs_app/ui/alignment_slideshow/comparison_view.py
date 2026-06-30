@@ -107,23 +107,31 @@ class ExportComparisonView(ctk.CTkFrame):
 
         # Independent intensity scaling ----------------------------------
         aligned_min = float(np.min(aligned_sum)) if aligned_sum.size > 0 else 0.0
-        aligned_active = aligned_sum[aligned_sum > aligned_min]
-        aligned_p60 = float(np.percentile(aligned_active, 60.0)) if aligned_active.size > 0 else 1.0
+        aligned_active = aligned_sum[aligned_sum > max(aligned_min, 0.0)]
+        if aligned_active.size > 0:
+            aligned_vmax = float(np.percentile(aligned_active, 60.0))
+        else:
+            aligned_vmax = 1.0
+        aligned_vmax = max(1e-6, aligned_vmax)
 
         direct_min = float(np.min(direct_sum)) if direct_sum.size > 0 else 0.0
-        direct_active = direct_sum[direct_sum > direct_min]
-        direct_p60 = float(np.percentile(direct_active, 60.0)) if direct_active.size > 0 else 1.0
+        direct_active = direct_sum[direct_sum > max(direct_min, 0.0)]
+        if direct_active.size > 0:
+            direct_vmax = float(np.percentile(direct_active, 60.0))
+        else:
+            direct_vmax = 1.0
+        direct_vmax = max(1e-6, direct_vmax)
 
         # Build matplotlib figure ----------------------------------------
         self._figure = Figure(figsize=(10, 5), dpi=100)
         ax1 = self._figure.add_subplot(121)
         ax2 = self._figure.add_subplot(122, sharex=ax1, sharey=ax1)
 
-        ax1.imshow(direct_sum, cmap="viridis", vmin=0, vmax=direct_p60)
+        ax1.imshow(direct_sum, cmap="viridis", vmin=0, vmax=direct_vmax)
         ax1.set_title("Direct Sum (Unaligned)")
         ax1.axis("off")
 
-        ax2.imshow(aligned_sum, cmap="viridis", vmin=0, vmax=aligned_p60)
+        ax2.imshow(aligned_sum, cmap="viridis", vmin=0, vmax=aligned_vmax)
         ax2.set_title("Aligned Sum")
         ax2.axis("off")
 

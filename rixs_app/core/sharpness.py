@@ -6,8 +6,12 @@ and evaluate sharpness metrics.
 
 import os
 import glob
+import math
 import numpy as np
 import scipy.ndimage
+from scipy.ndimage import map_coordinates, gaussian_filter1d
+from scipy.optimize import least_squares
+from scipy.signal import find_peaks
 import cv2
 
 # Import from alignment and io
@@ -119,189 +123,30 @@ def denoise_image(
 
     return img.astype(np.float32)
 
-def fit_line_robustly(img: np.ndarray, crop_y: int) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Fit a dominant structural line on the image robustly after applying border cropping.
-
-    This function extracts the primary diagonal spectroscopic line from the preprocessed 2D image 
-    using Principal Component Analysis (PCA). To prevent edge artifacts (like top/bottom detector 
-    bounds) from skewing the fit, it crops `crop_y` rows from both the top and bottom. If the 
-    fitted line angle falls outside expected RIXS operational bounds (-25.0 to 5.0 degrees), or 
-    if the PCA fit fails, a fallback angle of -8.0 degrees centered on the image is safely provided.
-
-    Args:
-        img: 2D numpy array representing the preprocessed frame.
-        crop_y: Integer specifying the number of rows to crop from the top and bottom before fitting.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray]: A tuple containing:
-            - centroid (np.ndarray): The (x, y) coordinates of the line center, adjusted back for cropping.
-            - direction (np.ndarray): The unit direction vector (dx, dy) of the fitted line.
-    """
-    h, w = img.shape
-    cropped = img[crop_y:h-crop_y, :]
-    try:
-        best_t = find_best_threshold(cropped)
-        centroid_crop, direction = find_peak_line(cropped, best_t)
-        centroid = np.array([centroid_crop[0], centroid_crop[1] + crop_y])
-        if direction[0] < 0:
-            direction = -direction
-        angle = np.arctan2(direction[1], direction[0]) * 180.0 / np.pi
-        if not (-25.0 <= angle <= 5.0):
-            fallback_rad = -8.0 * np.pi / 180.0
-            direction = np.array([np.cos(fallback_rad), np.sin(fallback_rad)])
-        return centroid, direction
-    except Exception:
-        fallback_rad = -8.0 * np.pi / 180.0
-        return np.array([w/2, h/2]), np.array([np.cos(fallback_rad), np.sin(fallback_rad)])
-
-def apply_spatial_mask(img: np.ndarray, centroid: np.ndarray, direction: np.ndarray, strip_width: float) -> np.ndarray:
-    """
-    Zero out all pixels located outside a defined strip parallel to the spectroscopic line.
-
-    This spatial mask acts as a mathematical isolation step, removing background noise, 
-    cosmic rays, and extraneous artifacts that are distant from the main structural elastic line. 
-    It calculates the perpendicular distance of each pixel to the line defined by `centroid` 
-    and `direction`, retaining only those within `strip_width` distance.
-
-    Args:
-        img: 2D numpy array representing the image to be masked.
-        centroid: np.ndarray of shape (2,) representing the (x, y) coordinates of the line centroid.
-        direction: np.ndarray of shape (2,) representing the unit direction vector of the line.
-        strip_width: Float specifying the maximum allowed perpendicular distance from the line.
-
-    Returns:
-        np.ndarray: A masked 2D image where pixels outside the strip are strictly zeroed.
-    """
-    h, w = img.shape
-    dx = np.arange(w) - centroid[0]
-    dy = np.arange(h) - centroid[1]
-    perp_dist = np.abs(dx[None, :] * (-direction[1]) + dy[:, None] * direction[0])
-    mask = (perp_dist <= strip_width)
-    return img * mask
-
-def get_1d_profile(img: np.ndarray, centroid: np.ndarray, direction: np.ndarray, crop_y: int) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Project the pixel intensities perpendicular to the line to create a 1D cross-sectional profile.
-
-    By projecting 2D pixel coordinates onto an axis perpendicular to the identified elastic line, 
-    we reduce the spatial data into a 1D intensity profile `P(u)`. This aggregates the signal 
-    strength across the length of the line, providing a high-SNR spatial spread curve used for 
-    measuring cross-sectional sharpness without 2D noise volatility.
-
-    Args:
-        img: 2D numpy array representing the masked image.
-        centroid: np.ndarray of shape (2,) representing the reference (x, y) centroid on the line.
-        direction: np.ndarray of shape (2,) representing the unit direction vector of the line.
-        crop_y: Integer specifying the top/bottom border crop that should be excluded from projection. 
-                Must match the crop applied during line fitting.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray]: A tuple containing:
-            - P (np.ndarray): The aggregated 1D intensity histogram (profile) of the cross-section.
-            - u (np.ndarray): The corresponding 1D perpendicular spatial coordinates (bin centers).
-    """
-    h, w = img.shape
-    if crop_y is not None and crop_y > 0:
-        y_vals = np.arange(crop_y, h - crop_y)
-    else:
-        y_vals = np.arange(h)
-    x_vals = np.arange(w)
-    
-    dx = x_vals - centroid[0]
-    dy = y_vals - centroid[1]
-    perp = np.array([-direction[1], direction[0]])
-    u_vals = dx[None, :] * perp[0] + dy[:, None] * perp[1]
-    
-    cropped_img = img[crop_y:h-crop_y, :] if (crop_y is not None and crop_y > 0) else img
-    P, bin_edges = np.histogram(u_vals, bins=160, range=(-80, 80), weights=cropped_img)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    return P, bin_centers
-
-def compute_1d_metrics(P: np.ndarray, u: np.ndarray) -> dict[str, float]:
-    """
-    Compute candidate sharpness metrics derived from the 1D cross-sectional profile.
-
-    Instead of relying on volatile 2D high-frequency filters, this evaluates the true physical 
-    concentration of the signal. The metrics include absolute peak height and a normalized sum of 
-    squared gradients (representing the steepness/sharpness of the beam profile).
-
-    Args:
-        P: 1D numpy array representing the aggregated intensity values of the profile.
-        u: 1D numpy array representing the spatial coordinates perpendicular to the line.
-
-    Returns:
-        dict[str, float]: A dictionary containing calculated metrics:
-            - "peak_height": The maximum value of the profile.
-            - "norm_sum_sq_grad": Sum of squared differences between adjacent bins, normalized 
-              by the squared sum of the entire profile.
-    """
-    sum_P = np.sum(P)
-    if sum_P <= 1e-9:
-        return {
-            "peak_height": 0.0,
-            "norm_sum_sq_grad": 0.0
-        }
-    peak_height = np.max(P)
-    diff_P = np.diff(P)
-    sum_sq_grad = np.sum(diff_P ** 2)
-    norm_sum_sq_grad = sum_sq_grad / (sum_P ** 2)
-    return {
-        "peak_height": peak_height,
-        "norm_sum_sq_grad": norm_sum_sq_grad
-    }
 
 def evaluate_sharpness(
     img: np.ndarray,
-    metric: str = "norm_sum_sq_grad",
+    metric: str = "",
     ref_line: tuple[np.ndarray, np.ndarray] | None = None,
     raw_std: float | None = None
 ) -> float:
     """
-    Evaluate the sharpness of a 2D spectroscopic frame image using a specified metric.
-
+    Evaluate the sharpness of a 2D spectroscopic frame image.
+    
     This acts as the primary evaluation pipeline for mirror alignment and focus optimization. 
-    It runs the sharpness pipeline and returns the score of the requested metric.
-
-    Args:
-        img: 2D numpy array containing the input image.
-        metric: String indicating the chosen sharpness evaluation strategy.
-        ref_line: Optional pre-calculated line (centroid, direction) to bypass robust line fitting.
-        raw_std: Optional standard deviation of the raw image to manage parameter selection.
-
-    Returns:
-        float: The computed scalar sharpness score.
-
-    Raises:
-        ValueError: If `img` is not a valid 2D array, is empty, or if `metric` is not recognized.
+    It runs the sharpness pipeline and returns the score.
     """
     res = run_sharpness_pipeline(img, metric=metric, ref_line=ref_line, raw_std=raw_std)
     return res["score"]
 
 def run_sharpness_pipeline(
     img: np.ndarray,
-    metric: str = "norm_sum_sq_grad",
+    metric: str = "",
     ref_line: tuple[np.ndarray, np.ndarray] | None = None,
     raw_std: float | None = None
 ) -> dict:
     """
-    Run the complete sharpness evaluation pipeline, returning intermediate states.
-
-    Args:
-        img: 2D numpy array representing the input frame (raw or preprocessed).
-        metric: Sharpness metric to use ('norm_sum_sq_grad' or 'peak_height').
-        ref_line: Optional pre-calculated line (centroid, direction) to bypass robust line fitting.
-        raw_std: Optional standard deviation of the raw image.
-
-    Returns:
-        dict: A dictionary containing:
-            - "raw_img": The original input image.
-            - "denoised_img": The denoised 2D image.
-            - "masked_img": The masked 2D image.
-            - "centroid": The (x, y) coordinates of the line center.
-            - "direction": The unit direction vector (dx, dy).
-            - "1d_profile": A tuple of (P, u) representing the 1D cross-sectional profile.
-            - "score": The evaluated sharpness score.
+    Run the complete sharpness evaluation pipeline using the new gradient magnitude line-finding algorithm.
     """
     if not isinstance(img, np.ndarray):
         raise ValueError("Input must be a numpy array")
@@ -310,60 +155,168 @@ def run_sharpness_pipeline(
     if img.size == 0 or img.shape[0] == 0 or img.shape[1] == 0:
         raise ValueError("Input array cannot be empty")
 
-    valid_metrics = {"norm_sum_sq_grad", "peak_height"}
-    if metric not in valid_metrics:
-        raise ValueError(f"Invalid metric: {metric}. Must be one of {valid_metrics}")
-
-    # Determine raw std_val to select parameters
-    is_raw = np.min(img) < -1.0
-    if is_raw:
-        std_val = np.std(img)
-    else:
-        std_val = raw_std if raw_std is not None else (np.std(img) * 5.0)
-
-    # Selection of parameters based on std_val
-    if std_val > 500.0:  # Scan 003848
-        despike = False
-        bilateral = False
-        crop_y = 200
-        strip_width = 30
-    else:  # Other scans
-        despike = True
-        bilateral = True
-        crop_y = 300
-        strip_width = 30
-
-    if is_raw:
-        denoised_img = denoise_image(
-            img,
-            clip=True,
-            despike=despike,
-            anscombe=True,
-            bilateral=bilateral,
-            inverse_anscombe=True
-        )
-    else:
-        denoised_img = img
-
-    # Compute/retrieve line centroid and direction
-    if ref_line is not None:
-        centroid, direction = ref_line
-    else:
-        centroid, direction = fit_line_robustly(denoised_img, crop_y=crop_y)
-
-    # Apply spatial strip mask and project to 1D profile
-    masked_img = apply_spatial_mask(denoised_img, centroid, direction, strip_width)
-    P, u = get_1d_profile(masked_img, centroid, direction, crop_y=crop_y)
-    metric_vals = compute_1d_metrics(P, u)
+    line_result = detect_elastic_line_bottom_right(img)
     
-    score = metric_vals[metric]
+    grad_img = line_result['grad_img']
+    cx, cy = line_result['centroid']
+    
+    theta = np.deg2rad(line_result['direction'])
+    direction_vec = np.array([np.cos(theta), np.sin(theta)])
+    perp = np.array([-np.sin(theta), np.cos(theta)])
+    
+    h, w = grad_img.shape
+    y, x = np.indices((h, w))
+    
+    dx = x - cx
+    dy = y - cy
+    u_vals = dx * perp[0] + dy * perp[1]
+    
+    u_bins = np.arange(-40.5, 41.5, 1.0)
+    u = np.arange(-40, 41, 1.0)
+    
+    P, _ = np.histogram(u_vals.ravel(), bins=u_bins, weights=grad_img.ravel())
+    
+    # Smooth the 1D profile slightly for display purposes
+    P = scipy.ndimage.gaussian_filter1d(P, sigma=1.0)
+    
+    # Calculate score based on peak sharpness of the 1D profile
+    profile_score = float(np.max(P))
     
     return {
         "raw_img": img,
-        "denoised_img": denoised_img,
-        "masked_img": masked_img,
-        "centroid": centroid,
-        "direction": direction,
+        "denoised_img": line_result['denoised_img'],
+        "masked_img": line_result['masked_img'],
+        "grad_img": line_result['grad_img'],
+        "centroid": np.array(line_result['centroid']),
+        "direction": direction_vec,
         "1d_profile": (P, u),
-        "score": float(score)
+        "score": profile_score
+    }
+
+def detect_elastic_line_bottom_right(img: np.ndarray, density_threshold: float = 0.08) -> dict:
+    """
+    Detect the elastic line using a bottom-right scanning approach on the gradient magnitude.
+    """
+    # 1. Denoise
+    denoised = denoise_image(img)
+    
+    # 2. Crop
+    h, w = denoised.shape
+    crop = 100 if min(h, w) > 200 else 0
+    if crop > 0:
+        cropped = denoised[crop:h-crop, crop:w-crop]
+    else:
+        cropped = denoised
+    
+    # 3. Gradient Magnitude
+    smoothed = cv2.GaussianBlur(cropped, (5, 5), 1.5)
+    gx = cv2.Scharr(smoothed, cv2.CV_32F, 1, 0)
+    gy = cv2.Scharr(smoothed, cv2.CV_32F, 0, 1)
+    grad_img = np.sqrt(gx**2 + gy**2)
+    
+    # 4. Bottom-Right Scan
+    ch, cw = grad_img.shape
+    y_indices, x_indices = np.indices((ch, cw))
+    diag_indices = x_indices + y_indices
+    max_k = ch + cw - 2
+    
+    # We look for density of non-small gradients
+    # Use a 95th percentile threshold to isolate strong signals
+    grad_min = np.percentile(grad_img, 95)
+    strong_grad = (grad_img > grad_min).astype(np.float32)
+    
+    diag_sums = np.bincount(diag_indices.ravel(), weights=strong_grad.ravel(), minlength=max_k+1)
+    diag_lengths = np.bincount(diag_indices.ravel(), minlength=max_k+1)
+    
+    diag_density = np.zeros(max_k + 1, dtype=np.float32)
+    valid_diags = diag_lengths > 50  # Ignore tiny corners to avoid small-sample noise
+    diag_density[valid_diags] = diag_sums[valid_diags] / diag_lengths[valid_diags]
+    
+    kernel = np.ones(20) / 20.0
+    diag_density_smooth = np.convolve(diag_density, kernel, mode='same')
+    
+    # 5. Centroid Finding
+    # We want a zone that exceeds this tunable density threshold
+    valid_k = np.where(diag_density_smooth > density_threshold)[0]
+    
+    if len(valid_k) == 0:
+        mid_k = max_k // 2
+    else:
+        # Instead of picking the "middle" cloud, find the peak density in the valid zones
+        mid_k = valid_k[np.argmax(diag_density_smooth[valid_k])]
+        
+    diag_mask = (diag_indices >= mid_k - 5) & (diag_indices <= mid_k + 5)
+    if np.sum(diag_mask) > 0:
+        y_coords = y_indices[diag_mask]
+        x_coords = x_indices[diag_mask]
+        # Weight by actual gradient magnitude to get accurate centroid
+        weights = grad_img[diag_mask]
+        if np.sum(weights) > 0:
+            cx = np.average(x_coords, weights=weights)
+            cy = np.average(y_coords, weights=weights)
+        else:
+            cx = cw / 2.0
+            cy = ch / 2.0
+    else:
+        cx = cw / 2.0
+        cy = ch / 2.0
+        
+    orig_cx = cx + crop
+    orig_cy = cy + crop
+    centroid = (float(orig_cx), float(orig_cy))
+    
+    # 6. Angle Sweep
+    angles = np.arange(-25.0, 6.0, 0.5)
+    best_angle = 0.0
+    best_score = -1.0
+    
+    best_mask = None
+    
+    for angle in angles:
+        theta = np.deg2rad(angle)
+        perp = np.array([-np.sin(theta), np.cos(theta)])
+        
+        dx = x_indices - cx
+        dy = y_indices - cy
+        perp_dist = dx * perp[0] + dy * perp[1]
+        
+        mask = np.abs(perp_dist) < 20
+        if np.sum(mask) == 0:
+            continue
+            
+        score = np.sum(grad_img[mask])
+        if score > best_score:
+            best_score = score
+            best_angle = angle
+            best_mask = mask
+            
+    # 7. Score
+    final_score = best_score
+    
+    # 8. Return Format
+    theta = np.deg2rad(best_angle)
+    direction = np.array([np.cos(theta), np.sin(theta)])
+    length = max(h, w)
+    x1 = orig_cx - length * direction[0]
+    y1 = orig_cy - length * direction[1]
+    x2 = orig_cx + length * direction[0]
+    y2 = orig_cy + length * direction[1]
+    
+    full_grad = np.zeros_like(img, dtype=np.float32)
+    full_grad[crop:h-crop, crop:w-crop] = grad_img
+    
+    full_masked = np.zeros_like(img, dtype=np.float32)
+    if best_mask is not None:
+        masked_grad = np.zeros_like(grad_img)
+        masked_grad[best_mask] = grad_img[best_mask]
+        full_masked[crop:h-crop, crop:w-crop] = masked_grad
+    
+    return {
+        'centroid': centroid,
+        'direction': float(best_angle),
+        'endpoints': ((float(x1), float(y1)), (float(x2), float(y2))),
+        'grad_img': full_grad,
+        'masked_img': full_masked,
+        'score': float(final_score),
+        'denoised_img': denoised
     }

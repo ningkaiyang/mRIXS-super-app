@@ -33,9 +33,17 @@ class TestSharpnessGUI(unittest.TestCase):
         
     def tearDown(self):
         try:
+            if hasattr(self, "app") and self.app.sharpness_view is not None:
+                if self.app.sharpness_view.manager is not None:
+                    self.app.sharpness_view.manager.zarr_manager = None
+        except Exception:
+            pass
+        try:
             self.app.destroy()
         except Exception:
             pass
+        import gc
+        gc.collect()
         self.temp_dir.cleanup()
 
 

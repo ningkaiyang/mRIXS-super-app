@@ -4,7 +4,7 @@ import customtkinter
 
 STAGE_DESCRIPTIONS = {
     "Raw": "Raw CCD Frame: Displays original detector intensities, containing raw cosmic rays, electronic read noise, and Poisson fluctuations.",
-    "Denoised": "Denoised Frame: Shows frame after MAD despiking, Anscombe VST, and Edge-Preserving Bilateral filtering. Centroid line fit is calculated here.",
+    "Denoised": "Denoised Frame: Shows the Scharr Gradient Magnitude after initial denoising and Gaussian blur. The centroid line fit is calculated here.",
     "Masked": "Masked Frame: Isolates the spectroscopic elastic line by applying a parallel mask strip. Extraneous background elements are mathematically zeroed."
 }
 

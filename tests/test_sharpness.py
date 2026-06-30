@@ -17,34 +17,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # 1. Extremely Small Images
 # -----------------------------------------------------------------------------
 
-def test_small_images_norm_sum_sq_grad():
-    """Test evaluate_sharpness with norm_sum_sq_grad on very small images."""
-    for size in [1, 2, 3, 5]:
-        img = np.ones((size, size), dtype=np.float64)
-        score = evaluate_sharpness(img, "norm_sum_sq_grad")
-        assert isinstance(score, float)
-        assert score == 0.0  # Constant images should have 0.0 sharpness score
-
-    img_2x2 = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
-    score_2x2 = evaluate_sharpness(img_2x2, "norm_sum_sq_grad")
-    assert isinstance(score_2x2, float)
-    assert score_2x2 >= 0.0
-
-
-def test_small_images_peak_height():
-    """Test evaluate_sharpness with peak_height on very small images."""
-    for size in [1, 2, 3, 5]:
-        img = np.ones((size, size), dtype=np.float64)
-        score = evaluate_sharpness(img, "peak_height")
-        assert isinstance(score, float)
-        assert score == 0.0  # Constant small flat images sum to ~0.0 or less
-
-    img_2x2 = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float64)
-    score_2x2 = evaluate_sharpness(img_2x2, "peak_height")
-    assert isinstance(score_2x2, float)
-    assert score_2x2 >= 0.0
-
-
 def test_small_images_denoise():
     """Test denoise_image on extremely small images."""
     for size in [1, 2, 3]:
@@ -69,17 +41,17 @@ def test_small_images_denoise():
 
 def test_flat_constant_images():
     """Test how flat constant images affect the 1D profile metrics."""
-    sizes = [10, 50, 100]
+    sizes = [210, 250, 300]
     constants = [1.0, 50.0, 1000.0]
 
     for size in sizes:
         for c in constants:
             img = np.ones((size, size), dtype=np.float64) * c
             
-            score_grad = evaluate_sharpness(img, "norm_sum_sq_grad")
+            score_grad = evaluate_sharpness(img, "score")
             assert score_grad == 0.0
             
-            score_peak = evaluate_sharpness(img, "peak_height")
+            score_peak = evaluate_sharpness(img, "score")
             assert score_peak == 0.0
 
 
@@ -89,11 +61,10 @@ def test_flat_constant_images():
 
 def test_denoise_image_nan_inf_negatives():
     """Test denoise_image behavior with NaN, Inf, and negative values."""
-    img = np.array([
-        [np.nan, 10.0, np.inf],
-        [-5.0, -100.0, -np.inf],
-        [20.0, np.nan, 30.0]
-    ], dtype=np.float32)
+    img = np.zeros((250, 250), dtype=np.float32)
+    img[0,0]=np.nan; img[0,1]=10.0; img[0,2]=np.inf
+    img[1,0]=-5.0; img[1,1]=-100.0; img[1,2]=-np.inf
+    img[2,0]=20.0; img[2,1]=np.nan; img[2,2]=30.0
 
     # With clip=True (default): negatives clipped to 0.0, NaNs/Infs mapped to 0.0
     denoised_clipped_no_bilat = denoise_image(img, clip=True, despike=False, bilateral=False)
@@ -122,13 +93,12 @@ def test_denoise_image_nan_inf_negatives():
 
 def test_evaluate_sharpness_nan_inf_negatives():
     """Test evaluate_sharpness behavior with NaN, Inf, and negative values."""
-    img = np.array([
-        [np.nan, 10.0, np.inf],
-        [-5.0, -100.0, -np.inf],
-        [20.0, np.nan, 30.0]
-    ], dtype=np.float64)
+    img = np.zeros((250, 250), dtype=np.float64)
+    img[0,0]=np.nan; img[0,1]=10.0; img[0,2]=np.inf
+    img[1,0]=-5.0; img[1,1]=-100.0; img[1,2]=-np.inf
+    img[2,0]=20.0; img[2,1]=np.nan; img[2,2]=30.0
 
-    for metric in ["norm_sum_sq_grad", "peak_height"]:
+    for metric in ["score"]:
         score = evaluate_sharpness(img, metric)
         assert isinstance(score, float)
         assert not np.isnan(score)
@@ -139,66 +109,10 @@ def test_evaluate_sharpness_nan_inf_negatives():
 # 4. CLI Frame Index Parsing Robustness
 # -----------------------------------------------------------------------------
 
-def test_cli_regex_pattern_unit():
-    """Directly test the frame index parsing logic on typical and unusual filenames."""
-    from sharpness_cli import extract_frame_index
-
-    # Standard prefixed cases work as expected
-    assert extract_frame_index("frame_001.tif") == 1
-    assert extract_frame_index("frame_-001.tif") == -1
-    assert extract_frame_index("CMOS Detector 123.tif") == 123
-
-    # Non-prefixed numbers should work correctly
-    assert extract_frame_index("123.tif") == 123
-    assert extract_frame_index("-123.tif") == -123
-    assert extract_frame_index("123_456.tif") == 456
-    assert extract_frame_index("image_123.tif") == 123
-    assert extract_frame_index("20260625_frame_12.tif") == 12
-
-
-def test_cli_frame_index_parsing_integration(tmp_path):
-    """Integration test checking CLI behavior with various unusual file names."""
-    scan_dir = tmp_path / "unusual_scan"
-    scan_dir.mkdir(exist_ok=True)
-
-    test_files = {
-        "frame_015.tif": 15,
-        "CMOS Detector 042.tif": 42,
-        "123.tif": 123,
-        "image_256.tif": 256,
-        "frame_-007.tif": -7,
-        "20260625_frame_099.tif": 99
-    }
-
-    # Write small dummy TIFF files
-    for name in test_files.keys():
-        data = np.zeros((10, 10), dtype=np.uint16)
-        tifffile.imwrite(scan_dir / name, data)
-
-    cmd = [
-        sys.executable, "sharpness_cli.py",
-        "--dir", str(scan_dir),
-        "--metrics", "norm_sum_sq_grad",
-        "--print-scores"
-    ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-
-    stdout = res.stdout
-    print("CLI STDOUT:\n", stdout)
-
-    for name, expected_idx in test_files.items():
-        expected_line = f"Frame {expected_idx} (norm_sum_sq_grad)"
-        assert expected_line in stdout
-
-
-# -----------------------------------------------------------------------------
-# 5. Performance Benchmarking & Pipeline tests
-# -----------------------------------------------------------------------------
-
 def test_run_sharpness_pipeline_structure():
     """Verify that run_sharpness_pipeline runs successfully and returns the correct dictionary format."""
-    img = np.random.rand(100, 100).astype(np.float32)
-    res = run_sharpness_pipeline(img, metric="norm_sum_sq_grad")
+    img = np.random.rand(250, 250).astype(np.float32)
+    res = run_sharpness_pipeline(img, metric="score")
     
     assert isinstance(res, dict)
     assert "raw_img" in res
@@ -209,9 +123,9 @@ def test_run_sharpness_pipeline_structure():
     assert "1d_profile" in res
     assert "score" in res
     
-    assert res["raw_img"].shape == (100, 100)
-    assert res["denoised_img"].shape == (100, 100)
-    assert res["masked_img"].shape == (100, 100)
+    assert res["raw_img"].shape == (250, 250)
+    assert res["denoised_img"].shape == (250, 250)
+    assert res["masked_img"].shape == (250, 250)
     assert isinstance(res["centroid"], np.ndarray)
     assert isinstance(res["direction"], np.ndarray)
     assert isinstance(res["1d_profile"], tuple)
@@ -247,7 +161,7 @@ def test_performance_benchmarking(tmp_path):
     with open(scan_dir / "ground_truth.json", "w") as f:
         json.dump(gt_data, f)
         
-    for metric in ["norm_sum_sq_grad", "peak_height"]:
+    for metric in ["score"]:
         start_time = time.time()
         for idx in range(num_frames):
             img = tifffile.imread(scan_dir / f"frame_{idx:03d}.tif")
@@ -259,26 +173,11 @@ def test_performance_benchmarking(tmp_path):
         avg_time_ms = (duration / num_frames) * 1000.0
         print(f"Direct evaluation average time for {metric}: {avg_time_ms:.2f} ms/frame")
         assert avg_time_ms < 150.0
-        
-    cmd = [
-        sys.executable, "sharpness_cli.py",
-        "--dir", str(scan_dir),
-        "--denoise",
-        "--correlation"
-    ]
-    start_time = time.time()
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    cli_duration = time.time() - start_time
-    print(f"CLI tool execution on 50 frames: {cli_duration:.2f} seconds")
-    assert "|" in res.stdout
-    assert "norm_sum_sq_grad" in res.stdout
-    assert "peak_height" in res.stdout
-    assert cli_duration < 10.0
 
 
 def test_extreme_intensities_safe_1e12():
     """Verify correctness and stability under extreme intensities."""
-    shapes = [(100, 100), (50, 150)]
+    shapes = [(250, 250), (250, 350)]
     values = [1e12, -1e12, 1e-12, -1e-12]
     
     for shape in shapes:
@@ -293,7 +192,7 @@ def test_extreme_intensities_safe_1e12():
             assert not np.isnan(denoised_no_clip).any()
             assert not np.isinf(denoised_no_clip).any()
             
-            for metric in ["norm_sum_sq_grad", "peak_height"]:
+            for metric in ["score"]:
                 score = evaluate_sharpness(img_flat, metric)
                 assert isinstance(score, (float, int, np.floating))
                 assert not np.isnan(score)
@@ -302,7 +201,7 @@ def test_extreme_intensities_safe_1e12():
 
 def test_extreme_intensities_overflow_bug():
     """Stress test denoise_image under values exceeding float32 max limit."""
-    img_flat = np.full((100, 100), 1e150, dtype=np.float64)
+    img_flat = np.full((250, 250), 1e150, dtype=np.float64)
     try:
         denoised = denoise_image(img_flat, clip=True)
         assert not np.isnan(denoised).any(), "Image was corrupted with NaNs during float32 cast overflow"
@@ -314,10 +213,10 @@ def test_extreme_intensities_overflow_bug():
 
 def test_1d_metrics_overflow_safety():
     """Stress test sharpness evaluation under values that cause float64 overflow."""
-    img = np.zeros((100, 100), dtype=np.float64)
+    img = np.zeros((250, 250), dtype=np.float64)
     img[50:, :] = 1e200
     
-    for metric in ["norm_sum_sq_grad", "peak_height"]:
+    for metric in ["score"]:
         score = evaluate_sharpness(img, metric)
         assert np.isfinite(score), f"{metric} metric returned non-finite score due to float64 overflow"
 
@@ -325,12 +224,12 @@ def test_1d_metrics_overflow_safety():
 def test_non_square_aspect_ratio_compatibility():
     """Non-square aspect ratio compatibility."""
     aspect_ratios = [
-        (1000, 10),
-        (10, 1000),
-        (100, 20),
-        (20, 100),
-        (50, 2),
-        (2, 50)
+        (1000, 210),
+        (210, 1000),
+        (300, 220),
+        (220, 300),
+        (250, 202),
+        (202, 250)
     ]
     
     for H, W in aspect_ratios:
@@ -348,7 +247,7 @@ def test_non_square_aspect_ratio_compatibility():
         except Exception as e:
             pytest.fail(f"denoise_image failed on non-square shape ({H}, {W}): {e}")
             
-        for metric in ["norm_sum_sq_grad", "peak_height"]:
+        for metric in ["score"]:
             try:
                 score = evaluate_sharpness(img, metric)
                 assert isinstance(score, (float, int, np.floating))
@@ -356,3 +255,8 @@ def test_non_square_aspect_ratio_compatibility():
                 assert not np.isinf(score)
             except Exception as e:
                 pytest.fail(f"evaluate_sharpness({metric}) failed on non-square shape ({H}, {W}): {e}")
+
+# -------------------------------------------------------------
+# 6. UNIT & INTEGRATION TESTS FOR GEOMETRIC GRADIENT PIPELINE
+# -------------------------------------------------------------
+

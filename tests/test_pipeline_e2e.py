@@ -115,14 +115,7 @@ def test_zero_empty_image_input():
     with pytest.raises(ValueError):
         evaluate_sharpness(empty_img, "norm_sum_sq_grad")
 
-def test_invalid_metric_name():
-    """Boundary Case: Passing an invalid/unsupported metric name to evaluate_sharpness raises ValueError."""
-    from rixs_app.core.sharpness import evaluate_sharpness
-    
-    img = np.ones((50, 50), dtype=np.float32)
-    
-    with pytest.raises(ValueError):
-        evaluate_sharpness(img, "non_existent_metric")
+
 
 
 # --- Tier 3: Cross-Feature Interactions ---

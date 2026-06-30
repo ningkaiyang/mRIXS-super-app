@@ -12,7 +12,7 @@ import re
 import numpy as np
 import tifffile
 from scipy.stats import spearmanr
-from rixs_app.core.sharpness import denoise_image, evaluate_sharpness, fit_line_robustly
+from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
 
 def extract_frame_index(filename: str) -> int:
     """Extract the frame index from a filename."""
@@ -64,7 +64,7 @@ def main():
     args = parse_args()
     
     # Validate metrics
-    VALID_METRICS = {"norm_sum_sq_grad", "peak_height"}
+    VALID_METRICS = {"norm_sum_sq_grad", "peak_height", "gaussian_fit", "q16_q84_width"}
     if args.metrics:
         metrics = [m.strip() for m in args.metrics.split(',')]
         for m in metrics:
@@ -72,7 +72,7 @@ def main():
                 sys.stderr.write(f"Error: Invalid metric: '{m}'. Valid metrics are: {list(VALID_METRICS)}\n")
                 sys.exit(1)
     else:
-        metrics = ["norm_sum_sq_grad", "peak_height"]
+        metrics = ["norm_sum_sq_grad", "peak_height", "gaussian_fit", "q16_q84_width"]
         
     base_dir = args.dir
     if not os.path.exists(base_dir):
@@ -138,6 +138,9 @@ def main():
     table_rows = []
     
     for gt_dir, image_dir in scan_dirs:
+        if "denoised" in image_dir.split(os.sep):
+            if not os.path.exists(os.path.join(image_dir, ".denoise_version")):
+                image_dir = gt_dir
         # Load TIFF files
         tifs = []
         try:
@@ -148,6 +151,10 @@ def main():
             if filename.lower().endswith(('.tif', '.tiff')):
                 tifs.append(os.path.join(image_dir, filename))
         tifs = sorted(tifs, key=lambda x: os.path.basename(x))
+        if "denoised" in image_dir.split(os.sep):
+            denoised_files = [t for t in tifs if t.lower().endswith(('_denoised.tif', '_denoised.tiff'))]
+            if len(denoised_files) > 0:
+                tifs = denoised_files
         
         # Extract frame indices
         frame_data = []
@@ -200,22 +207,7 @@ def main():
         
         # Perform summed line fitting for directories where raw_std > 500.0
         ref_line = None
-        if raw_std > 500.0:
-            sum_img = None
-            for idx, img in loaded_imgs.items():
-                denoised_frame = denoise_image(
-                    img,
-                    clip=True,
-                    despike=False,
-                    anscombe=True,
-                    bilateral=False,
-                    inverse_anscombe=True
-                )
-                if sum_img is None:
-                    sum_img = denoised_frame
-                else:
-                    sum_img += denoised_frame
-            ref_line = fit_line_robustly(sum_img, crop_y=200)
+        ref_line = None
             
         for metric in metrics:
             scores = []

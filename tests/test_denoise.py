@@ -689,8 +689,13 @@ def test_empty_input(tmp_path):
     create_synthetic_tiff(input_path, data)
 
     cmd = [sys.executable, "denoise_cli.py", "--input", str(input_path), "--output", str(output_path), "--clip"]
-    
+
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         
     assert exc_info.value.returncode != 0
+
+# -------------------------------------------------------------
+# 8. UNIT TESTS FOR NEW HELPER FUNCTIONS
+# -------------------------------------------------------------
+
