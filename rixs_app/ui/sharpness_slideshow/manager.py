@@ -7,7 +7,7 @@ import numpy as np
 import hashlib
 import inspect
 from rixs_app.core.dataset import ZarrSequenceManager
-from rixs_app.core.sharpness import run_sharpness_pipeline, denoise_image
+from rixs_app.core.sharpness import run_sharpness_pipeline
 
 def _call_on_complete(on_complete, success, err_msg=None):
     try:
@@ -58,12 +58,9 @@ class SharpnessManager:
         self.directions = {}
         self.profiles = {}
 
-        # Reference peak line to bypass PCA fit on high noise files
-        self.global_ref_line = None
-        self.global_raw_std = None
-        self._global_ref_line_calculated = False
-        self._global_ref_line_calculating = False
-        self._global_ref_line_event = threading.Event()
+        # Slicing configuration tracking
+        self._cache_generation = 0
+        self._active_config_fingerprint = None
 
         # Zarr cache
         self.zarr_manager = None
@@ -82,11 +79,8 @@ class SharpnessManager:
             self.centroids.clear()
             self.directions.clear()
             self.profiles.clear()
-        self.global_ref_line = None
-        self.global_raw_std = None
-        self._global_ref_line_calculated = False
-        self._global_ref_line_calculating = False
-        self._global_ref_line_event = threading.Event()
+        self._cache_generation = 0
+        self._active_config_fingerprint = None
         self._load_reference_bounds()
 
     def _load_reference_bounds(self):
@@ -106,7 +100,6 @@ class SharpnessManager:
             self.intensity_max = 1.0
             self.slicing_floor = 0.0
             self.slicing_ceiling = 1.0
-            self.global_raw_std = 1.0
             return
 
         self.intensity_min = float(np.min(ref_raw))
@@ -120,7 +113,6 @@ class SharpnessManager:
             self.slicing_ceiling = self.intensity_max
 
         self.slicing_floor = self.intensity_min
-        self.global_raw_std = float(np.std(ref_raw))
 
     def get_frame_pipeline_data(self, idx: int) -> dict:
         """Retrieves or calculates the sharpness pipeline breakdown dictionary for a frame."""
@@ -150,7 +142,7 @@ class SharpnessManager:
                 }
             else:
                 cached_data = None
-        
+
         if self.session_id is not current_session:
             return None
 
@@ -183,66 +175,15 @@ class SharpnessManager:
             return res
 
         # 3. Cache Miss: Run processing pipeline
-        if self.global_raw_std is not None and self.global_raw_std > 500.0 and not self._global_ref_line_calculated:
-            if self.session_id is not current_session:
-                return None
-            is_calculating_thread = False
-            with self.lock:
-                if not self._global_ref_line_calculated:
-                    if not self._global_ref_line_calculating:
-                        self._global_ref_line_calculating = True
-                        is_calculating_thread = True
-
-            if is_calculating_thread:
-                try:
-                    sum_img = None
-                    for idx_ref in range(len(session_file_list)):
-                        if self.session_id is not current_session:
-                            return None
-                        frame = current_zarr_manager.get_frame(idx_ref)
-                        if frame is not None:
-                            denoised = denoise_image(frame, despike=False, bilateral=False)
-                            if sum_img is None:
-                                sum_img = denoised
-                            else:
-                                sum_img += denoised
-                    
-                    calculated_ref_line = None
-                    if sum_img is not None:
-                        calculated_ref_line = fit_line_robustly(sum_img, crop_y=200)
-
-                    with self.lock:
-                        if self.session_id is current_session:
-                            self.global_ref_line = calculated_ref_line
-                            self._global_ref_line_calculated = True
-                finally:
-                    with self.lock:
-                        self._global_ref_line_calculating = False
-                        self._global_ref_line_event.set()
-            else:
-                if threading.current_thread() is threading.main_thread():
-                    self._global_ref_line_event.wait(timeout=0.05)
-                else:
-                    self._global_ref_line_event.wait()
-
         if self.session_id is not current_session:
             return None
 
-        is_uncalibrated = (
-            self.global_raw_std is not None
-            and self.global_raw_std > 500.0
-            and not self._global_ref_line_calculated
-        )
-
         res = run_sharpness_pipeline(
             raw_img,
-            metric=self.metric,
-            ref_line=self.global_ref_line,
-            raw_std=self.global_raw_std
+            metric=self.metric
         )
 
-        if not is_uncalibrated:
-            if self.session_id is current_session:
+        if self.session_id is current_session:
                 # Save derived frames to disk cache
                 if current_zarr_manager is not None:
                     current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
@@ -313,7 +254,7 @@ class SharpnessManager:
                             return
                         self.result_queue.put(lambda c=idx+1: on_progress(c, total))
                         continue
-                    
+
                     fig = Figure(figsize=(10, 8))
                     canvas = FigureCanvasAgg(fig)
 
@@ -328,18 +269,11 @@ class SharpnessManager:
                     # Plot Raw
                     ax1.imshow(raw_disp, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')
                     ax1.set_title("Raw Image")
-                    
-                    from rixs_app.core.sharpness import detect_elastic_line_bottom_right
-                    line_res = detect_elastic_line_bottom_right(data["raw_img"])
-                    
-                    if line_res is not None:
-                        p_start = line_res['endpoints'][0]
-                        p_end = line_res['endpoints'][1]
-                        ax1.plot([p_start[0], p_end[0]], [p_start[1], p_end[1]], 'r-', linewidth=2)
-                    else:
-                        dx, dy = data["direction"]
-                        if abs(dx) > 1e-5:
-                            ax1.axline((data["centroid"][0], data["centroid"][1]), slope=dy/dx, color="red", linestyle="--")
+
+                    # Use metadata for line
+                    dx, dy = data["direction"]
+                    if abs(dx) > 1e-5:
+                        ax1.axline((data["centroid"][0], data["centroid"][1]), slope=dy/dx, color="red", linestyle="--")
                     ax1.axis("off")
 
                     # Plot Denoised Image
@@ -348,8 +282,11 @@ class SharpnessManager:
                         p99 = np.percentile(denoised, 99.5)
                         if p99 == 0: p99 = 1.0
                         ax2.imshow(denoised, cmap=matplotlib_cmap, vmin=0, vmax=p99, aspect='auto')
-                        if line_res is not None:
-                            ax2.plot([p_start[0], p_end[0]], [p_start[1], p_end[1]], 'w-', linewidth=2)
+                        if "direction" in data:
+                            c = data["centroid"]
+                            d = data["direction"]
+                            # compute approximate endpoints
+                            ax2.axline((c[0], c[1]), slope=d[1]/d[0], color="white", linestyle="-")
                     else:
                         ax2.text(0.5, 0.5, "No Denoised Image", ha='center', va='center')
                     ax2.set_title("Denoised Image")
@@ -369,7 +306,7 @@ class SharpnessManager:
                     # Plot 1D Profile + Fit
                     P, u = data["1d_profile"]
                     ax4.plot(u, P, 'k-', linewidth=2, label='1D Profile')
-                    
+
                     ax4.set_title(f"1D Profile (Peak Sharpness: {data['score']:.2f})")
                     ax4.set_xlabel("Perpendicular Distance (u)")
                     ax4.set_ylabel("Gradient Sum")
@@ -378,7 +315,7 @@ class SharpnessManager:
                     fig.tight_layout()
                     save_path = os.path.join(export_dir, f"frame_{idx:03d}_diagnostic.png")
                     fig.savefig(save_path, dpi=150)
-                    
+
                     if self.session_id is not current_session:
                         return
                     self.result_queue.put(lambda c=idx+1: on_progress(c, total))

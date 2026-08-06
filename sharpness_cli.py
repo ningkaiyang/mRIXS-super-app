@@ -22,7 +22,7 @@ def extract_frame_index(filename: str) -> int:
     match = re.search(r'frame[\s_-]+?(-?\d+)', filename, re.IGNORECASE)
     if match:
         return int(match.group(1))
-    
+
     name_without_ext, _ = os.path.splitext(filename)
     digits = re.findall(r'-?\d+', name_without_ext)
     if digits:
@@ -62,7 +62,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    
+
     # Validate metrics
     VALID_METRICS = {"norm_sum_sq_grad", "peak_height", "gaussian_fit", "q16_q84_width"}
     if args.metrics:
@@ -73,15 +73,15 @@ def main():
                 sys.exit(1)
     else:
         metrics = ["norm_sum_sq_grad", "peak_height", "gaussian_fit", "q16_q84_width"]
-        
+
     base_dir = args.dir
     if not os.path.exists(base_dir):
         sys.stderr.write(f"Error: Directory does not exist: {base_dir}\n")
         sys.exit(1)
-        
+
     # Discover scan directories
     scan_dirs = []
-    
+
     def has_tiff_files(path):
         if not os.path.isdir(path):
             return False
@@ -110,7 +110,7 @@ def main():
                     scan_dirs.append((entry_path, sub_denoised))
                 elif has_tiff_files(entry_path):
                     scan_dirs.append((entry_path, entry_path))
-                    
+
     # If still none found, do recursive check
     if not scan_dirs:
         for root, dirs, files in os.walk(base_dir):
@@ -121,7 +121,7 @@ def main():
                 scan_dirs.append((root, sub_denoised))
             elif has_tiff_files(root):
                 scan_dirs.append((root, root))
-                
+
     # Unique list while preserving order
     scan_dirs_set = []
     seen = set()
@@ -130,13 +130,13 @@ def main():
             seen.add((gt, img))
             scan_dirs_set.append((gt, img))
     scan_dirs = scan_dirs_set
-    
+
     if not scan_dirs:
         sys.stderr.write(f"Error: No TIFF images found in {base_dir} or its subdirectories.\n")
         sys.exit(1)
-        
+
     table_rows = []
-    
+
     for gt_dir, image_dir in scan_dirs:
         if "denoised" in image_dir.split(os.sep):
             if not os.path.exists(os.path.join(image_dir, ".denoise_version")):
@@ -155,7 +155,7 @@ def main():
             denoised_files = [t for t in tifs if t.lower().endswith(('_denoised.tif', '_denoised.tiff'))]
             if len(denoised_files) > 0:
                 tifs = denoised_files
-        
+
         # Extract frame indices
         frame_data = []
         for path in tifs:
@@ -165,14 +165,14 @@ def main():
                 frame_data.append((idx, path))
             except ValueError:
                 pass
-                    
+
         # Load ground_truth.json
         gt_path = None
         for p in [os.path.join(gt_dir, "ground_truth.json"), os.path.join(image_dir, "ground_truth.json")]:
             if os.path.exists(p):
                 gt_path = p
                 break
-                
+
         ground_truth = None
         if gt_path:
             try:
@@ -180,7 +180,7 @@ def main():
                     ground_truth = json.load(f)
             except Exception as e:
                 sys.stderr.write(f"Warning: Failed to load ground truth from {gt_path}: {e}\n")
-                
+
         # Ground truth missing logic
         if ground_truth is None:
             if args.correlation or not args.print_scores:
@@ -188,34 +188,23 @@ def main():
                 sys.exit(1)
             else:
                 sys.stderr.write(f"Warning: ground_truth.json is missing in {gt_dir}. Skipping correlation calculation.\n")
-                
+
         fractional_ranks = {}
         if ground_truth:
             fractional_ranks = ground_truth.get("fractional_ranks", {})
-            
+
         # Load and cache frame images
         loaded_imgs = {}
         for idx, path in frame_data:
             loaded_imgs[idx] = tifffile.imread(path)
-            
+
         # Calculate raw_std from the first frame
         if frame_data:
             first_idx = frame_data[0][0]
             raw_std = np.std(loaded_imgs[first_idx])
         else:
             raw_std = 0.0
-        
-        # Fit reference line on the sweep average image to get high-SNR, stable geometry
-        ref_line = None
-        if len(loaded_imgs) > 0:
-            avg_img = np.mean(list(loaded_imgs.values()), axis=0)
-            from rixs_app.core.sharpness import detect_elastic_line_bottom_right
-            try:
-                line_res = detect_elastic_line_bottom_right(avg_img)
-                ref_line = (line_res['centroid'], line_res['direction'])
-            except Exception as e:
-                sys.stderr.write(f"Warning: Failed to fit reference line on average image: {e}\n")
-            
+
         for metric in metrics:
             scores = []
             ranks = []
@@ -223,22 +212,22 @@ def main():
                 img = loaded_imgs[idx]
                 if args.denoise:
                     img = denoise_image(img)
-                # Pass ref_line and raw_std to avoid global state tracking
-                score = evaluate_sharpness(img, metric, ref_line=ref_line, raw_std=raw_std)
-                
+                # Evaluate sharpness
+                score = evaluate_sharpness(img, metric)
+
                 if args.print_scores:
                     print(f"Frame {idx} ({metric}): {score} (rounded: {score:.2f})")
-                    
+
                 rank = None
                 for key in [str(idx), idx]:
                     if key in fractional_ranks:
                         rank = fractional_ranks[key]
                         break
-                        
+
                 if rank is not None:
                     scores.append(score)
                     ranks.append(rank)
-                    
+
             # Compute correlation
             correlation = float('nan')
             if ground_truth:
@@ -247,9 +236,9 @@ def main():
                 else:
                     corr, _ = spearmanr(scores, -np.array(ranks))
                     correlation = corr
-                    
+
             table_rows.append((gt_dir, metric, correlation))
-            
+
     # Print markdown table
     if not args.print_scores or args.correlation:
         print("| Directory | Metric | Spearman Correlation |")
