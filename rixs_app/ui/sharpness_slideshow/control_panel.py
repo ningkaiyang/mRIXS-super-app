@@ -78,6 +78,14 @@ class SharpnessControlPanel(customtkinter.CTkFrame):
         else:
             self.score_label.configure(text="Sharpness Score: -")
 
+    def sync_score_with_evaluator(self, eval_result, fallback_score):
+        if eval_result is not None and eval_result.score_valid:
+            self.score_label.configure(text=f"⚗️ {eval_result.score:.6f} (1/FWHM px⁻¹)")
+        elif fallback_score is not None:
+            self.score_label.configure(text=f"Score: {fallback_score:.6f} (grad peak)")
+        else:
+            self.score_label.configure(text="Score: -")
+
     def sync_detection_status(self, data):
         if not data.get("fit_ok", False):
             self.detection_label.configure(text="No valid line fit")

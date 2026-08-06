@@ -33,7 +33,8 @@ class SharpnessCanvasPanel(tk.Frame):
                    centroid=None, direction=None,
                    fit_ok=False, candidates_xy=None, inliers_xy=None,
                    segment_endpoints=None, detected_support_y_range=None,
-                   show_support_points=False, show_extrapolation=False):
+                   show_support_points=False, show_extrapolation=False,
+                   evaluator_result=None):
         """Redraws both subplots inside the canvas layout."""
         self.ax_2d.clear()
         self.ax_1d.clear()
@@ -113,13 +114,45 @@ class SharpnessCanvasPanel(tk.Frame):
             self.ax_2d.set_ylim(cy + half_h, cy - half_h)  # Keep standard image orientation (y-axis inverted)
 
         # 2. Plot 1D profile
-        if profile_1d is not None:
+        if evaluator_result is not None and evaluator_result.score_valid:
+            # Plot evaluator's intensity profile
+            self.ax_1d.plot(evaluator_result.profile_u, evaluator_result.intensity_profile, 'b-', linewidth=1.5, label='Intensity')
+
+            # Plot Gaussian fit
+            u_fine = np.linspace(evaluator_result.profile_u[0], evaluator_result.profile_u[-1], 200)
+            from rixs_app.core.sharpness_evaluator import _gaussian
+            fit_y = _gaussian(
+                u_fine, evaluator_result.gaussian_background, evaluator_result.gaussian_amplitude,
+                evaluator_result.gaussian_center, evaluator_result.gaussian_sigma
+            )
+            self.ax_1d.plot(u_fine, fit_y, 'r--', linewidth=1.5, label='Gaussian Fit')
+
+            # Add FWHM annotation
+            fwhm = evaluator_result.fwhm_px
+            score = evaluator_result.score
+            self.ax_1d.text(0.05, 0.95, f"FWHM: {fwhm:.2f} px\nScore: {score:.4f}",
+                            transform=self.ax_1d.transAxes, va='top', ha='left',
+                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+            self.ax_1d.legend(loc='upper right')
+
+            self.ax_1d.set_title("1D Intensity Profile (Fitted)")
+            self.ax_1d.set_xlabel("Perpendicular Distance (u)")
+            self.ax_1d.set_ylabel("Intensity")
+            self.ax_1d.grid(True, linestyle=":", alpha=0.6)
+
+        elif profile_1d is not None:
             P, u = profile_1d
             self.ax_1d.plot(u, P, color="blue", linewidth=1.5)
             self.ax_1d.set_title("1D Project Profile")
             self.ax_1d.set_xlabel("Perpendicular Distance (u)")
             self.ax_1d.set_ylabel("Accumulated Intensity")
             self.ax_1d.grid(True, linestyle=":", alpha=0.6)
+
+            if evaluator_result is not None and not evaluator_result.score_valid:
+                reason = evaluator_result.failure_reason or "Unknown reason"
+                self.ax_1d.text(0.5, 0.5, f"Fit failed:\n{reason}", color="red",
+                                transform=self.ax_1d.transAxes, va='center', ha='center',
+                                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
 
         self.figure.tight_layout()
         self.canvas.draw()

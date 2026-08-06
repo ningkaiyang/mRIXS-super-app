@@ -144,7 +144,32 @@ def run_sharpness_pipeline(
     if img.size == 0 or img.shape[0] == 0 or img.shape[1] == 0:
         raise ValueError("Input array cannot be empty")
 
-    line_result = detect_elastic_line_bottom_right(img)
+    from rixs_app.core.preprocessing import prepare_frame, PreprocessingConfig
+    from rixs_app.core.line_finding import V8RightSideScanner, get_preset, DEFAULT_PRESET_ID
+    from rixs_app.core.sharpness_evaluator import SharpnessEvaluator
+
+    # Get detector results in cropped coords
+    preproc_config = PreprocessingConfig()
+    prepared = prepare_frame(img, preproc_config)
+    _, det_config = get_preset(DEFAULT_PRESET_ID)
+    scanner = V8RightSideScanner()
+    det_result = scanner.detect(prepared, det_config)
+
+    # Build legacy dict for GUI (original coords)
+    line_result = _detection_result_to_legacy_dict(det_result, prepared)
+
+    # Run evaluator in cropped coords
+    evaluator = SharpnessEvaluator()
+    if det_result.fit_ok:
+        eval_result = evaluator.evaluate(
+            denoised=prepared.denoised,
+            gradient=prepared.gradient,
+            centroid_xy=det_result.centroid_xy,
+            angle_deg=det_result.angle_deg,
+            detected_support_y_range=det_result.detected_support_y_range,
+        )
+    else:
+        eval_result = None
 
     grad_img = line_result['grad_img']
     cx, cy = line_result['centroid']
@@ -171,6 +196,12 @@ def run_sharpness_pipeline(
     # Calculate score based on peak sharpness of the 1D profile
     profile_score = float(np.max(P))
 
+    # Use evaluator score when valid, fall back to profile peak
+    if eval_result is not None and eval_result.score_valid:
+        final_score = eval_result.score
+    else:
+        final_score = profile_score
+
     return {
         "raw_img": img,
         "denoised_img": line_result['denoised_img'],
@@ -179,7 +210,9 @@ def run_sharpness_pipeline(
         "centroid": np.array(line_result['centroid']),
         "direction": direction_vec,
         "1d_profile": (P, u),
-        "score": profile_score,
+        "score": final_score,
+        "evaluator_result": eval_result,
+        "profile_score_fallback": profile_score,
         "fit_ok": line_result.get("fit_ok", False),
         "failure_reason": line_result.get("failure_reason"),
         "candidates_xy": line_result.get("candidates_xy"),

@@ -102,7 +102,10 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             print(f"Warning: Frame data at index {idx} is empty or corrupted.")
             return
 
-        self.control_panel.sync_score(data["score"])
+        eval_result = data.get("evaluator_result")
+        self.control_panel.sync_score_with_evaluator(
+            eval_result, data.get("profile_score_fallback", data.get("score"))
+        )
 
         # Determine which 2D matrix to plot
         stage = getattr(self.manager, "pipeline_stage", "Denoised (D)")
@@ -134,6 +137,7 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             detected_support_y_range=data.get("detected_support_y_range"),
             show_support_points=show_pts,
             show_extrapolation=show_extrap,
+            evaluator_result=eval_result,
         )
 
         self.control_panel.sync_detection_status(data)
