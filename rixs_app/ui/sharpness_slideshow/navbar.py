@@ -44,18 +44,8 @@ class SharpnessNavBar(customtkinter.CTkFrame):
         # Right side: pipeline stage toggle dropdown
         self.stage_menu = customtkinter.CTkOptionMenu(
             self,
-            values=["Raw", "Denoised", "Masked"],
+            values=["Raw", "Denoised (D)", "Row-Smoothed (Dsm)", "Gradient (G)", "Fitted-Line Strip"],
             command=self.controller.change_pipeline_stage
         )
-        self.stage_menu.set("Raw")
+        self.stage_menu.set("Denoised (D)")
         self.stage_menu.pack(side="right", padx=5)
-
-        # Right side: engine selection dropdown
-        self.engine_menu = customtkinter.CTkOptionMenu(
-            self,
-            values=["Line-finding and Scoring"],
-            command=self.controller.change_engine
-        )
-        self.engine_menu.set("Line-finding and Scoring")
-        self.engine_menu.pack(side="right", padx=5)
-

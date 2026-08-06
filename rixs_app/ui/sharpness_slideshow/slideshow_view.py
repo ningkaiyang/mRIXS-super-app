@@ -64,7 +64,7 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
 
     def start(self, file_list):
         self.manager.start(file_list)
-        
+
         # Configure Frame Timeline bounds
         total = len(file_list)
         if total > 1:
@@ -73,7 +73,7 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             )
         else:
             self.control_panel.frame_slider.configure(from_=0, to=1, number_of_steps=1, state="disabled")
-        
+
         self.control_panel.frame_slider.set(0)
         self.zoom_factor = 1.0
         self.zoom_center = None
@@ -83,6 +83,11 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self.tools_panel.sync_zoom_label(self.zoom_factor)
         self.tools_panel.range_slider.configure_range(self.manager.intensity_min, self.manager.intensity_max)
         self.tools_panel.sync_slicing_inputs(self.manager.slicing_floor, self.manager.slicing_ceiling)
+
+        self.manager.pipeline_stage = getattr(self.manager, "pipeline_stage", "Denoised (D)")
+        if self.manager.pipeline_stage not in ["Raw", "Denoised (D)", "Row-Smoothed (Dsm)", "Gradient (G)", "Fitted-Line Strip"]:
+            self.manager.pipeline_stage = "Denoised (D)"
+        self.control_panel.set_stage_description(self.manager.pipeline_stage)
 
         self.load_and_render()
 
@@ -100,24 +105,38 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self.control_panel.sync_score(data["score"])
 
         # Determine which 2D matrix to plot
-        stage = self.manager.pipeline_stage
+        stage = getattr(self.manager, "pipeline_stage", "Denoised (D)")
         if stage == "Raw":
             img_2d = data["raw_img"]
-        elif stage == "Denoised":
-            img_2d = data.get("grad_img", data.get("denoised_img", data["raw_img"]))
+        elif stage == "Denoised (D)":
+            img_2d = data.get("denoised_img", data["raw_img"])
+        elif stage == "Row-Smoothed (Dsm)":
+            img_2d = data.get("denoised_img", data["raw_img"])
+        elif stage == "Gradient (G)":
+            img_2d = data.get("grad_img", data["raw_img"])
+        elif stage == "Fitted-Line Strip":
+            img_2d = data.get("masked_img", data["raw_img"])
         else:
-            img_2d = data["masked_img"]
+            img_2d = data["raw_img"]
+
+        show_pts = self.tools_panel.show_support_points_var.get()
+        show_extrap = self.tools_panel.show_extrapolation_var.get()
 
         self.canvas_panel.draw_plots(
-            img_2d=img_2d,
-            profile_1d=data["1d_profile"],
-            stage=stage,
-            colormap=self.manager.colormap,
-            vmin=self.manager.slicing_floor,
-            vmax=self.manager.slicing_ceiling,
-            centroid=data["centroid"],
-            direction=data["direction"]
+            img_2d, data.get("1d_profile"), stage,
+            self.manager.colormap, self.manager.slicing_floor, self.manager.slicing_ceiling,
+            centroid=data.get("centroid"),
+            direction=data.get("direction"),
+            fit_ok=data.get("fit_ok", False),
+            candidates_xy=data.get("candidates_xy"),
+            inliers_xy=data.get("inliers_xy"),
+            segment_endpoints=data.get("endpoints"),
+            detected_support_y_range=data.get("detected_support_y_range"),
+            show_support_points=show_pts,
+            show_extrapolation=show_extrap,
         )
+
+        self.control_panel.sync_detection_status(data)
 
     # --- Callbacks ---
     def handle_frame_slider_move(self, val):
@@ -181,9 +200,6 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self.manager.pipeline_stage = val
         self.control_panel.set_stage_description(val)
         self.load_and_render()
-
-    def change_engine(self, val):
-        self.manager.engine = val
 
     def handle_slicing_change(self, floor, ceiling):
         self.manager.slicing_floor = floor

@@ -29,19 +29,12 @@ class SharpnessCanvasPanel(tk.Frame):
                 if hasattr(self.controller, 'handle_canvas_click'):
                     self.controller.handle_canvas_click(event.xdata, event.ydata)
 
-    def draw_plots(self, img_2d, profile_1d, stage, colormap, vmin, vmax, centroid=None, direction=None):
-        """Redraws both subplots inside the canvas layout.
-
-        Args:
-            img_2d (np.ndarray): The 2D frame array (Raw, Denoised, or Masked).
-            profile_1d (tuple): (P, u) representing the 1D intensity profile.
-            stage (str): The active pipeline stage name.
-            colormap (str): Active matplotlib colormap.
-            vmin (float): Minimum display intensity limit.
-            vmax (float): Maximum display intensity limit.
-            centroid (np.ndarray, optional): (x, y) coordinate of line center.
-            direction (np.ndarray, optional): (dx, dy) direction vector of line.
-        """
+    def draw_plots(self, img_2d, profile_1d, stage, colormap, vmin, vmax,
+                   centroid=None, direction=None,
+                   fit_ok=False, candidates_xy=None, inliers_xy=None,
+                   segment_endpoints=None, detected_support_y_range=None,
+                   show_support_points=False, show_extrapolation=False):
+        """Redraws both subplots inside the canvas layout."""
         self.ax_2d.clear()
         self.ax_1d.clear()
 
@@ -60,13 +53,51 @@ class SharpnessCanvasPanel(tk.Frame):
         self.ax_2d.set_title(f"2D View: {stage}")
         self.ax_2d.axis("off")
 
-        # Overlay centroid & peak line on Denoised and Masked views
-        if stage in ("Denoised", "Masked") and centroid is not None and direction is not None:
-            self.ax_2d.plot(centroid[0], centroid[1], 'ro', label="Centroid")
-            dx, dy = direction
-            if abs(dx) > 1e-5:
-                slope = dy / dx
-                self.ax_2d.axline((centroid[0], centroid[1]), slope=slope, color="red", linestyle="--")
+        # Overlay elements if fit_ok is True
+        if not fit_ok:
+            self.ax_2d.text(0.5, 0.5, "No valid line fit",
+                            color="red", fontsize=16, weight="bold",
+                            ha="center", va="center", transform=self.ax_2d.transAxes)
+        else:
+            if centroid is not None:
+                self.ax_2d.plot(centroid[0], centroid[1], 'w+', markersize=12, label="Centroid")
+
+            if segment_endpoints is not None:
+                (x1, y1), (x2, y2) = segment_endpoints
+                self.ax_2d.plot([x1, x2], [y1, y2], color="red", linestyle="-", linewidth=2)
+            elif centroid is not None and direction is not None:
+                # Fallback to axline but only within detected_support_y_range
+                dx, dy = direction
+                if abs(dx) > 1e-5 and detected_support_y_range is not None:
+                    slope = dy / dx
+                    y_min, y_max = detected_support_y_range
+                    x_min = centroid[0] + (y_min - centroid[1]) / slope
+                    x_max = centroid[0] + (y_max - centroid[1]) / slope
+                    self.ax_2d.plot([x_min, x_max], [y_min, y_max], color="red", linestyle="-", linewidth=2)
+
+            if show_support_points:
+                if candidates_xy is not None and len(candidates_xy) > 0:
+                    self.ax_2d.scatter(candidates_xy[:,0], candidates_xy[:,1], c='yellow', s=4, alpha=0.5, zorder=3)
+                if inliers_xy is not None and len(inliers_xy) > 0:
+                    self.ax_2d.scatter(inliers_xy[:,0], inliers_xy[:,1], c='lime', s=8, alpha=0.8, zorder=4)
+
+            if show_extrapolation and centroid is not None and direction is not None:
+                dx, dy = direction
+                if abs(dx) > 1e-5:
+                    slope = dy / dx
+                    self.ax_2d.axline((centroid[0], centroid[1]), slope=slope, color="red", linestyle="--", linewidth=1, alpha=0.7)
+
+            # Compact status text
+            dx, dy = (direction if direction is not None else (1, 0))
+            angle_deg = np.degrees(np.arctan2(dy, dx)) if direction is not None else 0.0
+            n_cand = len(candidates_xy) if candidates_xy is not None else 0
+            n_inl = len(inliers_xy) if inliers_xy is not None else 0
+            status_text = f"∠{angle_deg:.1f}° {n_cand}/{n_inl}"
+
+            self.ax_2d.text(0.95, 0.95, status_text,
+                            color="white", fontsize=10, weight="bold",
+                            ha="right", va="top", transform=self.ax_2d.transAxes,
+                            bbox=dict(facecolor='black', alpha=0.5, edgecolor='none', pad=2))
 
         # Apply zoom if zoomed in
         zoom = getattr(self.controller, "zoom_factor", 1.0)

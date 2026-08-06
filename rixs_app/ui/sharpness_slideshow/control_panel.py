@@ -3,9 +3,11 @@
 import customtkinter
 
 STAGE_DESCRIPTIONS = {
-    "Raw": "Raw CCD Frame: Displays original detector intensities, containing raw cosmic rays, electronic read noise, and Poisson fluctuations.",
-    "Denoised": "Denoised Frame: Shows the Scharr Gradient Magnitude after initial denoising and Gaussian blur. The centroid line fit is calculated here.",
-    "Masked": "Masked Frame: Isolates the spectroscopic elastic line by applying a parallel mask strip. Extraneous background elements are mathematically zeroed."
+    "Raw": "Raw detector frame — includes noise, cosmic rays, and hot pixels. Uncropped original.",
+    "Denoised (D)": "After MAD despiking, Anscombe VST, and bilateral filtering. Cropped 100px edges.",
+    "Row-Smoothed (Dsm)": "Row-wise Gaussian smoothing (σ=2.5) of D. Input to the V8 row scanner.",
+    "Gradient (G)": "Scharr gradient magnitude of D after Gaussian blur. Shows edge strength.",
+    "Fitted-Line Strip": "Gradient masked to the detected support range of the fitted line.",
 }
 
 class SharpnessControlPanel(customtkinter.CTkFrame):
@@ -39,12 +41,22 @@ class SharpnessControlPanel(customtkinter.CTkFrame):
         )
         self.precompute_button.pack(side="left", padx=5)
 
+        self.score_frame = customtkinter.CTkFrame(self.action_frame, fg_color="transparent")
+        self.score_frame.pack(side="right", padx=15)
+
         self.score_label = customtkinter.CTkLabel(
-            self.action_frame, text="Sharpness Score: -",
+            self.score_frame, text="Sharpness Score: -",
             font=customtkinter.CTkFont(size=14, weight="bold"),
             text_color="#88aacc"
         )
-        self.score_label.pack(side="right", padx=15)
+        self.score_label.pack(side="top", anchor="e")
+
+        self.detection_label = customtkinter.CTkLabel(
+            self.score_frame, text="Detection: -",
+            font=customtkinter.CTkFont(size=12),
+            text_color="#aaaaaa"
+        )
+        self.detection_label.pack(side="top", anchor="e")
 
         # Description Label
         self.description_label = customtkinter.CTkLabel(
@@ -65,3 +77,13 @@ class SharpnessControlPanel(customtkinter.CTkFrame):
             self.score_label.configure(text=f"Sharpness Score: {score:.6f}")
         else:
             self.score_label.configure(text="Sharpness Score: -")
+
+    def sync_detection_status(self, data):
+        if not data.get("fit_ok", False):
+            self.detection_label.configure(text="No valid line fit")
+        else:
+            angle = data.get("angle_deg")
+            n_cand = data.get("n_candidates", 0)
+            n_inl = data.get("n_inliers", 0)
+            angle_str = f"{angle:.1f}°" if angle is not None else "N/A"
+            self.detection_label.configure(text=f"Angle: {angle_str} | Cand: {n_cand} | Inl: {n_inl}")

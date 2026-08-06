@@ -49,6 +49,26 @@ class SharpnessToolsPanel(customtkinter.CTkFrame):
         self.ceiling_entry.pack(side="left", padx=5)
         self.ceiling_entry.bind("<Return>", self._on_ceiling_submit)
 
+        # Options checkboxes
+        self.options_frame = customtkinter.CTkFrame(self, fg_color="transparent")
+        self.options_frame.pack(side="left", padx=20)
+
+        self.show_support_points_var = customtkinter.BooleanVar(value=False)
+        self.support_points_cb = customtkinter.CTkCheckBox(
+            self.options_frame, text="Show support points",
+            variable=self.show_support_points_var,
+            command=self.controller.load_and_render
+        )
+        self.support_points_cb.pack(side="top", pady=2, anchor="w")
+
+        self.show_extrapolation_var = customtkinter.BooleanVar(value=False)
+        self.extrapolation_cb = customtkinter.CTkCheckBox(
+            self.options_frame, text="Show fitted-line extrapolation",
+            variable=self.show_extrapolation_var,
+            command=self.controller.load_and_render
+        )
+        self.extrapolation_cb.pack(side="top", pady=2, anchor="w")
+
     def sync_zoom_label(self, val):
         self.zoom_label.configure(text=f"Zoom: {val:.1f}×")
 
