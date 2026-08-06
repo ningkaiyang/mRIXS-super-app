@@ -27,6 +27,7 @@ prompt-exports
 tif-cache
 temp-scratch
 diag_out
+/diag[0-9]*/
 
 # ------------------------------------------------------------------------------
 # Local & Raw Datasets (Untracked)
