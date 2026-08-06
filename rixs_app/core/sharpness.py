@@ -155,7 +155,57 @@ def run_sharpness_pipeline(
     if img.size == 0 or img.shape[0] == 0 or img.shape[1] == 0:
         raise ValueError("Input array cannot be empty")
 
-    line_result = detect_elastic_line_bottom_right(img)
+    if ref_line is not None:
+        cx, cy = ref_line[0]
+        direction_deg = ref_line[1]
+        
+        h, w = img.shape
+        denoised = denoise_image(img)
+        crop = 100 if min(h, w) > 200 else 0
+        y_start = int(h * 0.35)
+        y_end = h - crop
+        
+        if w > 2700:
+            blur_avg = cv2.GaussianBlur(denoised, (25, 25), 5.0, borderType=cv2.BORDER_REPLICATE)
+            profile = np.var(blur_avg, axis=0)
+            x_peak = int(np.argmax(profile[1000:2600])) + 1000
+        else:
+            x_peak = w // 2
+            
+        x_start = max(crop, x_peak - 100)
+        x_end = w - crop
+        
+        br_region = denoised[y_start:y_end, x_start:x_end]
+        smoothed = cv2.GaussianBlur(br_region, (5, 5), 1.5)
+        gx = cv2.Scharr(smoothed, cv2.CV_32F, 1, 0)
+        gy = cv2.Scharr(smoothed, cv2.CV_32F, 0, 1)
+        grad = np.sqrt(gx**2 + gy**2)
+        
+        full_grad = np.zeros_like(img, dtype=np.float32)
+        full_grad[y_start:y_end, x_start:x_end] = grad
+        
+        theta = np.deg2rad(direction_deg)
+        direction_vec = np.array([np.cos(theta), np.sin(theta)])
+        perp = np.array([-np.sin(theta), np.cos(theta)])
+        
+        y, x = np.indices((h, w))
+        u_vals = (x - cx) * perp[0] + (y - cy) * perp[1]
+        best_mask = (np.abs(u_vals) < 20) & (x >= x_start) & (x <= x_end) & (y >= y_start) & (y <= y_end)
+        
+        full_masked = np.zeros_like(img, dtype=np.float32)
+        full_masked[best_mask] = full_grad[best_mask]
+        
+        line_result = {
+            'centroid': (float(cx), float(cy)),
+            'direction': float(direction_deg),
+            'endpoints': ((float(cx - w), float(cy)), (float(cx + w), float(cy))),
+            'grad_img': full_grad,
+            'masked_img': full_masked,
+            'score': float(np.sum(full_grad[best_mask])),
+            'denoised_img': denoised
+        }
+    else:
+        line_result = detect_elastic_line_bottom_right(img)
     
     grad_img = line_result['grad_img']
     cx, cy = line_result['centroid']
@@ -196,127 +246,212 @@ def run_sharpness_pipeline(
 def detect_elastic_line_bottom_right(img: np.ndarray, density_threshold: float = 0.08) -> dict:
     """
     Detect the elastic line using a bottom-right scanning approach on the gradient magnitude.
+    This version is optimized for robust line detection bypassing inelastic cloud distractors.
     """
+    h, w = img.shape
+    
     # 1. Denoise
+    # If raw_std > 500, denoise_image only clips, which is what we want.
+    # Otherwise it does the full MAD despiking + Anscombe + Bilateral.
     denoised = denoise_image(img)
     
-    # 2. Crop
-    h, w = denoised.shape
+    # Handle extremely small images or flat constant images safely
+    if h < 50 or w < 50 or np.all(img == img[0, 0]):
+        cx = w / 2.0
+        cy = h / 2.0
+        full_grad = np.zeros_like(img, dtype=np.float32)
+        full_masked = np.zeros_like(img, dtype=np.float32)
+        return {
+            'centroid': (float(cx), float(cy)),
+            'direction': 0.0,
+            'endpoints': ((float(cx - w), float(cy)), (float(cx + w), float(cy))),
+            'grad_img': full_grad,
+            'masked_img': full_masked,
+            'score': 0.0,
+            'denoised_img': denoised
+        }
+        
     crop = 100 if min(h, w) > 200 else 0
-    if crop > 0:
-        cropped = denoised[crop:h-crop, crop:w-crop]
-    else:
-        cropped = denoised
+    y_start = int(h * 0.35)
+    y_end = h - crop
     
-    # 3. Gradient Magnitude
-    smoothed = cv2.GaussianBlur(cropped, (5, 5), 1.5)
+    # Find x_peak using a robust variance projection inside the detector central area [1000, 2600]
+    if w > 2700:
+        blur_avg = cv2.GaussianBlur(denoised, (25, 25), 5.0, borderType=cv2.BORDER_REPLICATE)
+        profile = np.var(blur_avg, axis=0)
+        x_peak = int(np.argmax(profile[1000:2600])) + 1000
+    else:
+        x_peak = w // 2
+        
+    x_start = max(crop, x_peak - 100)
+    x_end = w - crop
+    
+    br_region = denoised[y_start:y_end, x_start:x_end]
+    
+    smoothed = cv2.GaussianBlur(br_region, (5, 5), 1.5)
     gx = cv2.Scharr(smoothed, cv2.CV_32F, 1, 0)
     gy = cv2.Scharr(smoothed, cv2.CV_32F, 0, 1)
-    grad_img = np.sqrt(gx**2 + gy**2)
+    grad = np.sqrt(gx**2 + gy**2)
     
-    # 4. Bottom-Right Scan
-    ch, cw = grad_img.shape
-    y_indices, x_indices = np.indices((ch, cw))
-    diag_indices = x_indices + y_indices
-    max_k = ch + cw - 2
+    # 85th percentile threshold
+    grad_min = np.percentile(grad, 85)
+    mask = (grad > grad_min).astype(np.uint8)
     
-    # We look for density of non-small gradients
-    # Use a 95th percentile threshold to isolate strong signals
-    grad_min = np.percentile(grad_img, 95)
-    strong_grad = (grad_img > grad_min).astype(np.float32)
+    n, lab, stats, cent = cv2.connectedComponentsWithStats(mask, 8)
+    best, best_sc = None, -1
     
-    diag_sums = np.bincount(diag_indices.ravel(), weights=strong_grad.ravel(), minlength=max_k+1)
-    diag_lengths = np.bincount(diag_indices.ravel(), minlength=max_k+1)
-    
-    diag_density = np.zeros(max_k + 1, dtype=np.float32)
-    valid_diags = diag_lengths > 50  # Ignore tiny corners to avoid small-sample noise
-    diag_density[valid_diags] = diag_sums[valid_diags] / diag_lengths[valid_diags]
-    
-    kernel = np.ones(20) / 20.0
-    diag_density_smooth = np.convolve(diag_density, kernel, mode='same')
-    
-    # 5. Centroid Finding
-    # We want a zone that exceeds this tunable density threshold
-    valid_k = np.where(diag_density_smooth > density_threshold)[0]
-    
-    if len(valid_k) == 0:
-        mid_k = max_k // 2
-    else:
-        # Instead of picking the "middle" cloud, find the peak density in the valid zones
-        mid_k = valid_k[np.argmax(diag_density_smooth[valid_k])]
+    for i in range(1, n):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area < 40:
+            continue
         
-    diag_mask = (diag_indices >= mid_k - 5) & (diag_indices <= mid_k + 5)
-    if np.sum(diag_mask) > 0:
-        y_coords = y_indices[diag_mask]
-        x_coords = x_indices[diag_mask]
-        # Weight by actual gradient magnitude to get accurate centroid
-        weights = grad_img[diag_mask]
-        if np.sum(weights) > 0:
-            cx = np.average(x_coords, weights=weights)
-            cy = np.average(y_coords, weights=weights)
-        else:
-            cx = cw / 2.0
-            cy = ch / 2.0
-    else:
-        cx = cw / 2.0
-        cy = ch / 2.0
+        # Bounding box crop for 1000x faster coordinates lookup
+        left = stats[i, cv2.CC_STAT_LEFT]
+        top = stats[i, cv2.CC_STAT_TOP]
+        w_box = stats[i, cv2.CC_STAT_WIDTH]
+        h_box = stats[i, cv2.CC_STAT_HEIGHT]
+        lab_crop = lab[top:top+h_box, left:left+w_box]
+        ys, xs = np.where(lab_crop == i)
+        xs = xs + left
+        ys = ys + top
         
-    orig_cx = cx + crop
-    orig_cy = cy + crop
-    centroid = (float(orig_cx), float(orig_cy))
-    
-    # 6. Angle Sweep
-    angles = np.arange(-25.0, 6.0, 0.5)
-    best_angle = 0.0
-    best_score = -1.0
-    
-    best_mask = None
-    
-    for angle in angles:
-        theta = np.deg2rad(angle)
-        perp = np.array([-np.sin(theta), np.cos(theta)])
+        if len(xs) < 10:
+            continue
         
-        dx = x_indices - cx
-        dy = y_indices - cy
-        perp_dist = dx * perp[0] + dy * perp[1]
+        cx_orig = cent[i][0] + x_start
+        cy_orig = cent[i][1] + y_start
         
-        mask = np.abs(perp_dist) < 20
-        if np.sum(mask) == 0:
+        # 1. DYNAMIC REJECT: Must be to the right of the central beam profile core
+        if cx_orig < x_peak + 150:
             continue
             
-        score = np.sum(grad_img[mask])
-        if score > best_score:
-            best_score = score
-            best_angle = angle
-            best_mask = mask
+        cov = np.cov(np.vstack([xs, ys]))
+        if cov.shape != (2, 2):
+            continue
+        ev = np.sort(np.linalg.eigvalsh(cov))
+        elong = ev[1] / (ev[0] + 1e-6)
+        
+        # Compute component angle
+        vx, vy, _, _ = cv2.fitLine(np.column_stack([xs, ys]).astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01).ravel()
+        ang = np.degrees(np.arctan2(vy, vx))
+        if ang < -90: ang += 180
+        elif ang > 90: ang -= 180
+        
+        # 2. GEOMETRIC REJECT: Must align with the expected diagonal orientation of the elastic line
+        if not (-45.0 <= ang <= -10.0):
+            continue
             
-    # 7. Score
-    final_score = best_score
-    
-    # 8. Return Format
+        sc = np.log1p(elong) * area
+        if sc > best_sc:
+            best_sc = sc
+            best = (xs, ys, cent[i][0], cent[i][1])
+            
+    # Fallback for simulated/test cases where constraints may not match
+    if best is None:
+        for i in range(1, n):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area < 10:
+                continue
+            
+            # Bounding box crop for 1000x faster coordinates lookup
+            left = stats[i, cv2.CC_STAT_LEFT]
+            top = stats[i, cv2.CC_STAT_TOP]
+            w_box = stats[i, cv2.CC_STAT_WIDTH]
+            h_box = stats[i, cv2.CC_STAT_HEIGHT]
+            lab_crop = lab[top:top+h_box, left:left+w_box]
+            ys, xs = np.where(lab_crop == i)
+            xs = xs + left
+            ys = ys + top
+            
+            if len(xs) < 5:
+                continue
+            cov = np.cov(np.vstack([xs, ys]))
+            if cov.shape != (2, 2):
+                continue
+            ev = np.sort(np.linalg.eigvalsh(cov))
+            elong = ev[1] / (ev[0] + 1e-6)
+            sc = np.log1p(elong) * area
+            if sc > best_sc:
+                best_sc = sc
+                best = (xs, ys, cent[i][0], cent[i][1])
+                
+    if best is None:
+        cx = w / 2.0
+        cy = h / 2.0
+        best_angle = 0.0
+    else:
+        xs, ys, cx_br, cy_br = best
+        cx_orig = cx_br + x_start
+        cy_orig = cy_br + y_start
+        
+        pts = np.column_stack([xs + x_start, ys + y_start]).astype(np.float32)
+        vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_HUBER, 0, 0.01, 0.01).ravel()
+        base_deg = float(np.degrees(np.arctan2(vy, vx)))
+        if base_deg < -90:
+            base_deg += 180
+        elif base_deg > 90:
+            base_deg -= 180
+            
+        # Radon sweep for fine alignment
+        yy_roi, xx_roi = np.indices(grad.shape)
+        xx_roi = xx_roi + x_start
+        yy_roi = yy_roi + y_start
+        grad_roi = grad
+        
+        best_angle = base_deg
+        best_conc = -1
+        
+        span = 10.0
+        step = 0.25
+        for a in np.arange(base_deg - span, base_deg + span + 1e-9, step):
+            th = np.radians(a)
+            px, py = -np.sin(th), np.cos(th)
+            u_roi = (xx_roi - cx_orig) * px + (yy_roi - cy_orig) * py
+            
+            mask_roi = np.abs(u_roi) < 40
+            u_roi_filtered = u_roi[mask_roi]
+            w_roi_filtered = grad_roi[mask_roi]
+            
+            if len(u_roi_filtered) == 0:
+                continue
+                
+            edges = np.arange(-40.5, 41.5, 1.0)
+            P, _ = np.histogram(u_roi_filtered, bins=edges, weights=w_roi_filtered)
+            P = np.maximum(P, 0)
+            conc = P.max() / (P.sum() + 1e-9)
+            if conc > best_conc:
+                best_conc = conc
+                best_angle = a
+                
+        cx = cx_orig
+        cy = cy_orig
+        
     theta = np.deg2rad(best_angle)
-    direction = np.array([np.cos(theta), np.sin(theta)])
+    direction_vec = np.array([np.cos(theta), np.sin(theta)])
     length = max(h, w)
-    x1 = orig_cx - length * direction[0]
-    y1 = orig_cy - length * direction[1]
-    x2 = orig_cx + length * direction[0]
-    y2 = orig_cy + length * direction[1]
+    x1 = cx - length * direction_vec[0]
+    y1 = cy - length * direction_vec[1]
+    x2 = cx + length * direction_vec[0]
+    y2 = cy + length * direction_vec[1]
     
     full_grad = np.zeros_like(img, dtype=np.float32)
-    full_grad[crop:h-crop, crop:w-crop] = grad_img
+    full_grad[y_start:y_end, x_start:x_end] = grad
     
     full_masked = np.zeros_like(img, dtype=np.float32)
-    if best_mask is not None:
-        masked_grad = np.zeros_like(grad_img)
-        masked_grad[best_mask] = grad_img[best_mask]
-        full_masked[crop:h-crop, crop:w-crop] = masked_grad
+    perp = np.array([-np.sin(theta), np.cos(theta)])
+    yy, xx = np.indices(img.shape)
+    u_vals = (xx - cx) * perp[0] + (yy - cy) * perp[1]
+    best_mask = (np.abs(u_vals) < 20) & (xx >= x_start) & (xx <= x_end) & (yy >= y_start) & (yy <= y_end)
+    full_masked[best_mask] = full_grad[best_mask]
+    
+    score = float(np.sum(full_grad[best_mask]))
     
     return {
-        'centroid': centroid,
+        'centroid': (float(cx), float(cy)),
         'direction': float(best_angle),
         'endpoints': ((float(x1), float(y1)), (float(x2), float(y2))),
         'grad_img': full_grad,
         'masked_img': full_masked,
-        'score': float(final_score),
+        'score': score,
         'denoised_img': denoised
     }

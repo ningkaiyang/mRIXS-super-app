@@ -205,9 +205,16 @@ def main():
         else:
             raw_std = 0.0
         
-        # Perform summed line fitting for directories where raw_std > 500.0
+        # Fit reference line on the sweep average image to get high-SNR, stable geometry
         ref_line = None
-        ref_line = None
+        if len(loaded_imgs) > 0:
+            avg_img = np.mean(list(loaded_imgs.values()), axis=0)
+            from rixs_app.core.sharpness import detect_elastic_line_bottom_right
+            try:
+                line_res = detect_elastic_line_bottom_right(avg_img)
+                ref_line = (line_res['centroid'], line_res['direction'])
+            except Exception as e:
+                sys.stderr.write(f"Warning: Failed to fit reference line on average image: {e}\n")
             
         for metric in metrics:
             scores = []
