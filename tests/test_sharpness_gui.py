@@ -27,10 +27,10 @@ class TestSharpnessGUI(unittest.TestCase):
             data[40:60, 40:60] = 5.0  # mock a broad line
             tifffile.imwrite(path, data)
             self.temp_files.append(path)
-            
+
         self.app = RixsApp(show_window=False)
         pump_events(self.app)
-        
+
     def tearDown(self):
         try:
             if hasattr(self, "app") and self.app.sharpness_view is not None:
@@ -59,7 +59,7 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         self.assertEqual(view.manager.current_idx, 0)
         view.next_frame()
         self.assertEqual(view.manager.current_idx, 1)
@@ -77,17 +77,17 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
-        view.navbar.stage_menu.set("Denoised")
-        view.change_pipeline_stage("Denoised")
-        
-        self.assertEqual(view.manager.pipeline_stage, "Denoised")
-        self.assertIn("Denoised Frame:", view.control_panel.description_label.cget("text"))
 
-        view.navbar.stage_menu.set("Masked")
-        view.change_pipeline_stage("Masked")
-        self.assertEqual(view.manager.pipeline_stage, "Masked")
-        self.assertIn("Masked Frame:", view.control_panel.description_label.cget("text"))
+        view.navbar.stage_menu.set("Denoised (D)")
+        view.change_pipeline_stage("Denoised (D)")
+
+        self.assertEqual(view.manager.pipeline_stage, "Denoised (D)")
+        self.assertIn("Anscombe VST", view.control_panel.description_label.cget("text"))
+
+        view.navbar.stage_menu.set("Fitted-Line Strip")
+        view.change_pipeline_stage("Fitted-Line Strip")
+        self.assertEqual(view.manager.pipeline_stage, "Fitted-Line Strip")
+        self.assertIn("Gradient masked", view.control_panel.description_label.cget("text"))
 
     @patch("rixs_app.ui.sharpness_slideshow.manager.SharpnessManager.get_frame_pipeline_data")
     def test_load_and_render_calls_canvas_draw(self, mock_pipeline):
@@ -110,7 +110,7 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         # Test input submissions
         view.handle_floor_entry_submit("0.1")
         view.handle_ceiling_entry_submit("0.9")
@@ -125,10 +125,10 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         view.change_colormap("plasma")
         self.assertEqual(view.manager.colormap, "plasma")
-        
+
         view.change_colormap("grayscale")
         self.assertEqual(view.manager.colormap, "grayscale")
 
@@ -136,21 +136,21 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         self.assertEqual(view.zoom_factor, 1.0)
         view.zoom_in()
         self.assertTrue(view.zoom_mode)
         self.assertEqual(view.zoom_factor, 1.0)
-        
+
         view.handle_canvas_click(50, 50)
         self.assertGreater(view.zoom_factor, 1.0)
         self.assertFalse(view.zoom_mode)
         self.assertEqual(view.zoom_center, (50, 50))
-        
+
         view.zoom_out()
         self.assertEqual(view.zoom_factor, 1.0)
         self.assertIsNone(view.zoom_center)
-        
+
         view.zoom_in()
         view.handle_canvas_click(50, 50)
         view.reset_view()
@@ -163,9 +163,9 @@ class TestSharpnessGUI(unittest.TestCase):
         mock_makedirs.side_effect = PermissionError("Permission Denied")
         # Initialize a ZarrSequenceManager with the temp files
         manager = ZarrSequenceManager(self.temp_files)
-        
+
         self.assertIsNotNone(manager.zarr_group)
-        
+
         # Verify fallback path contains "rixs_cache_" in tempfile.gettempdir()
         import hashlib
         tif_dir = os.path.dirname(os.path.abspath(self.temp_files[0]))
@@ -177,7 +177,7 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         # Test precompute trigger and progress updates
         view.trigger_precompute()
         # Drain the queue to apply callbacks
@@ -191,7 +191,7 @@ class TestSharpnessGUI(unittest.TestCase):
                 if view.control_panel.precompute_button.cget("text") == "Precompute All":
                     break
                 time.sleep(0.05)
-                
+
         self.assertEqual(view.control_panel.precompute_button.cget("text"), "Precompute All")
 
     @patch("tkinter.messagebox.showerror")
@@ -201,13 +201,13 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(bad_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         # Verify initial button state is normal
         self.assertEqual(view.navbar.prev_button.cget("state"), "normal")
-        
+
         # Trigger precompute
         view.trigger_precompute()
-        
+
         # Wait and pump events to let the background thread run and raise the exception
         start_time = time.time()
         error_handled = False
@@ -221,11 +221,11 @@ class TestSharpnessGUI(unittest.TestCase):
                     error_handled = True
                     break
                 time.sleep(0.05)
-        
+
         # Verify that showerror was called to display the error
         self.assertTrue(error_handled)
         mock_showerror.assert_called_once()
-        
+
         # Check that UI elements were re-enabled
         self.assertEqual(view.navbar.prev_button.cget("state"), "normal")
         self.assertEqual(view.navbar.next_button.cget("state"), "normal")
@@ -237,7 +237,7 @@ class TestSharpnessGUI(unittest.TestCase):
         bad_files = [os.path.join(self.temp_dir.name, "missing_first.tif")] + self.temp_files
         self.app.show_sharpness_slideshow(bad_files)
         pump_events(self.app)
-        
+
         view = self.app.sharpness_view
         self.assertIsNotNone(view)
         self.assertEqual(view.manager.current_idx, 0)
@@ -249,7 +249,7 @@ class TestSharpnessGUI(unittest.TestCase):
         bad_files = self.temp_files + [os.path.join(self.temp_dir.name, "missing_last.tif")]
         self.app.show_sharpness_slideshow(bad_files)
         pump_events(self.app)
-        
+
         view = self.app.sharpness_view
         view.manager.current_idx = 3
         # Should not raise ValueError
@@ -260,13 +260,13 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         # Trigger precompute
         view.trigger_precompute()
-        
+
         # Immediately destroy the app/view
         self.app.destroy()
-        
+
         # Wait a bit for the thread to run
         time.sleep(0.5)
         # Verify that the thread still runs but does not crash the Python process with unhandled exceptions.
@@ -282,12 +282,12 @@ class TestSharpnessGUI(unittest.TestCase):
         self.app.show_sharpness_slideshow(self.temp_files)
         pump_events(self.app)
         view = self.app.sharpness_view
-        
+
         bad_export_dir = "/non_existent_directory_which_is_invalid"
-        
+
         with patch("tkinter.filedialog.askdirectory", return_value=bad_export_dir):
             view.trigger_export()
-            
+
         start_time = time.time()
         error_handled = False
         while time.time() - start_time < 3.0:
@@ -300,11 +300,32 @@ class TestSharpnessGUI(unittest.TestCase):
                     error_handled = True
                     break
                 time.sleep(0.05)
-                
+
         self.assertTrue(error_handled)
         mock_showerror.assert_called_once()
         self.assertEqual(view.bottom_bar.export_button.cget("state"), "normal")
         self.assertEqual(view.bottom_bar.progress_label.cget("text"), "")
+
+    def test_manager_cache_preserves_all_metadata_keys(self):
+        """Verify that get_frame_pipeline_data returns fit_ok and overlay metadata on cache hits."""
+        self.app.show_sharpness_slideshow(self.temp_files)
+        pump_events(self.app)
+        manager = self.app.sharpness_view.manager
+
+        # First call (cache miss)
+        data_miss = manager.get_frame_pipeline_data(0)
+        self.assertIsNotNone(data_miss)
+        self.assertIn("fit_ok", data_miss)
+
+        # Second call (cache hit)
+        data_hit = manager.get_frame_pipeline_data(0)
+        self.assertIsNotNone(data_hit)
+        self.assertIn("fit_ok", data_hit)
+        self.assertEqual(data_miss["fit_ok"], data_hit["fit_ok"])
+        self.assertIn("candidates_xy", data_hit)
+        self.assertIn("inliers_xy", data_hit)
+        self.assertIn("evaluator_result", data_hit)
+
 
 
 

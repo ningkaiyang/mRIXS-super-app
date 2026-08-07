@@ -57,6 +57,7 @@ class SharpnessManager:
         self.centroids = {}
         self.directions = {}
         self.profiles = {}
+        self.pipeline_results = {}
 
         # Slicing configuration tracking
         self._cache_generation = 0
@@ -79,6 +80,7 @@ class SharpnessManager:
             self.centroids.clear()
             self.directions.clear()
             self.profiles.clear()
+            self.pipeline_results.clear()
         self._cache_generation = 0
         self._active_config_fingerprint = None
         self._load_reference_bounds()
@@ -127,21 +129,10 @@ class SharpnessManager:
         with self.lock:
             if self.session_id is not current_session:
                 return None
-            cached = (
-                idx in self.scores
-                and idx in self.centroids
-                and idx in self.directions
-                and idx in self.profiles
-            )
-            if cached:
-                cached_data = {
-                    "score": self.scores[idx],
-                    "centroid": self.centroids[idx],
-                    "direction": self.directions[idx],
-                    "1d_profile": self.profiles[idx]
-                }
+            if idx in self.pipeline_results:
+                cached_meta = dict(self.pipeline_results[idx])
             else:
-                cached_data = None
+                cached_meta = None
 
         if self.session_id is not current_session:
             return None
@@ -157,19 +148,14 @@ class SharpnessManager:
         if raw_img is None:
             return None
 
-        if cached_data is not None and denoised_img is not None and masked_img is not None:
+        if cached_meta is not None and denoised_img is not None and masked_img is not None:
             if self.session_id is not current_session:
                 return None
             self._local.file_list = session_file_list
-            res = {
-                "raw_img": raw_img,
-                "denoised_img": denoised_img,
-                "masked_img": masked_img,
-                "score": cached_data["score"],
-                "centroid": cached_data["centroid"],
-                "direction": cached_data["direction"],
-                "1d_profile": cached_data["1d_profile"]
-            }
+            res = dict(cached_meta)
+            res["raw_img"] = raw_img
+            res["denoised_img"] = denoised_img
+            res["masked_img"] = masked_img
             if grad_img is not None:
                 res["grad_img"] = grad_img
             return res
@@ -184,19 +170,19 @@ class SharpnessManager:
         )
 
         if self.session_id is current_session:
-                # Save derived frames to disk cache
-                if current_zarr_manager is not None:
-                    current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
-                    current_zarr_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
-                    current_zarr_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
-                    # Update in-memory metadata
-                with self.lock:
-                    if self.session_id is current_session:
-                        self.centroids[idx] = res["centroid"]
-                        self.directions[idx] = res["direction"]
-                        self.profiles[idx] = res["1d_profile"]
-                        # Populate scores last as the triggering dictionary
-                        self.scores[idx] = res["score"]
+            # Save derived frames to disk cache
+            if current_zarr_manager is not None:
+                current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
+                current_zarr_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
+                current_zarr_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
+            with self.lock:
+                if self.session_id is current_session:
+                    self.centroids[idx] = res["centroid"]
+                    self.directions[idx] = res["direction"]
+                    self.profiles[idx] = res["1d_profile"]
+                    self.scores[idx] = res["score"]
+                    meta = {k: v for k, v in res.items() if k not in ("raw_img", "denoised_img", "masked_img", "grad_img")}
+                    self.pipeline_results[idx] = meta
 
         if self.session_id is not current_session:
             return None
