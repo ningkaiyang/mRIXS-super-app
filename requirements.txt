@@ -8,3 +8,4 @@ pytest==9.0.3
 scipy
 scikit-image
 zarr
+pyshortcuts==1.9.9

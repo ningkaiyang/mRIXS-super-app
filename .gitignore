@@ -28,6 +28,8 @@ tif-cache
 temp-scratch
 diag_out
 /diag[0-9]*/
+presentation_graphics
+sharpness_diagnostics
 
 # ------------------------------------------------------------------------------
 # Local & Raw Datasets (Untracked)

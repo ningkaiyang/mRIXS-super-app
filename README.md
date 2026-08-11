@@ -33,6 +33,20 @@ To launch the graphical user interface:
 python run.py
 ```
 
+### Creating a Desktop Shortcut
+To create a simple, double-clickable Desktop shortcut for lab computers:
+
+- **On Windows:**
+  ```cmd
+  python create_shortcut.py
+  ```
+- **On macOS:**
+  ```bash
+  python3 create_shortcut.py --terminal
+  ```
+
+This automatically generates a Desktop shortcut with the custom mRIXS icon pointing to `run.py` and the project working directory.
+
 ## Key Features
 
 1. **Zarr-Backed Frame Caching:** High-resolution TIFF loading is optimized by caching frame arrays inside a content-addressed `tif-cache/frames.zarr` database in the dataset directory. Cache keys are computed via MD5 hashes of filepaths and modification times, ensuring instantaneous sequence reloads even across different run sessions.
