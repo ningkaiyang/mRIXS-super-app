@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pytest
 import tifffile
-from rixs_app.core.sharpness import denoise_image, evaluate_sharpness, run_sharpness_pipeline
+from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order, run_zeroth_order_pipeline
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -48,10 +48,10 @@ def test_flat_constant_images():
         for c in constants:
             img = np.ones((size, size), dtype=np.float64) * c
             
-            score_grad = evaluate_sharpness(img, "score")
+            score_grad = evaluate_zeroth_order(img, "score")
             assert score_grad == 0.0
             
-            score_peak = evaluate_sharpness(img, "score")
+            score_peak = evaluate_zeroth_order(img, "score")
             assert score_peak == 0.0
 
 
@@ -91,15 +91,15 @@ def test_denoise_image_nan_inf_negatives():
     assert np.isclose(denoised_unclipped[1, 0], -0.375)
 
 
-def test_evaluate_sharpness_nan_inf_negatives():
-    """Test evaluate_sharpness behavior with NaN, Inf, and negative values."""
+def test_evaluate_zeroth_order_nan_inf_negatives():
+    """Test evaluate_zeroth_order behavior with NaN, Inf, and negative values."""
     img = np.zeros((250, 250), dtype=np.float64)
     img[0,0]=np.nan; img[0,1]=10.0; img[0,2]=np.inf
     img[1,0]=-5.0; img[1,1]=-100.0; img[1,2]=-np.inf
     img[2,0]=20.0; img[2,1]=np.nan; img[2,2]=30.0
 
     for metric in ["score"]:
-        score = evaluate_sharpness(img, metric)
+        score = evaluate_zeroth_order(img, metric)
         assert isinstance(score, float)
         assert not np.isnan(score)
         assert not np.isinf(score)
@@ -109,10 +109,10 @@ def test_evaluate_sharpness_nan_inf_negatives():
 # 4. CLI Frame Index Parsing Robustness
 # -----------------------------------------------------------------------------
 
-def test_run_sharpness_pipeline_structure():
-    """Verify that run_sharpness_pipeline runs successfully and returns the correct dictionary format."""
+def test_run_zeroth_order_pipeline_structure():
+    """Verify that run_zeroth_order_pipeline runs successfully and returns the correct dictionary format."""
     img = np.random.rand(250, 250).astype(np.float32)
-    res = run_sharpness_pipeline(img, metric="score")
+    res = run_zeroth_order_pipeline(img, metric="score")
     
     assert isinstance(res, dict)
     assert "raw_img" in res
@@ -166,7 +166,7 @@ def test_performance_benchmarking(tmp_path):
         for idx in range(num_frames):
             img = tifffile.imread(scan_dir / f"frame_{idx:03d}.tif")
             denoised = denoise_image(img)
-            score = evaluate_sharpness(denoised, metric)
+            score = evaluate_zeroth_order(denoised, metric)
             assert not np.isnan(score)
             assert not np.isinf(score)
         duration = time.time() - start_time
@@ -193,7 +193,7 @@ def test_extreme_intensities_safe_1e12():
             assert not np.isinf(denoised_no_clip).any()
             
             for metric in ["score"]:
-                score = evaluate_sharpness(img_flat, metric)
+                score = evaluate_zeroth_order(img_flat, metric)
                 assert isinstance(score, (float, int, np.floating))
                 assert not np.isnan(score)
                 assert not np.isinf(score)
@@ -212,12 +212,12 @@ def test_extreme_intensities_overflow_bug():
 
 
 def test_1d_metrics_overflow_safety():
-    """Stress test sharpness evaluation under values that cause float64 overflow."""
+    """Stress test zeroth-order evaluation under values that cause float64 overflow."""
     img = np.zeros((250, 250), dtype=np.float64)
     img[50:, :] = 1e200
     
     for metric in ["score"]:
-        score = evaluate_sharpness(img, metric)
+        score = evaluate_zeroth_order(img, metric)
         assert np.isfinite(score), f"{metric} metric returned non-finite score due to float64 overflow"
 
 
@@ -249,14 +249,13 @@ def test_non_square_aspect_ratio_compatibility():
             
         for metric in ["score"]:
             try:
-                score = evaluate_sharpness(img, metric)
+                score = evaluate_zeroth_order(img, metric)
                 assert isinstance(score, (float, int, np.floating))
                 assert not np.isnan(score)
                 assert not np.isinf(score)
             except Exception as e:
-                pytest.fail(f"evaluate_sharpness({metric}) failed on non-square shape ({H}, {W}): {e}")
+                pytest.fail(f"evaluate_zeroth_order({metric}) failed on non-square shape ({H}, {W}): {e}")
 
 # -------------------------------------------------------------
 # 6. UNIT & INTEGRATION TESTS FOR GEOMETRIC GRADIENT PIPELINE
 # -------------------------------------------------------------
-

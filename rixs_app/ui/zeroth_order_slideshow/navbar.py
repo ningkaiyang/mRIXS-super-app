@@ -1,9 +1,9 @@
-"""Navbar component for the sharpness slideshow."""
+"""Navbar component for the zeroth-order calibration slideshow."""
 
 import customtkinter
 
-class SharpnessNavBar(customtkinter.CTkFrame):
-    """Top navigation bar providing back-to-sorting, colormap, and stage selection."""
+class ZerothOrderNavBar(customtkinter.CTkFrame):
+    """Top navigation bar providing back-to-sorting, colormap, stage selection, and peak focus."""
 
     def __init__(self, parent, controller, **kwargs):
         super().__init__(parent, **kwargs)
@@ -32,6 +32,14 @@ class SharpnessNavBar(customtkinter.CTkFrame):
         )
         self.autoplay_button.pack(side="left", padx=5)
 
+        # Peak Focus button
+        self.peak_focus_button = customtkinter.CTkButton(
+            self, text="🎯 Peak Focus",
+            command=self.controller.jump_to_peak_focus,
+            width=120, fg_color="#A55D2F", hover_color="#8A4A22",
+        )
+        self.peak_focus_button.pack(side="left", padx=5)
+
         # Right side: colormap selection dropdown
         self.colormap_menu = customtkinter.CTkOptionMenu(
             self,
@@ -47,5 +55,5 @@ class SharpnessNavBar(customtkinter.CTkFrame):
             values=["Raw", "Denoised (D)", "Row-Smoothed (Dsm)", "Gradient (G)", "Fitted-Line Strip"],
             command=self.controller.change_pipeline_stage
         )
-        self.stage_menu.set("Denoised (D)")
+        self.stage_menu.set("Raw")
         self.stage_menu.pack(side="right", padx=5)

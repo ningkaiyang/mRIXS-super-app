@@ -7,14 +7,14 @@ import pytest
 import tifffile
 
 # ==========================================
-# Feature 4: Core Backend Integration (rixs_app/core/sharpness.py)
+# Feature 4: Core Backend Integration (rixs_app/core/zeroth_order.py)
 # ==========================================
 
 # --- Tier 1: Feature 4 Coverage ---
 
 def test_denoise_image_signature():
     """Verify that denoise_image signature is correct: accepts np.ndarray and returns np.ndarray."""
-    from rixs_app.core.sharpness import denoise_image
+    from rixs_app.core.zeroth_order import denoise_image
     
     img = np.ones((50, 50), dtype=np.float32)
     out = denoise_image(img)
@@ -22,29 +22,29 @@ def test_denoise_image_signature():
     assert isinstance(out, np.ndarray)
     assert out.shape == img.shape
 
-def test_evaluate_sharpness_signature():
-    """Verify that evaluate_sharpness signature is correct: accepts np.ndarray and metric string, returns float."""
-    from rixs_app.core.sharpness import evaluate_sharpness
+def test_evaluate_zeroth_order_signature():
+    """Verify that evaluate_zeroth_order signature is correct: accepts np.ndarray and metric string, returns float."""
+    from rixs_app.core.zeroth_order import evaluate_zeroth_order
     
     img = np.ones((50, 50), dtype=np.float32)
-    score = evaluate_sharpness(img, "norm_sum_sq_grad")
+    score = evaluate_zeroth_order(img, "norm_sum_sq_grad")
     
     assert isinstance(score, float) or isinstance(score, np.floating)
 
 def test_winning_metric_integration():
-    """Verify that the 1D sharpness metrics are integrated and callable."""
-    from rixs_app.core.sharpness import evaluate_sharpness
+    """Verify that the 1D zeroth-order metrics are integrated and callable."""
+    from rixs_app.core.zeroth_order import evaluate_zeroth_order
     
     img = np.random.rand(50, 50).astype(np.float32)
-    score_grad = evaluate_sharpness(img, "norm_sum_sq_grad")
-    score_peak = evaluate_sharpness(img, "peak_height")
+    score_grad = evaluate_zeroth_order(img, "norm_sum_sq_grad")
+    score_peak = evaluate_zeroth_order(img, "peak_height")
     
     assert score_grad is not None
     assert score_peak is not None
 
 def test_preprocessing_backend_integration():
     """Verify that the full denoising pipeline is properly executed within the backend module."""
-    from rixs_app.core.sharpness import denoise_image
+    from rixs_app.core.zeroth_order import denoise_image
     
     img = np.array([[-10, 20], [30, -40]], dtype=np.float32)
     out = denoise_image(img)
@@ -53,7 +53,7 @@ def test_preprocessing_backend_integration():
 
 def test_invalid_input_exception_propagation():
     """Verify that invalid inputs to backend functions propagate appropriate errors (e.g. ValueError)."""
-    from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+    from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
     
     # 1D array should not be allowed
     invalid_img = np.array([1, 2, 3])
@@ -62,18 +62,18 @@ def test_invalid_input_exception_propagation():
         denoise_image(invalid_img)
         
     with pytest.raises(ValueError):
-        evaluate_sharpness(invalid_img, "norm_sum_sq_grad")
+        evaluate_zeroth_order(invalid_img, "norm_sum_sq_grad")
 
 
 # --- Tier 2: Feature 4 Coverage ---
 
 def test_extreme_intensity_overflow():
     """Boundary Case: Test that backend methods handle extreme intensities without integer/float overflow."""
-    from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+    from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
     
     img = np.ones((50, 50), dtype=np.float32) * 1e9
     out = denoise_image(img)
-    score = evaluate_sharpness(img, "norm_sum_sq_grad")
+    score = evaluate_zeroth_order(img, "norm_sum_sq_grad")
     
     assert not np.isnan(out).any()
     assert not np.isinf(out).any()
@@ -82,30 +82,30 @@ def test_extreme_intensity_overflow():
 
 def test_non_square_aspect_ratio():
     """Boundary Case: Test that non-square arrays (e.g. 100x50 or 50x200) are handled correctly."""
-    from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+    from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
     
     img = np.ones((100, 50), dtype=np.float32)
     out = denoise_image(img)
-    score = evaluate_sharpness(img, "norm_sum_sq_grad")
+    score = evaluate_zeroth_order(img, "norm_sum_sq_grad")
     
     assert out.shape == (100, 50)
     assert score is not None
 
 def test_custom_datatype_compatibility():
     """Boundary Case: Test that functions are compatible with various numeric data types (float32, float64, int16, int32)."""
-    from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+    from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
     
     for dtype in [np.float32, np.float64, np.int16, np.int32]:
         img = (np.random.rand(50, 50) * 100).astype(dtype)
         out = denoise_image(img)
-        score = evaluate_sharpness(img, "norm_sum_sq_grad")
+        score = evaluate_zeroth_order(img, "norm_sum_sq_grad")
         
         assert out is not None
         assert score is not None
 
 def test_zero_empty_image_input():
     """Boundary Case: Empty image array or 0-dimensional image array raises a ValueError."""
-    from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+    from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
     
     empty_img = np.zeros((0, 0), dtype=np.float32)
     
@@ -113,7 +113,7 @@ def test_zero_empty_image_input():
         denoise_image(empty_img)
         
     with pytest.raises(ValueError):
-        evaluate_sharpness(empty_img, "norm_sum_sq_grad")
+        evaluate_zeroth_order(empty_img, "norm_sum_sq_grad")
 
 
 
@@ -121,7 +121,7 @@ def test_zero_empty_image_input():
 # --- Tier 3: Cross-Feature Interactions ---
 
 def test_f1_f3_cli_cli_pipe(tmp_path):
-    """Tier 3: Feature 1 (Denoise CLI) output fed directly into Feature 3 (Sharpness CLI)."""
+    """Tier 3: Feature 1 (Denoise CLI) output fed directly into Feature 3 (Zeroth-Order CLI)."""
     input_path = tmp_path / "frame_000.tif"
     data = np.random.poisson(lam=10.0, size=(50, 50))
     tifffile.imwrite(input_path, data.astype(np.int32))
@@ -130,7 +130,7 @@ def test_f1_f3_cli_cli_pipe(tmp_path):
     cmd_denoise = [sys.executable, "denoise_cli.py", "--input", str(input_path), "--output", str(tmp_path / "denoised" / "frame_000_denoised.tiff"), "--clip"]
     subprocess.run(cmd_denoise, capture_output=True, text=True, check=True)
     
-    # Step 2: Write a dummy ground truth JSON to allow sharpness correlation calculation
+    # Step 2: Write a dummy ground truth JSON to allow correlation calculation
     gt_data = {
         "experiment_id": "test_pipe",
         "best_frame_index": 0,
@@ -139,9 +139,9 @@ def test_f1_f3_cli_cli_pipe(tmp_path):
     with open(tmp_path / "denoised" / "ground_truth.json", "w") as f:
         json.dump(gt_data, f)
         
-    # Step 3: Run Sharpness CLI on the denoised directory
-    cmd_sharpness = [sys.executable, "sharpness_cli.py", "--dir", str(tmp_path / "denoised")]
-    res = subprocess.run(cmd_sharpness, capture_output=True, text=True, check=True)
+    # Step 3: Run zeroth-order CLI on the denoised directory
+    cmd_zeroth_order = [sys.executable, "zeroth_order_cli.py", "--dir", str(tmp_path / "denoised")]
+    res = subprocess.run(cmd_zeroth_order, capture_output=True, text=True, check=True)
     
     assert res.returncode == 0
     assert "Directory" in res.stdout
@@ -150,7 +150,7 @@ def test_f1_f3_cli_cli_pipe(tmp_path):
 
 def test_f1_f4_cli_backend_comparison(tmp_path):
     """Tier 3: Feature 1 (Denoise CLI) preprocessing output matches Backend (denoise_image) output."""
-    from rixs_app.core.sharpness import denoise_image
+    from rixs_app.core.zeroth_order import denoise_image
     
     input_path = tmp_path / "input.tif"
     output_path = tmp_path / "output.tif"
@@ -167,27 +167,27 @@ def test_f1_f4_cli_backend_comparison(tmp_path):
     np.testing.assert_array_almost_equal(cli_out, backend_out)
 
 def test_f3_f4_cli_backend_comparison(tmp_path):
-    """Tier 3: Feature 3 (Sharpness CLI) computed metrics match Backend (evaluate_sharpness) computed metrics."""
-    from rixs_app.core.sharpness import evaluate_sharpness
+    """Tier 3: Feature 3 (Zeroth-Order CLI) computed metrics match Backend (evaluate_zeroth_order) computed metrics."""
+    from rixs_app.core.zeroth_order import evaluate_zeroth_order
     
     # Write a frame
     input_path = tmp_path / "frame_000.tif"
     data = np.random.rand(50, 50).astype(np.float32)
     tifffile.imwrite(input_path, data)
     
-    # Run sharpness CLI and capture output
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(tmp_path), "--metrics", "norm_sum_sq_grad", "--print-scores"]
+    # Run zeroth-order CLI and capture output
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(tmp_path), "--metrics", "norm_sum_sq_grad", "--print-scores"]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
-    backend_score = evaluate_sharpness(data, "norm_sum_sq_grad")
+    backend_score = evaluate_zeroth_order(data, "norm_sum_sq_grad")
     
     # Parse CLI score from output and verify it is close to backend score
     assert str(round(backend_score, 2)) in res.stdout
 
 
-def test_evaluate_sharpness_nan_inf_handling():
-    """Verify that evaluate_sharpness handles NaN and Inf values gracefully without throwing errors."""
-    from rixs_app.core.sharpness import evaluate_sharpness
+def test_evaluate_zeroth_order_nan_inf_handling():
+    """Verify that evaluate_zeroth_order handles NaN and Inf values gracefully without throwing errors."""
+    from rixs_app.core.zeroth_order import evaluate_zeroth_order
     
     img = np.ones((50, 50), dtype=np.float32)
     img[0, 0] = np.nan
@@ -195,7 +195,7 @@ def test_evaluate_sharpness_nan_inf_handling():
     img[2, 2] = -np.inf
     
     for metric in ["norm_sum_sq_grad", "peak_height"]:
-        score = evaluate_sharpness(img, metric)
+        score = evaluate_zeroth_order(img, metric)
         assert score is not None
         assert not np.isnan(score)
         assert not np.isinf(score)

@@ -2,7 +2,7 @@ import re
 import pytest
 import time
 import os
-from sharpness_cli import extract_frame_index
+from zeroth_order_cli import extract_frame_index
 
 def test_user_cases():
     """Verify the exact filenames specified by the user."""

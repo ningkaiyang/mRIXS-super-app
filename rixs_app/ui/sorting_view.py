@@ -11,7 +11,7 @@ class SortingView(customtkinter.CTkFrame):
     naturally, reorder them manually (up/down), and remove them. It acts as the
     entry point before launching the main image analysis slideshow.
     """
-    def __init__(self, parent, on_start_slideshow=None, on_evaluate_sharpness=None, **kwargs):
+    def __init__(self, parent, on_start_slideshow=None, on_zeroth_order=None, **kwargs):
         """
         Initialize the sorting view and set up the user interface.
 
@@ -19,15 +19,22 @@ class SortingView(customtkinter.CTkFrame):
             parent: The parent widget that contains this frame.
             on_start_slideshow (callable, optional): Callback triggered when the
                 start slideshow button is clicked.
-            on_evaluate_sharpness (callable, optional): Callback triggered when the
-                evaluate sharpness button is clicked.
+            on_zeroth_order (callable, optional): Callback triggered when the
+                zeroth-order calibration button is clicked.
             **kwargs: Additional keyword arguments passed to the CTkFrame constructor.
         """
         super().__init__(parent, **kwargs)
         self.on_start_slideshow = on_start_slideshow
-        self.on_evaluate_sharpness = on_evaluate_sharpness
+        self.on_zeroth_order = on_zeroth_order
         self.file_list = []
         self.selected_index = -1
+
+        # Header label
+        self.header_label = customtkinter.CTkLabel(
+            self, text="mRIXS Super-App Workspace",
+            font=customtkinter.CTkFont(size=22, weight="bold"),
+        )
+        self.header_label.pack(pady=(15, 5))
 
         # Stub widgets
         self.select_button = customtkinter.CTkButton(self, text="📁 Select Files", command=self.select_files)
@@ -67,13 +74,13 @@ class SortingView(customtkinter.CTkFrame):
         )
         self.start_button.pack(pady=10)
 
-        self.sharpness_button = customtkinter.CTkButton(
-            self, text="🔍 Evaluate Sharpness", command=self.start_sharpness,
+        self.zeroth_order_button = customtkinter.CTkButton(
+            self, text="🔬 Zeroth-Order Focus & FWHM Calibration", command=self.start_zeroth_order,
             fg_color="#1F6AA5", hover_color="#165a8a",
             font=customtkinter.CTkFont(size=16, weight="bold"),
             height=44
         )
-        self.sharpness_button.pack(pady=10)
+        self.zeroth_order_button.pack(pady=10)
 
         self.help_button = customtkinter.CTkButton(
             self, text="❓ Help / Guide", command=self.show_help,
@@ -114,11 +121,12 @@ class SortingView(customtkinter.CTkFrame):
                 "Coefficient), which works well for most datasets. Warp is\n"
                 "ON by default — frames are translated to align with Frame 1."
             )),
-            ("Sharpness Evaluation", (
-                "Click '🔍 Evaluate Sharpness' from the main menu to open the sharpness view.\n"
-                "This mode visualizes the sharpness pipeline (Raw, Denoised, Masked) for each\n"
-                "frame, alongside the 1D profile curve. You can evaluate the computed sharpness\n"
-                "against human-ranked ground truth."
+            ("Zeroth-Order Calibration", (
+                "Click '🔬 Zeroth-Order Calibration' from the main menu to analyze mirror pitch.\n"
+                "This mode visualizes the zeroth-order line pipeline (Raw, Denoised, Masked) for each\n"
+                "frame, alongside the 1D Gaussian profile fit and FWHM (px / meV).\n"
+                "Optionally select a scan log TXT file to map motor pitch positions to frames,\n"
+                "then Export to generate the focus curve (mirror pitch vs FWHM)."
             )),
             ("Alignment Engines", (
                 "Switch engines using the dropdown in the top-right navbar:\n\n"
@@ -295,14 +303,26 @@ class SortingView(customtkinter.CTkFrame):
         if self.on_start_slideshow and self.file_list:
             self.on_start_slideshow(self.file_list)
 
-    def start_sharpness(self):
+    def start_zeroth_order(self):
         """
-        Trigger the callback to start the sharpness evaluation with the current file list.
+        Trigger the callback to start zeroth-order calibration with the current file list.
 
+        Prompts the user to optionally select a scan log TXT file for motor pitch metadata.
         Only executes if the file list is not empty and a callback is provided.
         """
-        if self.on_evaluate_sharpness and self.file_list:
-            self.on_evaluate_sharpness(self.file_list)
+        if not self.on_zeroth_order or not self.file_list:
+            return
+        txt_path = tkinter.filedialog.askopenfilename(
+            title="Select Motor Scan Log (.txt) — Cancel to skip",
+            filetypes=[("Text files", "*.txt")],
+        )
+        if not txt_path:
+            tkinter.messagebox.showinfo(
+                "No Scan Log Selected",
+                "Proceeding without motor scan metadata.\n"
+                "Export will not include mirror pitch vs. FWHM focus curve."
+            )
+        self.on_zeroth_order(self.file_list, txt_path=txt_path if txt_path else None)
 
     def update_listbox(self):
         """

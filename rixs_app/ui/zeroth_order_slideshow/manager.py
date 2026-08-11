@@ -1,4 +1,4 @@
-"""Logical manager driving the state, Zarr caching, and calculations of the sharpness slideshow."""
+"""Logical manager driving the state, Zarr caching, and calculations of the zeroth-order calibration slideshow."""
 
 import os
 import queue
@@ -7,7 +7,7 @@ import numpy as np
 import hashlib
 import inspect
 from rixs_app.core.dataset import ZarrSequenceManager
-from rixs_app.core.sharpness import run_sharpness_pipeline
+from rixs_app.core.zeroth_order import run_zeroth_order_pipeline
 
 def _call_on_complete(on_complete, success, err_msg=None):
     try:
@@ -20,8 +20,8 @@ def _call_on_complete(on_complete, success, err_msg=None):
         except TypeError:
             on_complete(success, err_msg)
 
-class SharpnessManager:
-    """Logical model encapsulating sharpness pipeline computations, state caching, and threads."""
+class ZerothOrderManager:
+    """Logical model encapsulating zeroth-order calibration pipeline computations, state caching, and threads."""
 
     def __init__(self, result_queue: queue.Queue):
         self.result_queue = result_queue
@@ -52,6 +52,11 @@ class SharpnessManager:
         self.slicing_floor = 0.0
         self.slicing_ceiling = 1.0
 
+        # Zeroth-order calibration metadata
+        self.txt_metadata = None   # dict from parse_scan_log(), or None
+        self.energy_dispersion = 0.0   # meV/px — set from tools panel
+        self.mono_energy_ev = 0.0      # eV — set from txt metadata or manual
+
         # Precomputed/cached values in RAM
         self.scores = {}
         self.centroids = {}
@@ -67,12 +72,16 @@ class SharpnessManager:
         self.zarr_manager = None
         self.session_id = None
 
-    def start(self, file_list: list[str]):
+    def start(self, file_list: list[str], txt_metadata=None):
         """Resets the manager state and launches data preloading."""
         manager = ZarrSequenceManager(file_list)
         self.file_list = file_list
         self.current_idx = 0
         self.autoplay_active = False
+        self.txt_metadata = txt_metadata
+        self.energy_dispersion = 0.0
+        self.mono_energy_ev = 0.0
+
         with self.lock:
             self.zarr_manager = manager
             self.session_id = object()
@@ -86,7 +95,7 @@ class SharpnessManager:
         self._load_reference_bounds()
 
     def _load_reference_bounds(self):
-        """Loads first frame to establish display thresholds and noise metrics."""
+        """Loads first frame to establish display thresholds using 20th/98th percentile."""
         current_zarr_manager = self.zarr_manager
         if current_zarr_manager is None or not self.file_list:
             return
@@ -107,17 +116,16 @@ class SharpnessManager:
         self.intensity_min = float(np.min(ref_raw))
         self.intensity_max = float(np.max(ref_raw))
 
-        # Compute 60th percentile on active pixels
-        active_pixels = ref_raw[ref_raw > self.intensity_min]
+        # Use 20th/98th percentile for good contrast on Raw zeroth-order frames
+        self.slicing_floor = float(np.percentile(ref_raw, 20))
+        active_pixels = ref_raw[ref_raw > self.slicing_floor]
         if active_pixels.size > 0:
-            self.slicing_ceiling = float(np.percentile(active_pixels, 60.0))
+            self.slicing_ceiling = float(np.percentile(active_pixels, 98))
         else:
             self.slicing_ceiling = self.intensity_max
 
-        self.slicing_floor = self.intensity_min
-
     def get_frame_pipeline_data(self, idx: int) -> dict:
-        """Retrieves or calculates the sharpness pipeline breakdown dictionary for a frame."""
+        """Retrieves or calculates the zeroth-order pipeline breakdown dictionary for a frame."""
         self._local.file_list = None
         current_zarr_manager = self.zarr_manager
         current_session = self.session_id
@@ -164,9 +172,10 @@ class SharpnessManager:
         if self.session_id is not current_session:
             return None
 
-        res = run_sharpness_pipeline(
+        res = run_zeroth_order_pipeline(
             raw_img,
-            metric=self.metric
+            metric=self.metric,
+            energy_dispersion=self.energy_dispersion,
         )
 
         if self.session_id is current_session:
@@ -189,6 +198,16 @@ class SharpnessManager:
 
         self._local.file_list = session_file_list
         return res
+
+    def get_peak_focus_index(self) -> int:
+        """Return the index of the frame with the minimum (best) FWHM."""
+        best_idx, best_fwhm = 0, float('inf')
+        for idx, meta in self.pipeline_results.items():
+            er = meta.get('evaluator_result')
+            if er is not None and er.score_valid and er.fwhm_px is not None and er.fwhm_px < best_fwhm:
+                best_fwhm = er.fwhm_px
+                best_idx = idx
+        return best_idx
 
     def run_precompute_worker(self, on_progress, on_complete):
         """Spawns background thread worker to evaluate and cache all frames."""
@@ -219,6 +238,10 @@ class SharpnessManager:
         """Spawns background thread to write Matplotlib figures to disk using Agg backend."""
         total = len(self.file_list)
         current_session = self.session_id
+        txt_metadata = self.txt_metadata
+        energy_dispersion = self.energy_dispersion
+        mono_energy_ev = self.mono_energy_ev
+
         def _worker():
             try:
                 from matplotlib.figure import Figure
@@ -249,7 +272,7 @@ class SharpnessManager:
                     ax3 = fig.add_subplot(223)
                     ax4 = fig.add_subplot(224)
 
-                    # Sliced images for display (only values in [vmin, vmax] are kept, rest zeroed out)
+                    # Sliced images for display
                     raw_disp = np.where((data["raw_img"] >= vmin) & (data["raw_img"] <= vmax), data["raw_img"], 0.0) if data.get("raw_img") is not None else None
 
                     # Plot Raw
@@ -271,7 +294,6 @@ class SharpnessManager:
                         if "direction" in data:
                             c = data["centroid"]
                             d = data["direction"]
-                            # compute approximate endpoints
                             ax2.axline((c[0], c[1]), slope=d[1]/d[0], color="white", linestyle="-")
                     else:
                         ax2.text(0.5, 0.5, "No Denoised Image", ha='center', va='center')
@@ -292,8 +314,7 @@ class SharpnessManager:
                     # Plot 1D Profile + Fit
                     P, u = data["1d_profile"]
                     ax4.plot(u, P, 'k-', linewidth=2, label='1D Profile')
-
-                    ax4.set_title(f"1D Profile (Peak Sharpness: {data['score']:.2f})")
+                    ax4.set_title(f"1D Profile (Score: {data['score']:.2f})")
                     ax4.set_xlabel("Perpendicular Distance (u)")
                     ax4.set_ylabel("Gradient Sum")
                     ax4.legend(fontsize=8)
@@ -306,6 +327,10 @@ class SharpnessManager:
                         return
                     self.result_queue.put(lambda c=idx+1: on_progress(c, total))
 
+                # Generate focus curve if txt_metadata available
+                if txt_metadata is not None:
+                    self._export_focus_curve(export_dir, txt_metadata, energy_dispersion, mono_energy_ev)
+
                 if self.session_id is not current_session:
                     return
                 self.result_queue.put(lambda: _call_on_complete(on_complete, True, None))
@@ -316,3 +341,63 @@ class SharpnessManager:
                 self.result_queue.put(lambda: _call_on_complete(on_complete, False, err_str))
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _export_focus_curve(self, export_dir, txt_metadata, energy_dispersion, mono_energy_ev):
+        """Generate sequence_mirror_pitch_vs_fwhm.png with optional resolving power annotation."""
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+        pitches, fwhms, resolving_powers = [], [], []
+        for idx in range(len(self._file_list)):
+            basename = os.path.basename(self._file_list[idx])
+            frame_meta = txt_metadata['frames'].get(basename)
+            cached = self.pipeline_results.get(idx, {})
+            er = cached.get('evaluator_result')
+            if frame_meta is None or er is None or not er.score_valid or not er.fwhm_px:
+                continue
+            pitches.append(frame_meta['motor_goal'])
+            fwhms.append(er.fwhm_px)
+            if energy_dispersion > 0 and mono_energy_ev > 0:
+                fwhm_mev = er.fwhm_px * energy_dispersion
+                R = mono_energy_ev / (fwhm_mev * 1e-3)
+                resolving_powers.append(R)
+            else:
+                resolving_powers.append(None)
+
+        if len(pitches) < 2:
+            return
+
+        fig = Figure(figsize=(10, 6))
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
+        ax.scatter(pitches, fwhms, c='steelblue', s=40, zorder=5)
+
+        if len(pitches) >= 3:
+            coeffs = np.polyfit(pitches, fwhms, 2)
+            x_smooth = np.linspace(min(pitches), max(pitches), 200)
+            y_smooth = np.polyval(coeffs, x_smooth)
+            ax.plot(x_smooth, y_smooth, 'r-', linewidth=2, label='Parabolic fit')
+            optimal_pitch = -coeffs[1] / (2 * coeffs[0])
+            ax.axvline(optimal_pitch, color='green', linestyle='--', alpha=0.7,
+                       label=f'Optimal pitch: {optimal_pitch:.4f}')
+
+            # Resolving power annotation on the best (minimum FWHM) frame
+            valid_r = [(r, p, f) for r, p, f in zip(resolving_powers, pitches, fwhms) if r is not None]
+            if valid_r:
+                peak_R, peak_pitch, peak_fwhm = max(valid_r, key=lambda x: x[0])
+                ax.annotate(
+                    f'Peak R = {peak_R:,.0f}\nat pitch = {peak_pitch:.4f}',
+                    xy=(peak_pitch, peak_fwhm),
+                    xytext=(0.05, 0.95), textcoords='axes fraction',
+                    arrowprops=dict(arrowstyle='->', color='purple'),
+                    fontsize=10, color='purple', va='top',
+                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='purple'),
+                )
+
+        motor_name = txt_metadata.get('motor_name', 'Motor Pitch')
+        ax.set_xlabel(f'{motor_name} Goal')
+        ax.set_ylabel('FWHM (px)')
+        ax.set_title('Zeroth-Order Focus Curve — Mirror Pitch vs FWHM')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        fig.savefig(os.path.join(export_dir, 'sequence_mirror_pitch_vs_fwhm.png'),
+                    dpi=150, bbox_inches='tight')

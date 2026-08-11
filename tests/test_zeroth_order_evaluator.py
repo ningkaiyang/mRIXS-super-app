@@ -1,14 +1,14 @@
 import numpy as np
 import pytest
-from rixs_app.core.sharpness_evaluator import SharpnessEvaluator, SharpnessConfig, _gaussian
+from rixs_app.core.zeroth_order_evaluator import ZerothOrderEvaluator, ZerothOrderConfig, _gaussian
 
-def test_sharpness_config_defaults():
-    config = SharpnessConfig()
+def test_zeroth_order_config_defaults():
+    config = ZerothOrderConfig()
     assert config.profile_half_width_px == 40.0
     assert config.min_occupied_bins == 20
 
 def test_synthetic_gaussian_line():
-    evaluator = SharpnessEvaluator()
+    evaluator = ZerothOrderEvaluator()
 
     # Create an image with a clear vertical Gaussian line at x=50
     h, w = 100, 100
@@ -34,7 +34,7 @@ def test_synthetic_gaussian_line():
     assert abs(res.gaussian_center) < 1.0
 
 def test_flat_image():
-    evaluator = SharpnessEvaluator()
+    evaluator = ZerothOrderEvaluator()
     img = np.zeros((100, 100), dtype=np.float64)
     grad = np.zeros((100, 100), dtype=np.float64)
 
@@ -43,7 +43,7 @@ def test_flat_image():
     assert res.failure_reason is not None
 
 def test_none_support_range():
-    evaluator = SharpnessEvaluator()
+    evaluator = ZerothOrderEvaluator()
     h, w = 100, 100
     img = np.zeros((h, w), dtype=np.float64)
     grad = np.zeros((h, w), dtype=np.float64)

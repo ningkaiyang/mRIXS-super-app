@@ -1,6 +1,6 @@
-# RIXS Beamline Super-App
+# mRIXS Super-App
 
-A comprehensive desktop application and headless CLI tool suite designed for LBNL map-RIXS beamlines (e.g., QERLIN). Originally an alignment GUI, this project is evolving into a unified platform to parse and handle all detector data, featuring offline alignment, real-time data streaming, cluster analysis, and sharpness detection.
+A comprehensive desktop application and headless CLI tool suite designed for LBNL map-RIXS beamlines (e.g., QERLIN). Originally an alignment GUI, this project is evolving into a unified platform to parse and handle all detector data, featuring offline alignment, zeroth-order line calibration (FWHM, resolving power R, mirror pitch focus curves), and automated batch export diagnostics.
 
 ## Setup Instructions
 
@@ -43,14 +43,14 @@ python run.py
    - **Background Precomputation:** The UI supports batch precomputation of alignment offsets and sharpness scores on background threads, keeping the GUI responsive while progress is updated via thread-safe queues.
 3. **Interactive UI Panels:**
    - **File Selection View:** Add and order files dynamically, with a **"Clear All"** button to quickly empty the queue, and natural sorting to sort by filename.
-   - **Sharpness Evaluation Slideshow:** A specialized view (`SharpnessSlideshowView`) for evaluating mirror angle sharpness. It visualizes the internal states of the sharpness pipeline (Raw, Denoised, Masked) alongside 1D profile correlation metrics, allowing visual inspection against human-ranked ground truth.
+   - **Zeroth-Order Calibration Slideshow:** A specialized view (`ZerothOrderSlideshowView`) for mirror pitch calibration. It visualizes pipeline stages (Raw → Denoised → Row-Smoothed → Gradient → Fitted-Line Strip) alongside a 1D Gaussian profile fit, reporting FWHM in pixels and meV, and resolving power R. Supports TXT scan log import to map motor pitch to frames, peak-focus jump, and bulk diagnostic PNG export including a mirror pitch vs FWHM focus curve.
    - **Clamping Controls:** Adjust intensity floor and ceiling sliders in real-time to strip hot pixels or boost low-intensity structural boundaries.
    - **Auto-Snap Threshold Sweeps:** Sweep PCA thresholds dynamically on a background thread to locate the minimum perpendicular spread and align cleanly.
    - **Manual Line Alignment (PCA only):** Draw custom reference lines and click-to-override alignment offsets.
    - **Zooming & Panning:** Smooth multi-level zoom to target fine sub-pixel features.
 4. **Inline Export Comparison & Multi-Plot Export:** 
    - Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling via the isolated `ExportComparisonView`, allowing visual validation of alignment efficacy prior to saving.
-   - The Sharpness Slideshow supports bulk exporting of multi-plot diagnostic PNGs summarizing the entire sharpness pipeline for each frame.
+   - The Zeroth-Order Calibration Slideshow supports bulk exporting of multi-plot diagnostic PNGs summarizing the entire pipeline for each frame, plus a sequence_mirror_pitch_vs_fwhm.png focus curve with parabolic fit and resolving power R annotation.
 
 ## Running the Tests
 To run the entire test suite (including E2E, manager, stress, CLI, and core algorithmic tests):
@@ -141,7 +141,7 @@ Under these conditions, the intensity-weighted PCA is dominated by Poisson noise
 The ultimate objective is to develop a robust, fully automated super-app that handles the entire lifecycle of RIXS detector data, from live acquisition to offline alignment and analysis.
 
 ### A. Core Tool Suite & Diagnostics
-1. **Sharpness Evaluation Metrics (Implemented):** A robust programmatic testing loop (`sharpness_cli.py`) has been implemented alongside a state-of-the-art denoising pipeline (`test_denoise.py`) to evaluate mirror angles. Currently iterating on mathematical isolation techniques (e.g., PCA filtering) to stabilize high-frequency metric performance across highly-noisy raw CCD data.
+1. **Zeroth-Order Calibration (Implemented):** A robust programmatic zeroth-order line detection and FWHM evaluation pipeline (`zeroth_order.py`, `zeroth_order_evaluator.py`) paired with a full GUI (`ZerothOrderSlideshowView`). Reports FWHM in px and meV, resolving power R, and generates a mirror-pitch focus curve from imported scan log TXT files. CLI available via `zeroth_order_cli.py`.
 2. **Live Data Streaming & Cluster Analysis:** Integrate real-time processing pipelines (from legacy scripts) to monitor live data collection. This includes dark background masking, connected-component cluster analysis (identifying single-photon events), and generating live 2D spatial event maps and IntDen histograms.
 3. **Multi-Panel UI:** Expand the GUI beyond the alignment slideshow to host dedicated workspaces for sharpness checking, live streaming dashboards, and histogram visualization.
 

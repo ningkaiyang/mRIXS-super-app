@@ -1,7 +1,7 @@
-"""Core algorithms for sharpness evaluation and image denoising.
+"""Core algorithms for zeroth-order line detection, denoising, and FWHM evaluation.
 
 This module provides preprocessing tools to denoise 2D spectroscopic frame images
-and evaluate sharpness metrics.
+and evaluate zeroth-order line metrics.
 """
 
 import os
@@ -30,7 +30,7 @@ def denoise_image(
 
     Physics Context:
     Raw RIXS CCD scans suffer from severe Poisson shot noise, read noise, and cosmic ray strikes.
-    Standard high-frequency sharpness metrics fail because they mistakenly latch onto residual
+    Standard high-frequency metrics fail because they mistakenly latch onto residual
     noise spikes instead of the actual elastic line. This denoising pipeline aims to sanitize
     the raw data before evaluation or mathematical isolation.
 
@@ -120,22 +120,23 @@ def denoise_image(
     return img.astype(np.float32)
 
 
-def evaluate_sharpness(img: np.ndarray, metric: str = "") -> float:
+def evaluate_zeroth_order(img: np.ndarray, metric: str = "") -> float:
     """
-    Evaluate the sharpness of a 2D spectroscopic frame image.
+    Evaluate a zeroth-order spectroscopic frame image.
 
     This acts as the primary evaluation pipeline for mirror alignment and focus optimization.
-    It runs the sharpness pipeline and returns the score.
+    It runs the zeroth-order pipeline and returns the score.
     """
-    res = run_sharpness_pipeline(img, metric=metric)
+    res = run_zeroth_order_pipeline(img, metric=metric)
     return res["score"]
 
-def run_sharpness_pipeline(
+def run_zeroth_order_pipeline(
     img: np.ndarray,
-    metric: str = ""
+    metric: str = "",
+    energy_dispersion: float = 0.0
 ) -> dict:
     """
-    Run the complete sharpness evaluation pipeline using the new gradient magnitude line-finding algorithm.
+    Run the complete zeroth-order evaluation pipeline using the gradient magnitude line-finding algorithm.
     """
     if not isinstance(img, np.ndarray):
         raise ValueError("Input must be a numpy array")
@@ -146,7 +147,7 @@ def run_sharpness_pipeline(
 
     from rixs_app.core.preprocessing import prepare_frame, PreprocessingConfig
     from rixs_app.core.line_finding import V8RightSideScanner, get_preset, DEFAULT_PRESET_ID
-    from rixs_app.core.sharpness_evaluator import SharpnessEvaluator
+    from rixs_app.core.zeroth_order_evaluator import ZerothOrderEvaluator
 
     # Get detector results in cropped coords
     preproc_config = PreprocessingConfig()
@@ -159,7 +160,7 @@ def run_sharpness_pipeline(
     line_result = _detection_result_to_legacy_dict(det_result, prepared)
 
     # Run evaluator in cropped coords
-    evaluator = SharpnessEvaluator()
+    evaluator = ZerothOrderEvaluator()
     if det_result.fit_ok:
         eval_result = evaluator.evaluate(
             denoised=prepared.denoised,
@@ -167,6 +168,7 @@ def run_sharpness_pipeline(
             centroid_xy=det_result.centroid_xy,
             angle_deg=det_result.angle_deg,
             detected_support_y_range=det_result.detected_support_y_range,
+            energy_dispersion=energy_dispersion,
         )
     else:
         eval_result = None
@@ -193,7 +195,7 @@ def run_sharpness_pipeline(
     # Smooth the 1D profile slightly for display purposes
     P = scipy.ndimage.gaussian_filter1d(P, sigma=1.0)
 
-    # Calculate score based on peak sharpness of the 1D profile
+    # Calculate score based on the 1D profile peak
     profile_score = float(np.max(P))
 
     # Use evaluator score when valid, fall back to profile peak
@@ -201,6 +203,11 @@ def run_sharpness_pipeline(
         final_score = eval_result.score
     else:
         final_score = profile_score
+
+    # Compute fwhm_mev for the result dict (client-side convenience)
+    fwhm_mev = None
+    if eval_result is not None and eval_result.fwhm_px is not None and energy_dispersion > 0:
+        fwhm_mev = eval_result.fwhm_px * energy_dispersion
 
     return {
         "raw_img": img,
@@ -222,7 +229,8 @@ def run_sharpness_pipeline(
         "n_inliers": line_result.get("n_inliers", 0),
         "inlier_fraction": line_result.get("inlier_fraction", 0.0),
         "angle_deg": line_result.get("angle_deg"),
-        "detector_config": line_result.get("detector_config")
+        "detector_config": line_result.get("detector_config"),
+        "fwhm_mev": fwhm_mev,
     }
 
 def detect_elastic_line_bottom_right(img: np.ndarray, density_threshold: float = 0.08) -> dict:

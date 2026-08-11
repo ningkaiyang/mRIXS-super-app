@@ -1,6 +1,6 @@
-"""Experimental sharpness evaluator using intensity-profile Gaussian fitting.
+"""Zeroth-order line FWHM evaluator using perpendicular Gaussian profile fitting.
 
-This module computes a sharpness score from the 1D perpendicular intensity
+This module computes a resolution (FWHM) score from the 1D perpendicular intensity
 profile of the detected elastic line. The score is experimental and should
 not be treated as validated physics.
 """
@@ -12,8 +12,8 @@ from scipy.ndimage import gaussian_filter1d
 
 
 @dataclass(frozen=True)
-class SharpnessConfig:
-    """Configuration for the sharpness evaluator."""
+class ZerothOrderConfig:
+    """Configuration for the zeroth-order FWHM evaluator."""
     profile_half_width_px: float = 40.0
     profile_bin_size_px: float = 1.0
     smoothing_sigma: float = 1.5
@@ -23,11 +23,11 @@ class SharpnessConfig:
 
 
 @dataclass
-class SharpnessResult:
-    """Result of sharpness evaluation."""
+class ZerothOrderResult:
+    """Result of zeroth-order FWHM evaluation."""
     score_valid: bool
     score: float | None = None
-    score_label: str = "Experimental: inverse fitted FWHM (px⁻¹)"
+    score_label: str = "Zeroth-order: inverse fitted FWHM (px⁻¹)"
     failure_reason: str | None = None
     # Profile data
     profile_u: np.ndarray | None = None
@@ -39,10 +39,11 @@ class SharpnessResult:
     gaussian_sigma: float | None = None
     gaussian_background: float | None = None
     fwhm_px: float | None = None
+    fwhm_mev: float | None = None
     prominence: float | None = None
     fit_covariance_finite: bool = False
     n_occupied_bins: int = 0
-    config: SharpnessConfig | None = None
+    config: ZerothOrderConfig | None = None
 
 
 def _gaussian(u, B, A, u0, sigma):
@@ -50,11 +51,11 @@ def _gaussian(u, B, A, u0, sigma):
     return B + A * np.exp(-((u - u0) ** 2) / (2.0 * sigma ** 2))
 
 
-class SharpnessEvaluator:
-    """Evaluates sharpness by fitting a Gaussian to the perpendicular intensity profile.
+class ZerothOrderEvaluator:
+    """Evaluates zeroth-order line width by fitting a Gaussian to the perpendicular intensity profile.
 
     The evaluator extracts a 1D intensity profile perpendicular to the fitted
-    elastic line, fits a Gaussian, and returns 1/FWHM as the sharpness score.
+    elastic line, fits a Gaussian, and returns 1/FWHM as the score.
     Higher values = sharper line.
 
     This is EXPERIMENTAL and should not be used as a validated physics measurement.
@@ -62,8 +63,9 @@ class SharpnessEvaluator:
 
     def evaluate(self, denoised, gradient, centroid_xy, angle_deg,
                  detected_support_y_range=None,
-                 config: SharpnessConfig | None = None) -> SharpnessResult:
-        """Compute sharpness from the 1D perpendicular intensity profile.
+                 config: ZerothOrderConfig | None = None,
+                 energy_dispersion: float = 0.0) -> ZerothOrderResult:
+        """Compute zeroth-order FWHM from the 1D perpendicular intensity profile.
 
         Args:
             denoised: 2D denoised image array (D) in the coordinate space matching centroid_xy.
@@ -71,13 +73,14 @@ class SharpnessEvaluator:
             centroid_xy: (x, y) center of the fitted line.
             angle_deg: Angle of the fitted line in degrees.
             detected_support_y_range: Optional (y_min, y_max) bounding the line support.
-            config: Sharpness evaluation configuration.
+            config: Zeroth-order FWHM evaluation configuration.
+            energy_dispersion: Energy scale in meV/px. Used to compute fwhm_mev.
 
         Returns:
-            SharpnessResult with score and profile data.
+            ZerothOrderResult with score and profile data.
         """
         if config is None:
-            config = SharpnessConfig()
+            config = ZerothOrderConfig()
 
         h, w = denoised.shape
         cx, cy = centroid_xy
@@ -93,7 +96,7 @@ class SharpnessEvaluator:
             y_min, y_max = 0, h
 
         if y_max - y_min < 10:
-            return SharpnessResult(
+            return ZerothOrderResult(
                 score_valid=False, failure_reason="Support range too small",
                 config=config
             )
@@ -132,7 +135,7 @@ class SharpnessEvaluator:
         n_occupied = int(np.sum(occupied))
 
         if n_occupied < config.min_occupied_bins:
-            return SharpnessResult(
+            return ZerothOrderResult(
                 score_valid=False,
                 failure_reason=f"Only {n_occupied} occupied bins (need {config.min_occupied_bins})",
                 profile_u=u_centers,
@@ -161,7 +164,7 @@ class SharpnessEvaluator:
         prominence = peak_val - baseline
 
         if prominence <= config.min_prominence:
-            return SharpnessResult(
+            return ZerothOrderResult(
                 score_valid=False,
                 failure_reason=f"Insufficient prominence: {prominence:.2f}",
                 profile_u=u_centers,
@@ -185,7 +188,7 @@ class SharpnessEvaluator:
             B_fit, A_fit, u0_fit, sigma_fit = popt
             cov_finite = bool(np.all(np.isfinite(pcov)))
         except (RuntimeError, ValueError) as e:
-            return SharpnessResult(
+            return ZerothOrderResult(
                 score_valid=False,
                 failure_reason=f"Gaussian fit failed: {e}",
                 profile_u=u_centers,
@@ -212,7 +215,10 @@ class SharpnessEvaluator:
 
         score = 1.0 / fwhm if failure is None and fwhm > 0 else None
 
-        return SharpnessResult(
+        # Compute fwhm_mev if energy_dispersion is provided
+        fwhm_mev = float(fwhm * energy_dispersion) if (failure is None and energy_dispersion > 0) else None
+
+        return ZerothOrderResult(
             score_valid=(failure is None),
             score=score,
             failure_reason=failure,
@@ -224,6 +230,7 @@ class SharpnessEvaluator:
             gaussian_sigma=float(sigma_fit),
             gaussian_background=float(B_fit),
             fwhm_px=float(fwhm),
+            fwhm_mev=fwhm_mev,
             prominence=float(prominence),
             fit_covariance_finite=cov_finite,
             n_occupied_bins=n_occupied,

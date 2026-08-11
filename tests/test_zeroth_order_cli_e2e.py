@@ -20,7 +20,6 @@ def setup_mock_scan_dir(tmp_path, num_frames=5, best_frame=2, flat=False):
         else:
             # create some structure; best frame has sharp peak, others blurrier
             data = np.zeros((50, 50), dtype=np.int32)
-            # best frame has very sharp line, others have wider gaussian profile
             dist_from_best = abs(idx - best_frame)
             if dist_from_best == 0:
                 data[20:30, 25] = 1000
@@ -32,7 +31,6 @@ def setup_mock_scan_dir(tmp_path, num_frames=5, best_frame=2, flat=False):
         tifffile.imwrite(tif_path, data)
         
     # Create ground_truth.json
-    # Rank(i) = 1.0 + |i - k^*|
     ranks = {}
     for idx in range(num_frames):
         ranks[str(idx)] = 1.0 + abs(idx - best_frame)
@@ -49,7 +47,7 @@ def setup_mock_scan_dir(tmp_path, num_frames=5, best_frame=2, flat=False):
     return scan_dir
 
 # ==========================================
-# Feature 3: Sharpness Evaluation CLI (sharpness_cli.py)
+# Feature: Zeroth-Order Evaluation CLI (zeroth_order_cli.py)
 # ==========================================
 
 # --- Tier 1: Feature Coverage ---
@@ -58,7 +56,7 @@ def test_norm_sum_sq_grad_metric(tmp_path):
     """Test that the norm_sum_sq_grad metric option is computed and runs via CLI."""
     scan_dir = setup_mock_scan_dir(tmp_path)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir), "--metrics", "norm_sum_sq_grad"]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir), "--metrics", "norm_sum_sq_grad"]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
     # Check that output mentions the metric name
@@ -68,16 +66,16 @@ def test_peak_height_metric(tmp_path):
     """Test that the peak_height metric is computed and runs via CLI."""
     scan_dir = setup_mock_scan_dir(tmp_path)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir), "--metrics", "peak_height"]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir), "--metrics", "peak_height"]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
     assert "peak_height" in res.stdout.lower()
 
 def test_correlation_calculation(tmp_path):
-    """Test that CLI calculates Spearman/Pearson rank correlation coefficients with ground truth ranks."""
+    """Test that CLI calculates Spearman rank correlation coefficients with ground truth ranks."""
     scan_dir = setup_mock_scan_dir(tmp_path)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir), "--correlation"]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir), "--correlation"]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
     # The output should contain correlation coefficients
@@ -87,7 +85,7 @@ def test_markdown_table_stdout(tmp_path):
     """Test that CLI outputs the summary results as a formatted markdown table."""
     scan_dir = setup_mock_scan_dir(tmp_path)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir)]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir)]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
     # Markdown table checks
@@ -102,7 +100,7 @@ def test_single_frame_directory(tmp_path):
     """Boundary Case: Directory containing only a single frame. Correlation cannot be computed."""
     scan_dir = setup_mock_scan_dir(tmp_path, num_frames=1, best_frame=0)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir)]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir)]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
     # The CLI should handle this and print a warning or N/A for correlation instead of crashing
@@ -112,7 +110,7 @@ def test_perfect_anti_correlation(tmp_path):
     """Boundary Case: Perfect anti-correlation scenario where metrics order is completely inverted to ranks."""
     scan_dir = setup_mock_scan_dir(tmp_path, num_frames=3, best_frame=1)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir)]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir)]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     assert res.returncode == 0
 
@@ -120,7 +118,7 @@ def test_flat_constant_image(tmp_path):
     """Boundary Case: Flat constant images. The sharpness values should be zero or small, no division by zero."""
     scan_dir = setup_mock_scan_dir(tmp_path, flat=True)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir)]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir)]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     assert res.returncode == 0
 
@@ -129,7 +127,7 @@ def test_missing_ground_truth_json(tmp_path):
     scan_dir = setup_mock_scan_dir(tmp_path)
     os.remove(scan_dir / "ground_truth.json")
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir)]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir)]
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         
@@ -139,7 +137,7 @@ def test_invalid_metric_args(tmp_path):
     """Boundary Case: Passing an invalid metric name to --metrics arg. CLI should exit with non-zero."""
     scan_dir = setup_mock_scan_dir(tmp_path)
     
-    cmd = [sys.executable, "sharpness_cli.py", "--dir", str(scan_dir), "--metrics", "invalid_metric"]
+    cmd = [sys.executable, "zeroth_order_cli.py", "--dir", str(scan_dir), "--metrics", "invalid_metric"]
     with pytest.raises(subprocess.CalledProcessError) as exc_info:
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         

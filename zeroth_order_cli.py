@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Command-line interface for running sharpness evaluation metrics
+Command-line interface for running zeroth-order evaluation metrics
 and calculating Spearman rank correlation with ground truth ranks.
 """
 
@@ -12,7 +12,7 @@ import re
 import numpy as np
 import tifffile
 from scipy.stats import spearmanr
-from rixs_app.core.sharpness import denoise_image, evaluate_sharpness
+from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
 
 def extract_frame_index(filename: str) -> int:
     """Extract the frame index from a filename."""
@@ -213,7 +213,7 @@ def main():
                 if args.denoise:
                     img = denoise_image(img)
                 # Evaluate sharpness
-                score = evaluate_sharpness(img, metric)
+                score = evaluate_zeroth_order(img, metric)
 
                 if args.print_scores:
                     print(f"Frame {idx} ({metric}): {score} (rounded: {score:.2f})")

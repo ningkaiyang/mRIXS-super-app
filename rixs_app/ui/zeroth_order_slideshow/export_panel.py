@@ -2,7 +2,7 @@
 
 import customtkinter
 
-class SharpnessExportPanel(customtkinter.CTkFrame):
+class ZerothOrderExportPanel(customtkinter.CTkFrame):
     """UI bar containing bulk export triggers and background worker progress labels."""
 
     def __init__(self, parent, controller, **kwargs):

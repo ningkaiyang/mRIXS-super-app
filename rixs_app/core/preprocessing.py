@@ -3,7 +3,7 @@ import scipy.ndimage
 import cv2
 from dataclasses import dataclass
 
-from rixs_app.core.sharpness import denoise_image
+from rixs_app.core.zeroth_order import denoise_image
 
 @dataclass(frozen=True)
 class PreprocessingConfig:
@@ -124,8 +124,11 @@ def prepare_frame(img: np.ndarray, config: PreprocessingConfig = None) -> Prepar
         sigma_space=config.bilateral_sigma_space
     )
 
-    # Row-wise Gaussian smoothing (smooth_sigma)
-    row_smoothed = scipy.ndimage.gaussian_filter1d(denoised, sigma=config.smooth_sigma, axis=1)
+    # Row-wise Gaussian smoothing then rolling-min background subtraction
+    # The rolling-min removes noise haze without affecting the denoised image used for Gaussian evaluation
+    row_smoothed_raw = scipy.ndimage.gaussian_filter1d(denoised, sigma=config.smooth_sigma, axis=1)
+    row_smoothed_bg = scipy.ndimage.minimum_filter1d(row_smoothed_raw, size=150, axis=1)
+    row_smoothed = np.maximum(0.0, row_smoothed_raw - row_smoothed_bg).astype(np.float32)
 
     # Compute gradients
     gradient = compute_gradients(denoised)

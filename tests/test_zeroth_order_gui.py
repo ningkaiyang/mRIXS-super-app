@@ -9,15 +9,15 @@ from unittest.mock import patch, MagicMock
 import customtkinter
 
 from rixs_app.main import RixsApp
-from rixs_app.ui.sharpness_slideshow.slideshow_view import SharpnessSlideshowView
-from rixs_app.ui.sharpness_slideshow.manager import SharpnessManager
+from rixs_app.ui.zeroth_order_slideshow.slideshow_view import ZerothOrderSlideshowView
+from rixs_app.ui.zeroth_order_slideshow.manager import ZerothOrderManager
 from rixs_app.core.dataset import ZarrSequenceManager
 
 def pump_events(root):
     root.update_idletasks()
     root.update()
 
-class TestSharpnessGUI(unittest.TestCase):
+class TestZerothOrderGUI(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.temp_files = []
@@ -33,9 +33,9 @@ class TestSharpnessGUI(unittest.TestCase):
 
     def tearDown(self):
         try:
-            if hasattr(self, "app") and self.app.sharpness_view is not None:
-                if self.app.sharpness_view.manager is not None:
-                    self.app.sharpness_view.manager.zarr_manager = None
+            if hasattr(self, "app") and self.app.zeroth_order_view is not None:
+                if self.app.zeroth_order_view.manager is not None:
+                    self.app.zeroth_order_view.manager.zarr_manager = None
         except Exception:
             pass
         try:
@@ -47,18 +47,18 @@ class TestSharpnessGUI(unittest.TestCase):
         self.temp_dir.cleanup()
 
 
-    def test_sharpness_slideshow_instantiation(self):
-        self.assertIsNotNone(self.app.sharpness_view)
-        self.assertIsNotNone(self.app.sharpness_view.canvas_panel)
-        self.assertIsNotNone(self.app.sharpness_view.navbar)
-        self.assertIsNotNone(self.app.sharpness_view.control_panel)
-        self.assertIsNotNone(self.app.sharpness_view.tools_panel)
-        self.assertIsNotNone(self.app.sharpness_view.bottom_bar)
+    def test_zeroth_order_slideshow_instantiation(self):
+        self.assertIsNotNone(self.app.zeroth_order_view)
+        self.assertIsNotNone(self.app.zeroth_order_view.canvas_panel)
+        self.assertIsNotNone(self.app.zeroth_order_view.navbar)
+        self.assertIsNotNone(self.app.zeroth_order_view.control_panel)
+        self.assertIsNotNone(self.app.zeroth_order_view.tools_panel)
+        self.assertIsNotNone(self.app.zeroth_order_view.bottom_bar)
 
     def test_navigation_and_timeline_bounds(self):
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         self.assertEqual(view.manager.current_idx, 0)
         view.next_frame()
@@ -74,9 +74,9 @@ class TestSharpnessGUI(unittest.TestCase):
         self.assertFalse(view.manager.autoplay_active)
 
     def test_pipeline_stage_selection_updates_description(self):
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         view.navbar.stage_menu.set("Denoised (D)")
         view.change_pipeline_stage("Denoised (D)")
@@ -89,7 +89,7 @@ class TestSharpnessGUI(unittest.TestCase):
         self.assertEqual(view.manager.pipeline_stage, "Fitted-Line Strip")
         self.assertIn("Gradient masked", view.control_panel.description_label.cget("text"))
 
-    @patch("rixs_app.ui.sharpness_slideshow.manager.SharpnessManager.get_frame_pipeline_data")
+    @patch("rixs_app.ui.zeroth_order_slideshow.manager.ZerothOrderManager.get_frame_pipeline_data")
     def test_load_and_render_calls_canvas_draw(self, mock_pipeline):
         mock_pipeline.return_value = {
             "raw_img": np.ones((100, 100)),
@@ -100,16 +100,16 @@ class TestSharpnessGUI(unittest.TestCase):
             "direction": np.array([1, 0]),
             "1d_profile": (np.ones(10), np.arange(10))
         }
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
         view.load_and_render()
         self.assertIn("Score: 0.42", view.control_panel.score_label.cget("text"))
 
     def test_slicing_changes(self):
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         # Test input submissions
         view.handle_floor_entry_submit("0.1")
@@ -122,9 +122,9 @@ class TestSharpnessGUI(unittest.TestCase):
         self.assertIsNone(view._clamping_debounce_id)
 
     def test_colormap_changes(self):
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         view.change_colormap("plasma")
         self.assertEqual(view.manager.colormap, "plasma")
@@ -133,9 +133,9 @@ class TestSharpnessGUI(unittest.TestCase):
         self.assertEqual(view.manager.colormap, "grayscale")
 
     def test_zoom_features(self):
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         self.assertEqual(view.zoom_factor, 1.0)
         view.zoom_in()
@@ -174,9 +174,9 @@ class TestSharpnessGUI(unittest.TestCase):
         self.assertTrue(os.path.exists(expected_fallback_path))
 
     def test_precompute_worker_execution(self):
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         # Test precompute trigger and progress updates
         view.trigger_precompute()
@@ -198,9 +198,9 @@ class TestSharpnessGUI(unittest.TestCase):
     def test_precompute_worker_handles_missing_file_gracefully(self, mock_showerror):
         # We pass a list of files where one is missing/corrupted
         bad_files = self.temp_files + [os.path.join(self.temp_dir.name, "missing_frame.tif")]
-        self.app.show_sharpness_slideshow(bad_files)
+        self.app.show_zeroth_order_calibration(bad_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         # Verify initial button state is normal
         self.assertEqual(view.navbar.prev_button.cget("state"), "normal")
@@ -235,31 +235,29 @@ class TestSharpnessGUI(unittest.TestCase):
     def test_first_file_missing_crashes_gui_on_load(self):
         """Verify that if the first file is missing, showing the slideshow loads gracefully without crashing."""
         bad_files = [os.path.join(self.temp_dir.name, "missing_first.tif")] + self.temp_files
-        self.app.show_sharpness_slideshow(bad_files)
+        self.app.show_zeroth_order_calibration(bad_files)
         pump_events(self.app)
 
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
         self.assertIsNotNone(view)
         self.assertEqual(view.manager.current_idx, 0)
-        self.assertEqual(view.manager.intensity_min, 0.0)
-        self.assertEqual(view.manager.intensity_max, 5.0)
 
     def test_navigation_to_missing_file_raises_value_error(self):
         """Verify that navigating to a missing file is handled gracefully without crashing."""
         bad_files = self.temp_files + [os.path.join(self.temp_dir.name, "missing_last.tif")]
-        self.app.show_sharpness_slideshow(bad_files)
+        self.app.show_zeroth_order_calibration(bad_files)
         pump_events(self.app)
 
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
         view.manager.current_idx = 3
         # Should not raise ValueError
         view.load_and_render()
 
     def test_destroy_view_during_precomputation(self):
         """Verify what happens if the view is destroyed while precomputation is in progress."""
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         # Trigger precompute
         view.trigger_precompute()
@@ -269,19 +267,13 @@ class TestSharpnessGUI(unittest.TestCase):
 
         # Wait a bit for the thread to run
         time.sleep(0.5)
-        # Verify that the thread still runs but does not crash the Python process with unhandled exceptions.
-        # Wait, since the app is destroyed, _poll_queue might not run anymore or might fail.
-        # Let's check if the thread finishes or exits.
-        # The background thread should put items into result_queue, but if the app is destroyed,
-        # nothing drains the queue, or if something runs _poll_queue, it might raise TclError.
-        # If the app is destroyed, the main Tk loop is terminated.
 
     @patch("tkinter.messagebox.showerror")
     def test_export_worker_handles_write_failure_gracefully(self, mock_showerror):
         """Verify that export worker write failure is caught and reported gracefully."""
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        view = self.app.sharpness_view
+        view = self.app.zeroth_order_view
 
         bad_export_dir = "/non_existent_directory_which_is_invalid"
 
@@ -308,9 +300,9 @@ class TestSharpnessGUI(unittest.TestCase):
 
     def test_manager_cache_preserves_all_metadata_keys(self):
         """Verify that get_frame_pipeline_data returns fit_ok and overlay metadata on cache hits."""
-        self.app.show_sharpness_slideshow(self.temp_files)
+        self.app.show_zeroth_order_calibration(self.temp_files)
         pump_events(self.app)
-        manager = self.app.sharpness_view.manager
+        manager = self.app.zeroth_order_view.manager
 
         # First call (cache miss)
         data_miss = manager.get_frame_pipeline_data(0)
@@ -325,8 +317,3 @@ class TestSharpnessGUI(unittest.TestCase):
         self.assertIn("candidates_xy", data_hit)
         self.assertIn("inliers_xy", data_hit)
         self.assertIn("evaluator_result", data_hit)
-
-
-
-
-

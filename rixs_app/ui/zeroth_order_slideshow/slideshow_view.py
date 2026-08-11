@@ -1,4 +1,4 @@
-"""Main container view for the sharpness slideshow GUI."""
+"""Main container view for the zeroth-order calibration GUI."""
 
 import queue
 import os
@@ -7,21 +7,21 @@ import tkinter.filedialog
 import tkinter.messagebox
 import customtkinter
 
-from rixs_app.ui.sharpness_slideshow.navbar import SharpnessNavBar
-from rixs_app.ui.sharpness_slideshow.canvas_panel import SharpnessCanvasPanel
-from rixs_app.ui.sharpness_slideshow.control_panel import SharpnessControlPanel
-from rixs_app.ui.sharpness_slideshow.tools_panel import SharpnessToolsPanel
-from rixs_app.ui.sharpness_slideshow.export_panel import SharpnessExportPanel
-from rixs_app.ui.sharpness_slideshow.manager import SharpnessManager
+from rixs_app.ui.zeroth_order_slideshow.navbar import ZerothOrderNavBar
+from rixs_app.ui.zeroth_order_slideshow.canvas_panel import ZerothOrderCanvasPanel
+from rixs_app.ui.zeroth_order_slideshow.control_panel import ZerothOrderControlPanel
+from rixs_app.ui.zeroth_order_slideshow.tools_panel import ZerothOrderToolsPanel
+from rixs_app.ui.zeroth_order_slideshow.export_panel import ZerothOrderExportPanel
+from rixs_app.ui.zeroth_order_slideshow.manager import ZerothOrderManager
 
-class SharpnessSlideshowView(customtkinter.CTkFrame):
-    """Main view class orchestrating modules and callbacks."""
+class ZerothOrderSlideshowView(customtkinter.CTkFrame):
+    """Main view class orchestrating zeroth-order calibration modules and callbacks."""
 
     def __init__(self, parent, on_back_to_sorting=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.on_back_to_sorting = on_back_to_sorting
         self._result_queue = queue.Queue()
-        self.manager = SharpnessManager(self._result_queue)
+        self.manager = ZerothOrderManager(self._result_queue)
 
         # Debouncing and timers
         self._frame_debounce_id = None
@@ -36,21 +36,21 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self._poll_queue()
 
     def _build_ui(self):
-        self.navbar = SharpnessNavBar(self, controller=self)
+        self.navbar = ZerothOrderNavBar(self, controller=self)
         self.navbar.pack(fill="x", pady=5)
 
-        self.control_panel = SharpnessControlPanel(self, controller=self)
+        self.control_panel = ZerothOrderControlPanel(self, controller=self)
         self.control_panel.pack(fill="x", pady=5)
 
-        self.tools_panel = SharpnessToolsPanel(self, controller=self)
+        self.tools_panel = ZerothOrderToolsPanel(self, controller=self)
         self.tools_panel.pack(fill="x", pady=2)
 
         # Bottom Bar for exporting
-        self.bottom_bar = SharpnessExportPanel(self, controller=self)
+        self.bottom_bar = ZerothOrderExportPanel(self, controller=self)
         self.bottom_bar.pack(fill="x", side="bottom", pady=5)
 
         # Left / Right Split plot Canvas (greedy)
-        self.canvas_panel = SharpnessCanvasPanel(self, controller=self)
+        self.canvas_panel = ZerothOrderCanvasPanel(self, controller=self)
         self.canvas_panel.pack(fill="both", expand=True, pady=5)
 
     def _poll_queue(self):
@@ -62,8 +62,29 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             pass
         self.after(50, self._poll_queue)
 
-    def start(self, file_list):
-        self.manager.start(file_list)
+    def start(self, file_list, txt_path=None):
+        """Start zeroth-order calibration with file list and optional scan log TXT path."""
+        # Parse TXT metadata if provided
+        txt_metadata = None
+        if txt_path:
+            from rixs_app.core.txt_metadata_parser import parse_scan_log, validate_tif_coverage
+            try:
+                txt_metadata = parse_scan_log(txt_path)
+            except (ValueError, FileNotFoundError) as e:
+                tkinter.messagebox.showwarning("Scan Log Error", str(e))
+                txt_metadata = None
+            if txt_metadata:
+                matched, unmatched = validate_tif_coverage(file_list, txt_metadata)
+                if unmatched:
+                    names = "\n".join(os.path.basename(p) for p in unmatched[:15])
+                    extra = f"\n... and {len(unmatched) - 15} more" if len(unmatched) > 15 else ""
+                    tkinter.messagebox.showwarning(
+                        "Unmatched Frames",
+                        f"{len(unmatched)} TIF file(s) not found in scan log:\n{names}{extra}\n\n"
+                        "These frames will not have motor pitch data."
+                    )
+
+        self.manager.start(file_list, txt_metadata=txt_metadata)
 
         # Configure Frame Timeline bounds
         total = len(file_list)
@@ -84,10 +105,10 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
         self.tools_panel.range_slider.configure_range(self.manager.intensity_min, self.manager.intensity_max)
         self.tools_panel.sync_slicing_inputs(self.manager.slicing_floor, self.manager.slicing_ceiling)
 
-        self.manager.pipeline_stage = getattr(self.manager, "pipeline_stage", "Denoised (D)")
-        if self.manager.pipeline_stage not in ["Raw", "Denoised (D)", "Row-Smoothed (Dsm)", "Gradient (G)", "Fitted-Line Strip"]:
-            self.manager.pipeline_stage = "Denoised (D)"
-        self.control_panel.set_stage_description(self.manager.pipeline_stage)
+        # Bug fix: default to "Raw" view (zeroth-order line is clearly visible in Raw)
+        self.manager.pipeline_stage = "Raw"
+        self.navbar.stage_menu.set("Raw")
+        self.control_panel.set_stage_description("Raw")
 
         self.load_and_render()
 
@@ -107,8 +128,23 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             eval_result, data.get("profile_score_fallback", data.get("score"))
         )
 
+        # Update FWHM / resolving power display (cheap client-side calculation)
+        is_best = False
+        if self.manager.pipeline_results:
+            try:
+                is_best = (idx == self.manager.get_peak_focus_index())
+            except Exception:
+                pass
+
+        self.control_panel.sync_fwhm(
+            eval_result,
+            energy_dispersion=self.manager.energy_dispersion,
+            mono_energy_ev=self.manager.mono_energy_ev,
+            is_best_focus=is_best,
+        )
+
         # Determine which 2D matrix to plot
-        stage = getattr(self.manager, "pipeline_stage", "Denoised (D)")
+        stage = getattr(self.manager, "pipeline_stage", "Raw")
         if stage == "Raw":
             img_2d = data["raw_img"]
         elif stage == "Denoised (D)":
@@ -124,6 +160,7 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
 
         show_pts = self.tools_panel.show_support_points_var.get()
         show_extrap = self.tools_panel.show_extrapolation_var.get()
+        show_line = self.tools_panel.show_fitted_line_var.get()
 
         self.canvas_panel.draw_plots(
             img_2d, data.get("1d_profile"), stage,
@@ -138,6 +175,7 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             show_support_points=show_pts,
             show_extrapolation=show_extrap,
             evaluator_result=eval_result,
+            show_fitted_line=show_line,
         )
 
         self.control_panel.sync_detection_status(data)
@@ -166,6 +204,22 @@ class SharpnessSlideshowView(customtkinter.CTkFrame):
             self.manager.current_idx += 1
             self.control_panel.frame_slider.set(self.manager.current_idx)
             self.load_and_render()
+
+    def jump_to_peak_focus(self):
+        """Jump to the frame with the sharpest focus (minimum FWHM)."""
+        best_idx = self.manager.get_peak_focus_index()
+        self.manager.current_idx = best_idx
+        self.control_panel.frame_slider.set(best_idx)
+        self.load_and_render()
+
+    def set_energy_dispersion(self, value: float):
+        """Update energy dispersion (meV/px) and re-render current frame.
+
+        This is a pure display-layer operation — FWHM(meV) = FWHM(px) × dispersion.
+        No pipeline recomputation is needed.
+        """
+        self.manager.energy_dispersion = value
+        self.load_and_render()
 
     def toggle_autoplay(self):
         if self.manager.autoplay_active:

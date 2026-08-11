@@ -1,10 +1,10 @@
-"""Tools panel providing image zoom options and intensity clamping configurations."""
+"""Tools panel providing image zoom options, intensity clamping, fitted-line toggle, and energy dispersion input."""
 
 import customtkinter
 from rixs_app.ui.widgets import RangeSlider
 
-class SharpnessToolsPanel(customtkinter.CTkFrame):
-    """Panel housing zoom helpers and custom RangeSlider elements."""
+class ZerothOrderToolsPanel(customtkinter.CTkFrame):
+    """Panel housing zoom helpers, custom RangeSlider, fitted-line toggle, and energy dispersion input."""
 
     def __init__(self, parent, controller, **kwargs):
         super().__init__(parent, **kwargs)
@@ -49,7 +49,7 @@ class SharpnessToolsPanel(customtkinter.CTkFrame):
         self.ceiling_entry.pack(side="left", padx=5)
         self.ceiling_entry.bind("<Return>", self._on_ceiling_submit)
 
-        # Options checkboxes
+        # Options checkboxes and energy dispersion
         self.options_frame = customtkinter.CTkFrame(self, fg_color="transparent")
         self.options_frame.pack(side="left", padx=20)
 
@@ -68,6 +68,32 @@ class SharpnessToolsPanel(customtkinter.CTkFrame):
             command=self.controller.load_and_render
         )
         self.extrapolation_cb.pack(side="top", pady=2, anchor="w")
+
+        # Show fitted line toggle (default ON)
+        self.show_fitted_line_var = customtkinter.BooleanVar(value=True)
+        self.fitted_line_cb = customtkinter.CTkCheckBox(
+            self.options_frame, text="Show fitted line",
+            variable=self.show_fitted_line_var,
+            command=self.controller.load_and_render
+        )
+        self.fitted_line_cb.pack(side="top", pady=2, anchor="w")
+
+        # Energy dispersion input
+        self.disp_frame = customtkinter.CTkFrame(self.options_frame, fg_color="transparent")
+        self.disp_frame.pack(side="top", pady=4, anchor="w")
+        customtkinter.CTkLabel(self.disp_frame, text="meV/px:").pack(side="left")
+        self.disp_entry = customtkinter.CTkEntry(self.disp_frame, width=60)
+        self.disp_entry.insert(0, "0")
+        self.disp_entry.pack(side="left", padx=3)
+        self.disp_entry.bind("<Return>", self._on_dispersion_change)
+
+    def _on_dispersion_change(self, event=None):
+        """Update energy dispersion on the controller (cheap — no pipeline recomputation)."""
+        try:
+            val = float(self.disp_entry.get())
+            self.controller.set_energy_dispersion(val)
+        except ValueError:
+            pass
 
     def sync_zoom_label(self, val):
         self.zoom_label.configure(text=f"Zoom: {val:.1f}×")

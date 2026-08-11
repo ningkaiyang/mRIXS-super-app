@@ -1,11 +1,11 @@
-"""Matplotlib canvas panel displaying 2D frame views and 1D sharpness profiles side-by-side."""
+"""Matplotlib canvas panel displaying 2D frame views and 1D FWHM profiles side-by-side."""
 
 import tkinter as tk
 import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-class SharpnessCanvasPanel(tk.Frame):
+class ZerothOrderCanvasPanel(tk.Frame):
     """Frame containing an embedded side-by-side Matplotlib figure."""
 
     def __init__(self, parent, controller, **kwargs):
@@ -34,7 +34,7 @@ class SharpnessCanvasPanel(tk.Frame):
                    fit_ok=False, candidates_xy=None, inliers_xy=None,
                    segment_endpoints=None, detected_support_y_range=None,
                    show_support_points=False, show_extrapolation=False,
-                   evaluator_result=None):
+                   evaluator_result=None, show_fitted_line=True):
         """Redraws both subplots inside the canvas layout."""
         self.ax_2d.clear()
         self.ax_1d.clear()
@@ -63,18 +63,19 @@ class SharpnessCanvasPanel(tk.Frame):
             if centroid is not None:
                 self.ax_2d.plot(centroid[0], centroid[1], 'w+', markersize=12, label="Centroid")
 
-            if segment_endpoints is not None:
-                (x1, y1), (x2, y2) = segment_endpoints
-                self.ax_2d.plot([x1, x2], [y1, y2], color="red", linestyle="-", linewidth=2)
-            elif centroid is not None and direction is not None:
-                # Fallback to axline but only within detected_support_y_range
-                dx, dy = direction
-                if abs(dx) > 1e-5 and detected_support_y_range is not None:
-                    slope = dy / dx
-                    y_min, y_max = detected_support_y_range
-                    x_min = centroid[0] + (y_min - centroid[1]) / slope
-                    x_max = centroid[0] + (y_max - centroid[1]) / slope
-                    self.ax_2d.plot([x_min, x_max], [y_min, y_max], color="red", linestyle="-", linewidth=2)
+            if show_fitted_line:
+                if segment_endpoints is not None:
+                    (x1, y1), (x2, y2) = segment_endpoints
+                    self.ax_2d.plot([x1, x2], [y1, y2], color="red", linestyle="-", linewidth=2)
+                elif centroid is not None and direction is not None:
+                    # Fallback to axline but only within detected_support_y_range
+                    dx, dy = direction
+                    if abs(dx) > 1e-5 and detected_support_y_range is not None:
+                        slope = dy / dx
+                        y_min, y_max = detected_support_y_range
+                        x_min = centroid[0] + (y_min - centroid[1]) / slope
+                        x_max = centroid[0] + (y_max - centroid[1]) / slope
+                        self.ax_2d.plot([x_min, x_max], [y_min, y_max], color="red", linestyle="-", linewidth=2)
 
             if show_support_points:
                 if candidates_xy is not None and len(candidates_xy) > 0:
@@ -120,7 +121,7 @@ class SharpnessCanvasPanel(tk.Frame):
 
             # Plot Gaussian fit
             u_fine = np.linspace(evaluator_result.profile_u[0], evaluator_result.profile_u[-1], 200)
-            from rixs_app.core.sharpness_evaluator import _gaussian
+            from rixs_app.core.zeroth_order_evaluator import _gaussian
             fit_y = _gaussian(
                 u_fine, evaluator_result.gaussian_background, evaluator_result.gaussian_amplitude,
                 evaluator_result.gaussian_center, evaluator_result.gaussian_sigma
@@ -134,6 +135,16 @@ class SharpnessCanvasPanel(tk.Frame):
                             transform=self.ax_1d.transAxes, va='top', ha='left',
                             bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
             self.ax_1d.legend(loc='upper right')
+
+            # FWHM shaded bracket overlay
+            u0 = evaluator_result.gaussian_center
+            bg = evaluator_result.gaussian_background
+            amp = evaluator_result.gaussian_amplitude
+            half_fwhm = fwhm / 2
+            half_max_y = bg + amp / 2
+            self.ax_1d.axvspan(u0 - half_fwhm, u0 + half_fwhm, alpha=0.15, color='red')
+            self.ax_1d.hlines(half_max_y, u0 - half_fwhm, u0 + half_fwhm,
+                              colors='red', linestyles='--', linewidth=1.5)
 
             self.ax_1d.set_title("1D Intensity Profile (Fitted)")
             self.ax_1d.set_xlabel("Perpendicular Distance (u)")

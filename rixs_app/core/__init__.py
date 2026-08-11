@@ -33,7 +33,7 @@ from .image_processing import (
     generate_aligned_sum,
     generate_direct_sum,
 )
-from .sharpness import denoise_image, evaluate_sharpness, run_sharpness_pipeline
+from .zeroth_order import denoise_image, evaluate_zeroth_order, run_zeroth_order_pipeline
 
 __all__ = [
     "PCAFitFailure",
@@ -57,6 +57,6 @@ __all__ = [
     "find_best_threshold",
     "precompute_ecc_reference",
     "denoise_image",
-    "evaluate_sharpness",
-    "run_sharpness_pipeline",
+    "evaluate_zeroth_order",
+    "run_zeroth_order_pipeline",
 ]
