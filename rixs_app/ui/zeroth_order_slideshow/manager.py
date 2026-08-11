@@ -94,6 +94,11 @@ class ZerothOrderManager:
         self._active_config_fingerprint = None
         self._load_reference_bounds()
 
+    def cancel(self):
+        """Cancel any running background computation or export worker threads."""
+        with self.lock:
+            self.session_id = object()
+
     def _load_reference_bounds(self):
         """Loads first frame to establish display thresholds using 20th/98th percentile."""
         current_zarr_manager = self.zarr_manager

@@ -27,6 +27,8 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
         self._frame_debounce_id = None
         self._clamping_debounce_id = None
         self._autoplay_job = None
+        self._poll_job_id = None
+        self._is_destroyed = False
         self.autoplay_speed_ms = 600
         self.zoom_factor = 1.0
         self.zoom_center = None
@@ -54,13 +56,16 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
         self.canvas_panel.pack(fill="both", expand=True, pady=5)
 
     def _poll_queue(self):
+        if getattr(self, "_is_destroyed", False):
+            return
         try:
             while True:
                 callback = self._result_queue.get_nowait()
                 callback()
         except queue.Empty:
             pass
-        self.after(50, self._poll_queue)
+        if not getattr(self, "_is_destroyed", False):
+            self._poll_job_id = self.after(50, self._poll_queue)
 
     def start(self, file_list, txt_path=None):
         """Start zeroth-order calibration with file list and optional scan log TXT path."""
@@ -278,7 +283,10 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
         self.manager.autoplay_active = False
         self.navbar.autoplay_button.configure(text="▶ Play", fg_color="#2FA572")
         if self._autoplay_job is not None:
-            self.after_cancel(self._autoplay_job)
+            try:
+                self.after_cancel(self._autoplay_job)
+            except Exception:
+                pass
             self._autoplay_job = None
 
     def _autoplay_tick(self):
@@ -408,3 +416,30 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
         self.stop_autoplay()
         if self.on_back_to_sorting:
             self.on_back_to_sorting()
+
+    def _teardown_mpl(self):
+        """Stop timers, queue polling, and teardown Matplotlib canvas resources."""
+        self._is_destroyed = True
+        self.stop_autoplay()
+        if hasattr(self, "manager") and hasattr(self.manager, "cancel"):
+            self.manager.cancel()
+        if hasattr(self, "_poll_job_id") and self._poll_job_id is not None:
+            try:
+                self.after_cancel(self._poll_job_id)
+            except Exception:
+                pass
+            self._poll_job_id = None
+        if getattr(self, "_frame_debounce_id", None) is not None:
+            try:
+                self.after_cancel(self._frame_debounce_id)
+            except Exception:
+                pass
+            self._frame_debounce_id = None
+        if getattr(self, "_clamping_debounce_id", None) is not None:
+            try:
+                self.after_cancel(self._clamping_debounce_id)
+            except Exception:
+                pass
+            self._clamping_debounce_id = None
+        if hasattr(self, "canvas_panel") and hasattr(self.canvas_panel, "_teardown_mpl"):
+            self.canvas_panel._teardown_mpl()

@@ -228,12 +228,17 @@ class RixsApp(customtkinter.CTk):
         Handle the window delete/close request (WM_DELETE_WINDOW protocol).
 
         This method acts as a custom exit handler. When the user closes the main
-        window, it ensures that the active Matplotlib figures, canvases, and
+        window, it ensures that active Matplotlib figures, canvases, timers, and
         associated navigation toolbars are cleanly torn down before calling
         destroy() to destroy the widget hierarchy. This prevents PyEval thread
-        GIL errors.
+        GIL errors and Tcl async deletion crashes.
         """
-        self.export_comparison_view._teardown_mpl()
+        if hasattr(self, "zeroth_order_view") and hasattr(self.zeroth_order_view, "_teardown_mpl"):
+            self.zeroth_order_view._teardown_mpl()
+        if hasattr(self, "slideshow_view") and hasattr(self.slideshow_view, "_teardown_mpl"):
+            self.slideshow_view._teardown_mpl()
+        if hasattr(self, "export_comparison_view") and hasattr(self.export_comparison_view, "_teardown_mpl"):
+            self.export_comparison_view._teardown_mpl()
         self.destroy()
 
 MainApplication = RixsApp

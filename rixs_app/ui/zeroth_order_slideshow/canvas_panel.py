@@ -21,7 +21,7 @@ class ZerothOrderCanvasPanel(tk.Frame):
         self.ax_1d = self.figure.add_subplot(122)
         self.figure.tight_layout()
 
-        self.canvas.mpl_connect("button_press_event", self.on_click)
+        self._click_cid = self.canvas.mpl_connect("button_press_event", self.on_click)
 
     def on_click(self, event):
         if event.inaxes == self.ax_2d:
@@ -36,6 +36,8 @@ class ZerothOrderCanvasPanel(tk.Frame):
                    show_support_points=False, show_extrapolation=False,
                    evaluator_result=None, show_fitted_line=True):
         """Redraws both subplots inside the canvas layout."""
+        if getattr(self, "canvas", None) is None or getattr(self, "figure", None) is None:
+            return
         self.ax_2d.clear()
         self.ax_1d.clear()
 
@@ -167,3 +169,25 @@ class ZerothOrderCanvasPanel(tk.Frame):
 
         self.figure.tight_layout()
         self.canvas.draw()
+
+    def _teardown_mpl(self):
+        """Destroy existing matplotlib canvas and close figure to release C-backend resources."""
+        if hasattr(self, "canvas") and self.canvas is not None:
+            if hasattr(self, "_click_cid") and self._click_cid is not None:
+                try:
+                    self.canvas.mpl_disconnect(self._click_cid)
+                except Exception:
+                    pass
+                self._click_cid = None
+            try:
+                self.canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self.canvas = None
+        if hasattr(self, "figure") and self.figure is not None:
+            import matplotlib.pyplot as plt
+            try:
+                plt.close(self.figure)
+            except Exception:
+                pass
+            self.figure = None
