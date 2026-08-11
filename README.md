@@ -50,7 +50,7 @@ python run.py
    - **Zooming & Panning:** Smooth multi-level zoom to target fine sub-pixel features.
 4. **Inline Export Comparison & Multi-Plot Export:** 
    - Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling via the isolated `ExportComparisonView`, allowing visual validation of alignment efficacy prior to saving.
-   - The Zeroth-Order Calibration Slideshow supports bulk exporting of multi-plot diagnostic PNGs summarizing the entire pipeline for each frame, plus a sequence_mirror_pitch_vs_fwhm.png focus curve with parabolic fit and resolving power R annotation.
+   - The Zeroth-Order Calibration Slideshow supports bulk exporting of multi-plot diagnostic PNGs summarizing the entire pipeline for each frame, plus a `focus_curve.png` focus curve with parabolic fit and resolving power R annotation. When a TXT scan log is loaded, the X-axis shows motor goal position; when absent, it falls back to Frame Index.
 
 ## Running the Tests
 To run the entire test suite (including E2E, manager, stress, CLI, and core algorithmic tests):
@@ -115,6 +115,70 @@ dataset_folder/
     └── comparison_ECC.png               # Side-by-side comparison (if --png)
 ```
 
+## Zeroth-Order Calibration CLI
+
+A dedicated headless CLI (`zeroth_order_cli.py`) batch-processes zeroth-order mirror-pitch scan directories, computing FWHM for every frame and identifying the optimal mirror position. It mirrors the feature set of the GUI's Export panel, including focus curve generation, diagnostic PNGs, and tabular summary reports.
+
+### CLI Usage
+
+**Process a single scan directory (with TXT scan log and physical parameters):**
+```bash
+python3 zeroth_order_cli.py -d "RIXS_ZeroOrderScan/Single Motor Scan 004202 Images" \
+    --dispersion 2.5 --mono-energy 850.0
+```
+
+**Recursive batch across all scan subdirectories:**
+```bash
+python3 zeroth_order_cli.py -d RIXS_ZeroOrderScan -r \
+    --dispersion 2.5 --mono-energy 850.0 --format all --export-plots all
+```
+
+**Minimal run — terminal table only, no plots:**
+```bash
+python3 zeroth_order_cli.py -d path/to/scan --export-plots none --no-focus-curve
+```
+
+**Export JSON summary and all diagnostic PNGs:**
+```bash
+python3 zeroth_order_cli.py -d RIXS_ZeroOrderScan -r --format json --export-plots all --overwrite
+```
+
+### CLI Arguments
+
+| Argument | Description | Default |
+| :--- | :--- | :--- |
+| `-d`, `--dir` | Root directory containing TIFF images (or parent when combined with `-r`) | *(required)* |
+| `-r`, `--recursive` | Recursively scan subdirectories for TIFF datasets | `False` |
+| `-t`, `--txt` | Explicit path to a `.txt` scan log file (overrides auto-discovery) | auto-discover |
+| `-o`, `--output-dir` | Custom output directory | `<scan_dir>/zeroth_order_analysis/` |
+| `--dispersion` | Energy dispersion in meV/px (e.g. `2.5`) | *(optional)* |
+| `--mono-energy` | Monochromator energy E_mono in eV (e.g. `850.0`). Enables resolving power R | *(optional)* |
+| `--plot-focus-curve` / `--no-focus-curve` | Toggle `focus_curve.png` generation | enabled |
+| `--export-plots` | Diagnostic PNG mode: `best` (optimal frame only), `all`, or `none` | `best` |
+| `--format` | Summary report format: `table` (terminal), `csv`, `json`, or `all` | `table` |
+| `--overwrite` | Overwrite existing `zeroth_order_analysis/` output directory | `False` |
+| `-q`, `--quiet` | Suppress terminal output | `False` |
+
+### CLI Output Structure
+
+For each processed directory, the CLI creates a `zeroth_order_analysis/` subdirectory containing:
+```
+scan_directory/
+└── zeroth_order_analysis/
+    ├── focus_curve.png                  # Motor position (or Frame Index) vs FWHM with parabolic fit
+    ├── frame_NNN_diagnostic.png         # 2×2 diagnostic PNG for best (or all) frames
+    ├── summary.csv                      # Per-frame table (if --format csv or all)
+    └── summary.json                     # Full metadata + per-frame records (if --format json or all)
+```
+
+**`summary.csv` columns**: `frame_index`, `filename`, `motor_position`, `fwhm_px`, `fwhm_mev`, `resolving_power`, `score`, `fit_ok`.
+
+**`summary.json` top-level fields**: `scan_dir`, `txt_log`, `total_frames`, `valid_fwhm_count`, `best_frame_index`, `best_fwhm_px`, `best_fwhm_mev`, `best_resolving_power`, `optimal_motor_position`, `energy_dispersion_mev_per_px`, `mono_energy_ev`, `frames` (array of per-frame records).
+
+**TXT scan log auto-discovery**: The CLI searches for a `.txt` file inside each scan directory (the same location as the TIF images). When multiple `.txt` files exist, the first sorted file is used. The `-t` flag overrides auto-discovery.
+
+**Focus curve fallback**: When no `.txt` scan log is found, `focus_curve.png` is still generated with **Frame Index** on the X-axis, so you always get a visual overview of the FWHM trend across the sequence.
+
 # QERLIN Beamline Spectrometer Scan Alignment Project
 
 ## 1. Context & Experimental Physics
@@ -141,7 +205,7 @@ Under these conditions, the intensity-weighted PCA is dominated by Poisson noise
 The ultimate objective is to develop a robust, fully automated super-app that handles the entire lifecycle of RIXS detector data, from live acquisition to offline alignment and analysis.
 
 ### A. Core Tool Suite & Diagnostics
-1. **Zeroth-Order Calibration (Implemented):** A robust programmatic zeroth-order line detection and FWHM evaluation pipeline (`zeroth_order.py`, `zeroth_order_evaluator.py`) paired with a full GUI (`ZerothOrderSlideshowView`). Reports FWHM in px and meV, resolving power R, and generates a mirror-pitch focus curve from imported scan log TXT files. CLI available via `zeroth_order_cli.py`.
+1. **Zeroth-Order Calibration (Implemented):** A robust programmatic zeroth-order line detection and FWHM evaluation pipeline (`zeroth_order.py`, `zeroth_order_evaluator.py`) paired with a full GUI (`ZerothOrderSlideshowView`). Reports FWHM in px and meV, resolving power R, and generates a mirror-pitch focus curve from imported scan log TXT files. Headless batch CLI available via `zeroth_order_cli.py` — supports single and recursive batch modes, focus curve generation (motor position or Frame Index fallback), diagnostic PNGs, CSV/JSON summary reports, and resolving power R calculation.
 2. **Live Data Streaming & Cluster Analysis:** Integrate real-time processing pipelines (from legacy scripts) to monitor live data collection. This includes dark background masking, connected-component cluster analysis (identifying single-photon events), and generating live 2D spatial event maps and IntDen histograms.
 3. **Multi-Panel UI:** Expand the GUI beyond the alignment slideshow to host dedicated workspaces for sharpness checking, live streaming dashboards, and histogram visualization.
 

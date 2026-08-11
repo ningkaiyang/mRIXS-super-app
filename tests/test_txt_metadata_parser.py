@@ -130,7 +130,13 @@ def test_validate_tif_coverage_empty_file_list(tmp_path):
 
 def test_parse_scan_log_real_file():
     """Integration test against the real scan log on disk (skipped if not present)."""
-    real_txt = "/Users/ningkaiyang/Desktop/Each200Frames/RIXS_ZeroOrderScan/Single Motor Scan 004202.txt"
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    real_txt = os.path.join(
+        project_root,
+        "RIXS_ZeroOrderScan",
+        "Single Motor Scan 004202 Images",
+        "Single Motor Scan 004202.txt",
+    )
     if not os.path.exists(real_txt):
         pytest.skip("Real scan log not present on this machine")
     

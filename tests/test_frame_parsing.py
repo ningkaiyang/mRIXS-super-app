@@ -2,7 +2,7 @@ import re
 import pytest
 import time
 import os
-from zeroth_order_cli import extract_frame_index
+from rixs_app.core.cli_utils import extract_frame_index
 
 def test_user_cases():
     """Verify the exact filenames specified by the user."""

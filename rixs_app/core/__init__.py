@@ -34,6 +34,7 @@ from .image_processing import (
     generate_direct_sum,
 )
 from .zeroth_order import denoise_image, evaluate_zeroth_order, run_zeroth_order_pipeline
+from .cli_utils import discover_directories, glob_tifs, export_focus_curve, extract_frame_index
 
 __all__ = [
     "PCAFitFailure",
@@ -59,4 +60,8 @@ __all__ = [
     "denoise_image",
     "evaluate_zeroth_order",
     "run_zeroth_order_pipeline",
+    "discover_directories",
+    "glob_tifs",
+    "export_focus_curve",
+    "extract_frame_index",
 ]

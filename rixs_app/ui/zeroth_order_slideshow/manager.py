@@ -330,9 +330,8 @@ class ZerothOrderManager:
                         return
                     self.result_queue.put(lambda c=idx+1: on_progress(c, total))
 
-                # Generate focus curve if txt_metadata available
-                if txt_metadata is not None:
-                    self._export_focus_curve(export_dir, txt_metadata, energy_dispersion, mono_energy_ev)
+                # Generate focus curve (always — falls back to frame index when txt_metadata is None)
+                self._export_focus_curve(export_dir, txt_metadata, energy_dispersion, mono_energy_ev)
 
                 if self.session_id is not current_session:
                     return
@@ -344,21 +343,54 @@ class ZerothOrderManager:
                 self.result_queue.put(lambda: _call_on_complete(on_complete, False, err_str))
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _export_focus_curve(self, export_dir, txt_metadata, energy_dispersion, mono_energy_ev):
-        """Generate sequence_mirror_pitch_vs_fwhm.png with optional resolving power annotation."""
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_agg import FigureCanvasAgg
+    def _export_focus_curve(
+        self,
+        export_dir: str,
+        txt_metadata: dict | None,
+        energy_dispersion: float,
+        mono_energy_ev: float,
+    ) -> None:
+        """Generate focus_curve.png by delegating to the shared CLI utility.
 
-        pitches, fwhms, resolving_powers = [], [], []
+        When *txt_metadata* is available, the X-axis represents the motor
+        goal position (e.g. Mirror Pitch in mrad) sourced from the parsed scan
+        log.  When *txt_metadata* is ``None``, the X-axis falls back to frame
+        index so that a focus curve is always produced when FWHM data exists.
+
+        Args:
+            export_dir: Absolute path to the directory where the PNG is written.
+            txt_metadata: Parsed scan-log metadata dict from
+                ``txt_metadata_parser.parse_scan_log()``, or ``None`` when no
+                scan log is available.
+            energy_dispersion: Energy dispersion in meV/px for resolving-power
+                calculation.  Pass 0.0 to skip resolving-power annotation.
+            mono_energy_ev: Monochromator energy in eV.  Pass 0.0 to skip
+                resolving-power annotation.
+        """
+        from rixs_app.core.cli_utils import export_focus_curve
+
+        x_values: list[float] = []
+        fwhms: list[float] = []
+        resolving_powers: list[float | None] = []
+
         for idx in range(len(self._file_list)):
             basename = os.path.basename(self._file_list[idx])
-            frame_meta = txt_metadata['frames'].get(basename)
             cached = self.pipeline_results.get(idx, {})
             er = cached.get('evaluator_result')
-            if frame_meta is None or er is None or not er.score_valid or not er.fwhm_px:
+            if er is None or not er.score_valid or er.fwhm_px is None:
                 continue
-            pitches.append(frame_meta['motor_goal'])
+
+            # Determine X value
+            if txt_metadata is not None:
+                frame_meta = txt_metadata['frames'].get(basename)
+                if frame_meta is None:
+                    continue
+                x_values.append(frame_meta['motor_goal'])
+            else:
+                x_values.append(float(idx))
+
             fwhms.append(er.fwhm_px)
+
             if energy_dispersion > 0 and mono_energy_ev > 0:
                 fwhm_mev = er.fwhm_px * energy_dispersion
                 R = mono_energy_ev / (fwhm_mev * 1e-3)
@@ -366,41 +398,17 @@ class ZerothOrderManager:
             else:
                 resolving_powers.append(None)
 
-        if len(pitches) < 2:
+        if len(x_values) < 2:
             return
 
-        fig = Figure(figsize=(10, 6))
-        canvas = FigureCanvasAgg(fig)
-        ax = fig.add_subplot(111)
-        ax.scatter(pitches, fwhms, c='steelblue', s=40, zorder=5)
+        x_label = txt_metadata.get('motor_name', 'Motor Pitch') if txt_metadata is not None else 'Frame Index'
 
-        if len(pitches) >= 3:
-            coeffs = np.polyfit(pitches, fwhms, 2)
-            x_smooth = np.linspace(min(pitches), max(pitches), 200)
-            y_smooth = np.polyval(coeffs, x_smooth)
-            ax.plot(x_smooth, y_smooth, 'r-', linewidth=2, label='Parabolic fit')
-            optimal_pitch = -coeffs[1] / (2 * coeffs[0])
-            ax.axvline(optimal_pitch, color='green', linestyle='--', alpha=0.7,
-                       label=f'Optimal pitch: {optimal_pitch:.4f}')
-
-            # Resolving power annotation on the best (minimum FWHM) frame
-            valid_r = [(r, p, f) for r, p, f in zip(resolving_powers, pitches, fwhms) if r is not None]
-            if valid_r:
-                peak_R, peak_pitch, peak_fwhm = max(valid_r, key=lambda x: x[0])
-                ax.annotate(
-                    f'Peak R = {peak_R:,.0f}\nat pitch = {peak_pitch:.4f}',
-                    xy=(peak_pitch, peak_fwhm),
-                    xytext=(0.05, 0.95), textcoords='axes fraction',
-                    arrowprops=dict(arrowstyle='->', color='purple'),
-                    fontsize=10, color='purple', va='top',
-                    bbox=dict(facecolor='white', alpha=0.8, edgecolor='purple'),
-                )
-
-        motor_name = txt_metadata.get('motor_name', 'Motor Pitch')
-        ax.set_xlabel(f'{motor_name} Goal')
-        ax.set_ylabel('FWHM (px)')
-        ax.set_title(f'Zeroth-Order Focus Curve — {motor_name} vs FWHM')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        fig.savefig(os.path.join(export_dir, 'sequence_mirror_pitch_vs_fwhm.png'),
-                    dpi=150, bbox_inches='tight')
+        export_focus_curve(
+            export_dir=export_dir,
+            x_values=x_values,
+            fwhms=fwhms,
+            x_label=x_label,
+            energy_dispersion=energy_dispersion,
+            mono_energy_ev=mono_energy_ev,
+            resolving_powers=resolving_powers,
+        )

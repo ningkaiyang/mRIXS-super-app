@@ -323,3 +323,38 @@ class TestZerothOrderGUI(unittest.TestCase):
         self.assertIn("candidates_xy", data_hit)
         self.assertIn("inliers_xy", data_hit)
         self.assertIn("evaluator_result", data_hit)
+
+    def test_export_focus_curve_without_txt_metadata(self):
+        """Verify _export_focus_curve generates focus_curve.png using Frame Index when txt_metadata is None."""
+        import tempfile
+        self.app.show_zeroth_order_calibration(self.temp_files)
+        pump_events(self.app)
+        manager = self.app.zeroth_order_view.manager
+
+        # Precompute all frames so pipeline_results is populated
+        for idx in range(len(self.temp_files)):
+            manager.get_frame_pipeline_data(idx)
+
+        # Inject fake evaluator results so _export_focus_curve has FWHM data
+        from unittest.mock import MagicMock
+        for idx in range(len(self.temp_files)):
+            if idx not in manager.pipeline_results:
+                manager.pipeline_results[idx] = {}
+            er = MagicMock()
+            er.score_valid = True
+            er.fwhm_px = float(5 + idx)  # increasing FWHM
+            manager.pipeline_results[idx]['evaluator_result'] = er
+
+        with tempfile.TemporaryDirectory() as export_dir:
+            # txt_metadata=None triggers Frame Index fallback
+            manager._export_focus_curve(
+                export_dir=export_dir,
+                txt_metadata=None,
+                energy_dispersion=0.0,
+                mono_energy_ev=0.0,
+            )
+            focus_curve_path = os.path.join(export_dir, 'focus_curve.png')
+            self.assertTrue(
+                os.path.exists(focus_curve_path),
+                'focus_curve.png should be generated even when txt_metadata is None.',
+            )

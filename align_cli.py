@@ -47,8 +47,8 @@ from rixs_app.core import (
     PCAFitFailure,
     find_best_threshold,
 )
+from rixs_app.core.cli_utils import discover_directories, glob_tifs
 from rixs_app.core.dataset import ZarrSequenceManager, CLIZarrSequenceManager, _frame_key
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,84 +123,8 @@ def save_comparison_png(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Directory discovery
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _has_tif_files(directory: Path, min_count: int = 2) -> bool:
-    """Check whether *directory* contains at least *min_count* TIF files.
-
-    Args:
-        directory: Path object pointing to a directory.
-        min_count: Minimum number of ``.tif`` / ``.tiff`` files required.
-
-    Returns:
-        ``True`` if the directory has enough TIF files, ``False`` otherwise.
-    """
-    count = 0
-    for p in directory.iterdir():
-        if p.is_file() and p.suffix.lower() in ('.tif', '.tiff'):
-            count += 1
-            if count >= min_count:
-                return True
-    return False
-
-
-def discover_directories(root_dir: str, recursive: bool) -> list[str]:
-    """Return directories under *root_dir* that contain ≥ 2 TIF files.
-
-    In non-recursive mode only *root_dir* itself is considered.  In
-    recursive mode every subdirectory (at any depth) is scanned too.
-
-    Args:
-        root_dir: Absolute path to the root scan directory.
-        recursive: If ``True``, recurse into all subdirectories.
-
-    Returns:
-        Sorted list of absolute directory paths with sufficient TIFs.
-    """
-    root = Path(root_dir).resolve()
-    result: list[str] = []
-
-    if _has_tif_files(root):
-        result.append(str(root))
-
-    if recursive:
-        for dirpath, dirnames, _filenames in os.walk(str(root)):
-            # Modify dirnames in-place to ignore 'sum' and 'tif-cache'
-            dirnames[:] = [d for d in dirnames if d.lower() not in ('sum', 'tif-cache')]
-            dp = Path(dirpath).resolve()
-            if dp == root:
-                continue  # already checked
-            if dp.name.lower() in ('sum', 'tif-cache'):
-                continue
-            if _has_tif_files(dp):
-                result.append(str(dp))
-
-    result.sort()
-    return result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Single-directory processing
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _glob_tifs(directory: str) -> list[str]:
-    """Glob for .tif / .tiff files (case-insensitive) in *directory*.
-
-    Args:
-        directory: Absolute path to scan.
-
-    Returns:
-        Naturally sorted list of absolute TIFF paths.
-    """
-    d = Path(directory)
-    files: list[str] = []
-    for p in d.iterdir():
-        if p.is_file() and p.suffix.lower() in ('.tif', '.tiff'):
-            files.append(str(p.resolve()))
-    natural_sort(files)
-    return files
-
 
 def process_directory(
     dir_path: str,
@@ -236,7 +160,7 @@ def process_directory(
     print(f"\n{'='*60}")
     print(f"[{dir_name}] Scanning for TIF files…")
 
-    tif_files = _glob_tifs(dir_path)
+    tif_files = glob_tifs(dir_path)
     if len(tif_files) < 2:
         print(f"[{dir_name}] Warning: fewer than 2 TIF files found — skipping.")
         return
