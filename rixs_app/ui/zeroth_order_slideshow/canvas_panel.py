@@ -46,8 +46,8 @@ class ZerothOrderCanvasPanel(tk.Frame):
 
         # 1. Plot 2D stage
         if img_2d is not None:
-            # Slicing: only points between lower bound (vmin) and upper bound (vmax) are shown, rest zeroed out.
-            img_display = np.where((img_2d >= vmin) & (img_2d <= vmax), img_2d, 0.0)
+            # Slicing: points below vmin are mapped to vmin (cutting background noise); points above vmin scale up to vmax
+            img_display = np.where(img_2d >= vmin, np.minimum(img_2d, vmax), vmin)
         else:
             img_display = None
         self.ax_2d.imshow(img_display, cmap=matplotlib_cmap, vmin=vmin, vmax=vmax, aspect='auto')

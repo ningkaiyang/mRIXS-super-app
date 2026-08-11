@@ -212,6 +212,7 @@ def run_zeroth_order_pipeline(
     return {
         "raw_img": img,
         "denoised_img": line_result['denoised_img'],
+        "dsm_img": line_result.get('dsm_img'),
         "masked_img": line_result['masked_img'],
         "grad_img": line_result['grad_img'],
         "centroid": np.array(line_result['centroid']),
@@ -256,6 +257,13 @@ def _detection_result_to_legacy_dict(result, prepared) -> dict:
     """
     ct = prepared.crop_transform
     h_orig, w_orig = ct.original_shape
+    ct_top, ct_left = ct.crop_top, ct.crop_left
+    ch, cw = ct.cropped_shape
+
+    full_denoised = np.zeros((h_orig, w_orig), dtype=np.float32)
+    full_dsm = np.zeros((h_orig, w_orig), dtype=np.float32)
+    full_denoised[ct_top:ct_top+ch, ct_left:ct_left+cw] = prepared.denoised
+    full_dsm[ct_top:ct_top+ch, ct_left:ct_left+cw] = prepared.row_smoothed
 
     if not result.fit_ok:
         cx, cy = w_orig / 2.0, h_orig / 2.0
@@ -269,7 +277,8 @@ def _detection_result_to_legacy_dict(result, prepared) -> dict:
             'grad_img': full_grad,
             'masked_img': full_masked,
             'score': 0.0,
-            'denoised_img': prepared.denoised,
+            'denoised_img': full_denoised,
+            'dsm_img': full_dsm,
             'fit_ok': False,
             'failure_reason': result.failure_reason,
             'candidates_xy': ct.cropped_to_original_array(result.candidates_xy) if result.n_candidates > 0 else result.candidates_xy,
@@ -295,8 +304,6 @@ def _detection_result_to_legacy_dict(result, prepared) -> dict:
 
     # Place gradient in full-frame
     full_grad = np.zeros((h_orig, w_orig), dtype=np.float32)
-    ct_top, ct_left = ct.crop_top, ct.crop_left
-    ch, cw = ct.cropped_shape
     full_grad[ct_top:ct_top+ch, ct_left:ct_left+cw] = prepared.gradient
 
     # Create masked gradient: gradient within ±20px perpendicular band of fitted line within support range
@@ -337,7 +344,8 @@ def _detection_result_to_legacy_dict(result, prepared) -> dict:
         'grad_img': full_grad,
         'masked_img': full_masked,
         'score': score,
-        'denoised_img': prepared.denoised,
+        'denoised_img': full_denoised,
+        'dsm_img': full_dsm,
         'fit_ok': True,
         'failure_reason': None,
         'candidates_xy': cands_orig,

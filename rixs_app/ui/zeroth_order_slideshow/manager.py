@@ -116,13 +116,11 @@ class ZerothOrderManager:
         self.intensity_min = float(np.min(ref_raw))
         self.intensity_max = float(np.max(ref_raw))
 
-        # Use 20th/98th percentile for good contrast on Raw zeroth-order frames
-        self.slicing_floor = float(np.percentile(ref_raw, 20))
-        active_pixels = ref_raw[ref_raw > self.slicing_floor]
-        if active_pixels.size > 0:
-            self.slicing_ceiling = float(np.percentile(active_pixels, 98))
-        else:
-            self.slicing_ceiling = self.intensity_max
+        # Establish default slicing floor (cut background noise) and ceiling (line peak top)
+        self.slicing_floor = float(np.percentile(ref_raw, 88))
+        self.slicing_ceiling = float(np.percentile(ref_raw, 99.8))
+        if self.slicing_ceiling <= self.slicing_floor:
+            self.slicing_ceiling = float(self.intensity_max)
 
     def get_frame_pipeline_data(self, idx: int) -> dict:
         """Retrieves or calculates the zeroth-order pipeline breakdown dictionary for a frame."""
@@ -396,7 +394,7 @@ class ZerothOrderManager:
         motor_name = txt_metadata.get('motor_name', 'Motor Pitch')
         ax.set_xlabel(f'{motor_name} Goal')
         ax.set_ylabel('FWHM (px)')
-        ax.set_title('Zeroth-Order Focus Curve — Mirror Pitch vs FWHM')
+        ax.set_title(f'Zeroth-Order Focus Curve — {motor_name} vs FWHM')
         ax.legend()
         ax.grid(True, alpha=0.3)
         fig.savefig(os.path.join(export_dir, 'sequence_mirror_pitch_vs_fwhm.png'),

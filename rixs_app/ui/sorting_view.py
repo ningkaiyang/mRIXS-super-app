@@ -69,18 +69,18 @@ class SortingView(customtkinter.CTkFrame):
         self.start_button = customtkinter.CTkButton(
             self, text="▶ Start Alignment Slideshow", command=self.start_slideshow,
             fg_color="#2FA572", hover_color="#238a5a",
-            font=customtkinter.CTkFont(size=16, weight="bold"),
-            height=44
+            font=customtkinter.CTkFont(size=14, weight="bold"),
+            height=38
         )
-        self.start_button.pack(pady=10)
+        self.start_button.pack(pady=(8, 3))
 
         self.zeroth_order_button = customtkinter.CTkButton(
             self, text="🔬 Zeroth-Order Focus & FWHM Calibration", command=self.start_zeroth_order,
             fg_color="#1F6AA5", hover_color="#165a8a",
-            font=customtkinter.CTkFont(size=16, weight="bold"),
-            height=44
+            font=customtkinter.CTkFont(size=14, weight="bold"),
+            height=38
         )
-        self.zeroth_order_button.pack(pady=10)
+        self.zeroth_order_button.pack(pady=(3, 8))
 
         self.help_button = customtkinter.CTkButton(
             self, text="❓ Help / Guide", command=self.show_help,

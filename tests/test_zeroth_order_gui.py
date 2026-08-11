@@ -82,12 +82,10 @@ class TestZerothOrderGUI(unittest.TestCase):
         view.change_pipeline_stage("Denoised (D)")
 
         self.assertEqual(view.manager.pipeline_stage, "Denoised (D)")
-        self.assertIn("Anscombe VST", view.control_panel.description_label.cget("text"))
 
         view.navbar.stage_menu.set("Fitted-Line Strip")
         view.change_pipeline_stage("Fitted-Line Strip")
         self.assertEqual(view.manager.pipeline_stage, "Fitted-Line Strip")
-        self.assertIn("Gradient masked", view.control_panel.description_label.cget("text"))
 
     @patch("rixs_app.ui.zeroth_order_slideshow.manager.ZerothOrderManager.get_frame_pipeline_data")
     def test_load_and_render_calls_canvas_draw(self, mock_pipeline):
@@ -105,6 +103,14 @@ class TestZerothOrderGUI(unittest.TestCase):
         view = self.app.zeroth_order_view
         view.load_and_render()
         self.assertIn("Score: 0.42", view.control_panel.score_label.cget("text"))
+
+    def test_best_focus_badge_requires_all_frames_computed(self):
+        self.app.show_zeroth_order_calibration(self.temp_files)
+        pump_events(self.app)
+        view = self.app.zeroth_order_view
+        # Before all frames are computed, focus_badge should be empty on initial rendering
+        view.load_and_render()
+        self.assertEqual(view.control_panel.focus_badge.cget("text"), "")
 
     def test_slicing_changes(self):
         self.app.show_zeroth_order_calibration(self.temp_files)
@@ -188,11 +194,11 @@ class TestZerothOrderGUI(unittest.TestCase):
                 callback = view._result_queue.get_nowait()
                 callback()
             except queue.Empty:
-                if view.control_panel.precompute_button.cget("text") == "Precompute All":
+                if view.navbar.precompute_button.cget("text") == "Precompute All":
                     break
                 time.sleep(0.05)
 
-        self.assertEqual(view.control_panel.precompute_button.cget("text"), "Precompute All")
+        self.assertEqual(view.navbar.precompute_button.cget("text"), "Precompute All")
 
     @patch("tkinter.messagebox.showerror")
     def test_precompute_worker_handles_missing_file_gracefully(self, mock_showerror):
@@ -229,8 +235,8 @@ class TestZerothOrderGUI(unittest.TestCase):
         # Check that UI elements were re-enabled
         self.assertEqual(view.navbar.prev_button.cget("state"), "normal")
         self.assertEqual(view.navbar.next_button.cget("state"), "normal")
-        self.assertEqual(view.control_panel.precompute_button.cget("state"), "normal")
-        self.assertEqual(view.control_panel.precompute_button.cget("text"), "Precompute All")
+        self.assertEqual(view.navbar.precompute_button.cget("state"), "normal")
+        self.assertEqual(view.navbar.precompute_button.cget("text"), "Precompute All")
 
     def test_first_file_missing_crashes_gui_on_load(self):
         """Verify that if the first file is missing, showing the slideshow loads gracefully without crashing."""

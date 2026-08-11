@@ -130,7 +130,8 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
 
         # Update FWHM / resolving power display (cheap client-side calculation)
         is_best = False
-        if self.manager.pipeline_results:
+        total_frames = len(self.manager.file_list)
+        if total_frames > 0 and len(self.manager.pipeline_results) >= total_frames:
             try:
                 is_best = (idx == self.manager.get_peak_focus_index())
             except Exception:
@@ -143,6 +144,10 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
             is_best_focus=is_best,
         )
 
+        # Sync motor position/name info in control panel
+        filename = self.manager.file_list[idx]
+        self.control_panel.sync_motor_info(self.manager.txt_metadata, filename, idx, len(self.manager.file_list))
+
         # Determine which 2D matrix to plot
         stage = getattr(self.manager, "pipeline_stage", "Raw")
         if stage == "Raw":
@@ -150,7 +155,7 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
         elif stage == "Denoised (D)":
             img_2d = data.get("denoised_img", data["raw_img"])
         elif stage == "Row-Smoothed (Dsm)":
-            img_2d = data.get("denoised_img", data["raw_img"])
+            img_2d = data.get("dsm_img", data.get("denoised_img", data["raw_img"]))
         elif stage == "Gradient (G)":
             img_2d = data.get("grad_img", data["raw_img"])
         elif stage == "Fitted-Line Strip":
@@ -206,11 +211,48 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
             self.load_and_render()
 
     def jump_to_peak_focus(self):
-        """Jump to the frame with the sharpest focus (minimum FWHM)."""
-        best_idx = self.manager.get_peak_focus_index()
-        self.manager.current_idx = best_idx
-        self.control_panel.frame_slider.set(best_idx)
-        self.load_and_render()
+        """Jump to the frame with the sharpest focus (minimum FWHM). Triggers precompute first if incomplete."""
+        total = len(self.manager.file_list)
+        if total == 0:
+            return
+        if len(self.manager.pipeline_results) >= total:
+            best_idx = self.manager.get_peak_focus_index()
+            self.manager.current_idx = best_idx
+            self.control_panel.frame_slider.set(best_idx)
+            self.load_and_render()
+        else:
+            def _after_precompute():
+                best_idx = self.manager.get_peak_focus_index()
+                self.manager.current_idx = best_idx
+                self.control_panel.frame_slider.set(best_idx)
+                self.load_and_render()
+
+            self.trigger_precompute(on_complete_extra=_after_precompute)
+
+    def trigger_precompute(self, on_complete_extra=None):
+        self.navbar.prev_button.configure(state="disabled")
+        self.navbar.next_button.configure(state="disabled")
+        self.navbar.precompute_button.configure(state="disabled")
+
+        def on_progress(current, total):
+            self.navbar.precompute_button.configure(text=f"{current}/{total}...")
+
+        def on_complete(success=True, err_msg=None):
+            self.navbar.prev_button.configure(state="normal")
+            self.navbar.next_button.configure(state="normal")
+            self.navbar.precompute_button.configure(text="Precompute All", state="normal")
+            if not success:
+                tk.messagebox.showerror(
+                    "Precompute Error",
+                    f"An error occurred during precomputation:\n{err_msg}",
+                    parent=self.winfo_toplevel()
+                )
+            else:
+                self.load_and_render()
+                if on_complete_extra is not None:
+                    on_complete_extra()
+
+        self.manager.run_precompute_worker(on_progress, on_complete)
 
     def set_energy_dispersion(self, value: float):
         """Update energy dispersion (meV/px) and re-render current frame.
@@ -327,28 +369,6 @@ class ZerothOrderSlideshowView(customtkinter.CTkFrame):
         self.tools_panel.sync_zoom_label(self.zoom_factor)
         self.load_and_render()
 
-    def trigger_precompute(self):
-        self.navbar.prev_button.configure(state="disabled")
-        self.navbar.next_button.configure(state="disabled")
-        self.control_panel.precompute_button.configure(state="disabled")
-
-        def on_progress(current, total):
-            self.control_panel.precompute_button.configure(text=f"{current}/{total}...")
-
-        def on_complete(success=True, err_msg=None):
-            self.navbar.prev_button.configure(state="normal")
-            self.navbar.next_button.configure(state="normal")
-            self.control_panel.precompute_button.configure(text="Precompute All", state="normal")
-            if not success:
-                tk.messagebox.showerror(
-                    "Precompute Error",
-                    f"An error occurred during precomputation:\n{err_msg}",
-                    parent=self.winfo_toplevel()
-                )
-            else:
-                self.load_and_render()
-
-        self.manager.run_precompute_worker(on_progress, on_complete)
 
     def trigger_export(self):
         export_dir = tk.filedialog.askdirectory(parent=self.winfo_toplevel())

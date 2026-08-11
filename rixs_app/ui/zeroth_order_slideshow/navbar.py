@@ -26,11 +26,12 @@ class ZerothOrderNavBar(customtkinter.CTkFrame):
         )
         self.next_button.pack(side="left", padx=5)
 
-        self.autoplay_button = customtkinter.CTkButton(
-            self, text="▶ Play", command=self.controller.toggle_autoplay,
-            width=80, fg_color="#2FA572", hover_color="#238a5a"
+        # Precompute All button
+        self.precompute_button = customtkinter.CTkButton(
+            self, text="Precompute All", command=self.controller.trigger_precompute,
+            width=120, fg_color="#1F6AA5", hover_color="#165a8a"
         )
-        self.autoplay_button.pack(side="left", padx=5)
+        self.precompute_button.pack(side="left", padx=5)
 
         # Peak Focus button
         self.peak_focus_button = customtkinter.CTkButton(
@@ -39,6 +40,13 @@ class ZerothOrderNavBar(customtkinter.CTkFrame):
             width=120, fg_color="#A55D2F", hover_color="#8A4A22",
         )
         self.peak_focus_button.pack(side="left", padx=5)
+
+        # Autoplay button
+        self.autoplay_button = customtkinter.CTkButton(
+            self, text="▶ Play", command=self.controller.toggle_autoplay,
+            width=80, fg_color="#2FA572", hover_color="#238a5a"
+        )
+        self.autoplay_button.pack(side="left", padx=5)
 
         # Right side: colormap selection dropdown
         self.colormap_menu = customtkinter.CTkOptionMenu(
