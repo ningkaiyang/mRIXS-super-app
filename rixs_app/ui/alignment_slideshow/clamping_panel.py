@@ -84,7 +84,9 @@ class SlideshowClampingPanel(QFrame):
     def _on_floor_submit(self) -> None:
         """Handle return-key submission of the floor entry."""
         self.controller.handle_floor_entry_submit(self.floor_entry.text())
+        self.floor_entry.clearFocus()
 
     def _on_ceiling_submit(self) -> None:
         """Handle return-key submission of the ceiling entry."""
         self.controller.handle_ceiling_entry_submit(self.ceiling_entry.text())
+        self.ceiling_entry.clearFocus()

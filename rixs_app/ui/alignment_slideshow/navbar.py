@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QComboBox, QCheckBox, QLabel
 from PySide6.QtCore import Qt
 
-from rixs_app.ui.theme import PALETTE, success_style, neutral_style
+from rixs_app.ui.theme import set_play_btn
 
 
 class SlideshowNavBar(QFrame):
@@ -37,8 +37,8 @@ class SlideshowNavBar(QFrame):
         self.setFixedHeight(44)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 4, 16, 4)
+        layout.setSpacing(12)
 
         # --- Left controls ---
         self.back_button = QPushButton("\u25c4 Back")
@@ -58,43 +58,63 @@ class SlideshowNavBar(QFrame):
 
         self.autoplay_button = QPushButton("\u25ba Play")
         self.autoplay_button.setFixedWidth(80)
-        self.autoplay_button.setStyleSheet(f"background-color: {PALETTE['accent_green']}; color: white;")
+        set_play_btn(self.autoplay_button)
         self.autoplay_button.clicked.connect(self.controller.toggle_autoplay)
         layout.addWidget(self.autoplay_button)
 
         layout.addStretch()
 
         # --- Right controls ---
-        self.warp_checkbox = QCheckBox("Warp Image")
-        self.warp_checkbox.setChecked(True)
-        self.warp_checkbox.stateChanged.connect(self._on_warp_changed)
-        layout.addWidget(self.warp_checkbox)
-
-        self.colormap_menu = QComboBox()
-        self.colormap_menu.addItems(["viridis", "inferno", "plasma", "magma", "grayscale"])
-        self.colormap_menu.setCurrentText("viridis")
-        self.colormap_menu.currentTextChanged.connect(self.controller.change_colormap)
-        layout.addWidget(self.colormap_menu)
+        layout.addWidget(QLabel("Engine:"))
 
         self.engine_menu = QComboBox()
-        self.engine_menu.addItems(["PCA", "ECC", "Phase Correlation"])
+        self.engine_menu.setObjectName("engine_menu")
+        engine_options = ["PCA", "ECC", "Phase Correlation"]
+        self.engine_menu.addItems(engine_options)
+        for idx, text in enumerate(engine_options):
+            self.engine_menu.setItemData(idx, text, Qt.ToolTipRole)
         self.engine_menu.setCurrentText("ECC")
+        self.engine_menu.setMinimumWidth(185)
+        self.engine_menu.view().setMinimumWidth(185)
+        self.engine_menu.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.engine_menu.currentTextChanged.connect(self.controller.change_engine)
         layout.addWidget(self.engine_menu)
 
+        layout.addWidget(QLabel("Colormap:"))
+
+        self.colormap_menu = QComboBox()
+        colormap_options = ["viridis", "inferno", "plasma", "magma", "grayscale"]
+        self.colormap_menu.addItems(colormap_options)
+        for idx, text in enumerate(colormap_options):
+            self.colormap_menu.setItemData(idx, text, Qt.ToolTipRole)
+        self.colormap_menu.setCurrentText("viridis")
+        self.colormap_menu.setMinimumWidth(100)
+        self.colormap_menu.currentTextChanged.connect(self.controller.change_colormap)
+        layout.addWidget(self.colormap_menu)
+
     # ------------------------------------------------------------------
-    # Compatibility shims (old code used .get() on warp_switch)
+    # Compatibility shims
     # ------------------------------------------------------------------
 
     @property
+    def warp_button(self):
+        """Proxy to control_panel.warp_button."""
+        return self.controller.control_panel.warp_button
+
+    @property
     def warp_switch(self):
-        """Alias so old code that references ``navbar.warp_switch`` still works."""
-        return self.warp_checkbox
+        """Compatibility wrapper so legacy tests referencing navbar.warp_switch still work."""
+        class _WarpSwitchShim:
+            def __init__(shim_self, btn):
+                shim_self._btn = btn
 
-    def _on_warp_changed(self, state: int) -> None:
-        """Forward warp checkbox state change to the controller.
+            def get(shim_self):
+                return shim_self._btn.text() == "Warp: ON"
 
-        Args:
-            state: Qt check-state integer.
-        """
-        self.controller.toggle_warp()
+            def select(shim_self):
+                shim_self._btn.setText("Warp: ON")
+
+            def deselect(shim_self):
+                shim_self._btn.setText("Warp: OFF")
+
+        return _WarpSwitchShim(self.controller.control_panel.warp_button)

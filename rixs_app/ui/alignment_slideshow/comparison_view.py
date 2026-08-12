@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
     QFrame,
 )
-from rixs_app.ui.theme import accent_style, neutral_style
+from rixs_app.ui.theme import set_accent_btn, set_cancel_btn
 
 
 class ExportComparisonView(QWidget):
@@ -72,13 +72,13 @@ class ExportComparisonView(QWidget):
 
         self._cancel_button = QPushButton("Cancel")
         self._cancel_button.setFixedSize(120, 35)
-        self._cancel_button.setStyleSheet("background-color: #888; color: white;")
+        set_cancel_btn(self._cancel_button)
         self._cancel_button.clicked.connect(self._handle_cancel)
         action_row.addWidget(self._cancel_button)
 
         self._export_button = QPushButton("\U0001f4be Export Aligned Sum")
         self._export_button.setFixedSize(200, 35)
-        self._export_button.setStyleSheet(accent_style())
+        set_accent_btn(self._export_button)
         self._export_button.clicked.connect(self._handle_export)
         action_row.addWidget(self._export_button)
 

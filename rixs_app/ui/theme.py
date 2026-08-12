@@ -57,7 +57,7 @@ DARK_STYLE = f"""
 QWidget {{
     background-color: {PALETTE['bg_base']};
     color: {PALETTE['text']};
-    font-family: "Inter", "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    font-family: "Helvetica Neue", "Arial";
     font-size: 13px;
 }}
 
@@ -80,7 +80,7 @@ QGroupBox::title {{
     font-weight: bold;
 }}
 
-/* ── Push buttons ───────────────────────────────────────── */
+/* ── Push buttons (default fallback) ────────────────────── */
 QPushButton {{
     background-color: {PALETTE['bg_selected']};
     color: {PALETTE['text']};
@@ -104,30 +104,127 @@ QPushButton:disabled {{
     color: {PALETTE['text_muted']};
 }}
 
+/* ── Named button variants (hover + pressed states) ────── */
+
+/* Tool / neutral buttons (zoom, manual line, help, etc.) */
+QPushButton#tool_btn {{
+    background-color: #2d3558;
+    color: #ffffff;
+    border: 1px solid #3f4b78;
+}}
+QPushButton#tool_btn:hover {{
+    background-color: #3d4875;
+    border: 1px solid #5667a0;
+}}
+QPushButton#tool_btn:pressed {{
+    background-color: #4a578c;
+}}
+
+/* Play / start button (green) */
+QPushButton#play_btn {{
+    background-color: {PALETTE['accent_green']};
+    color: white;
+}}
+QPushButton#play_btn:hover {{
+    background-color: #3ac085;
+}}
+QPushButton#play_btn:pressed {{
+    background-color: #238a5a;
+}}
+
+/* Active mode indicator (orange — autoplay active, manual mode on) */
+QPushButton#active_btn {{
+    background-color: {PALETTE['accent_orange']};
+    color: white;
+}}
+QPushButton#active_btn:hover {{
+    background-color: #dd6611;
+}}
+QPushButton#active_btn:pressed {{
+    background-color: #bb4400;
+}}
+
+/* Accent / primary action (blue — Precompute, Auto All, Compare) */
+QPushButton#accent_btn {{
+    background-color: {PALETTE['accent_blue']};
+    color: white;
+}}
+QPushButton#accent_btn:hover {{
+    background-color: #42a5f5;
+}}
+QPushButton#accent_btn:pressed {{
+    background-color: #1976d2;
+}}
+
+/* Danger / destructive (red — Remove, Clear) */
 QPushButton#danger_btn {{
     background-color: {PALETTE['accent_red']};
+    color: white;
 }}
 QPushButton#danger_btn:hover {{
     background-color: #cc4444;
 }}
+QPushButton#danger_btn:pressed {{
+    background-color: #882222;
+}}
 
+/* Danger secondary (darker red — Clear All) */
+QPushButton#danger_secondary_btn {{
+    background-color: #883333;
+    color: white;
+}}
+QPushButton#danger_secondary_btn:hover {{
+    background-color: #994444;
+}}
+QPushButton#danger_secondary_btn:pressed {{
+    background-color: #662222;
+}}
+
+/* Success / launch button (green, bold — Start Alignment) */
 QPushButton#success_btn {{
     background-color: {PALETTE['accent_green']};
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
 }}
 QPushButton#success_btn:hover {{
     background-color: #3ac085;
 }}
-
-QPushButton#neutral_btn {{
-    background-color: #444455;
+QPushButton#success_btn:pressed {{
+    background-color: #238a5a;
 }}
-QPushButton#neutral_btn:hover {{
+
+/* Sort / secondary accent (blue — Sort Files, Zeroth-Order) */
+QPushButton#sort_btn {{
+    background-color: #1F6AA5;
+    color: white;
+    font-size: 14px;
+    font-weight: bold;
+}}
+QPushButton#sort_btn:hover {{
+    background-color: #2878b8;
+}}
+QPushButton#sort_btn:pressed {{
+    background-color: #165a8a;
+}}
+
+/* Muted cancel / dismiss button */
+QPushButton#cancel_btn {{
+    background-color: #666677;
+    color: white;
+}}
+QPushButton#cancel_btn:hover {{
+    background-color: #777788;
+}}
+QPushButton#cancel_btn:pressed {{
     background-color: #555566;
 }}
 
-QPushButton#active_btn {{
-    background-color: {PALETTE['accent_orange']};
-    color: white;
+/* Header title label */
+QLabel#header_title {{
+    font-size: 26px;
+    font-weight: bold;
+    color: {PALETTE['text']};
 }}
 
 /* ── Sliders ────────────────────────────────────────────── */
@@ -181,23 +278,28 @@ QLineEdit:disabled {{
 
 /* ── ComboBox ───────────────────────────────────────────── */
 QComboBox {{
-    background-color: {PALETTE['bg_widget']};
-    color: {PALETTE['text']};
-    border: 1px solid {PALETTE['border']};
+    combobox-popup: 0;
+    background-color: #262c4a;
+    color: #ffffff;
+    border: 1px solid #3d4566;
     border-radius: 4px;
     padding: 3px 8px;
     min-width: 80px;
 }}
 
+QComboBox#engine_menu {{
+    min-width: 185px;
+}}
+
 QComboBox:hover {{
-    border: 1px solid {PALETTE['border_focus']};
+    border: 1px solid #54659e;
 }}
 
 QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 18px;
-    border-left: 1px solid {PALETTE['border']};
+    border-left: 1px solid #3d4566;
 }}
 
 QComboBox::down-arrow {{
@@ -207,11 +309,23 @@ QComboBox::down-arrow {{
 }}
 
 QComboBox QAbstractItemView {{
-    background-color: {PALETTE['bg_panel']};
-    border: 1px solid {PALETTE['border']};
-    selection-background-color: {PALETTE['bg_selected']};
-    color: {PALETTE['text']};
+    background-color: #1a1f36;
+    border: 1px solid #3d4566;
+    selection-background-color: #2196f3;
+    selection-color: #ffffff;
+    color: #ffffff;
+    padding: 4px;
     outline: none;
+}}
+
+QComboBox QAbstractItemView::item {{
+    min-height: 24px;
+    padding: 4px 8px;
+}}
+
+QComboBox QAbstractItemView::item:hover {{
+    background-color: #2a3356;
+    color: #ffffff;
 }}
 
 /* ── Labels ─────────────────────────────────────────────── */
@@ -383,7 +497,7 @@ QToolTip {{
 """
 
 # ---------------------------------------------------------------------------
-# Per-button style helpers
+# Per-button style helpers (legacy — prefer set_*_btn helpers below)
 # ---------------------------------------------------------------------------
 
 
@@ -410,6 +524,77 @@ def neutral_style() -> str:
 def active_mode_style() -> str:
     """Return a QSS snippet for a button that is in an active 'mode on' state."""
     return f"background-color: {PALETTE['accent_orange']}; color: white;"
+
+
+# ---------------------------------------------------------------------------
+# Object-name helpers — apply these to QPushButtons so the global QSS
+# `:hover` / `:pressed` pseudo-states fire correctly.  Using objectName
+# instead of inline setStyleSheet is essential because Qt inline styles
+# override the cascade and prevent pseudo-state matching.
+# ---------------------------------------------------------------------------
+
+
+def set_tool_btn(btn) -> None:
+    """Mark *btn* as a neutral 'tool' button (zoom, manual line, help, etc.)."""
+    btn.setObjectName("tool_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_play_btn(btn) -> None:
+    """Mark *btn* as the green play / start button."""
+    btn.setObjectName("play_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_active_btn(btn) -> None:
+    """Mark *btn* as an orange 'mode active' indicator."""
+    btn.setObjectName("active_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_accent_btn(btn) -> None:
+    """Mark *btn* as a blue primary-action button."""
+    btn.setObjectName("accent_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_danger_btn(btn) -> None:
+    """Mark *btn* as a red destructive-action button."""
+    btn.setObjectName("danger_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_danger_secondary_btn(btn) -> None:
+    """Mark *btn* as a darker-red secondary danger button."""
+    btn.setObjectName("danger_secondary_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_success_btn(btn) -> None:
+    """Mark *btn* as a green success / launch button."""
+    btn.setObjectName("success_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_sort_btn(btn) -> None:
+    """Mark *btn* as a blue sort / secondary-accent button."""
+    btn.setObjectName("sort_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_cancel_btn(btn) -> None:
+    """Mark *btn* as a muted cancel / dismiss button."""
+    btn.setObjectName("cancel_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
 
 
 # Alias used by main.py for the full application stylesheet

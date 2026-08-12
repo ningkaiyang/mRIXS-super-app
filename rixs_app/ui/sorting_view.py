@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from rixs_app.core import natural_sort
-from rixs_app.ui.theme import PALETTE, accent_style
+from rixs_app.ui.theme import set_sort_btn, set_danger_btn, set_danger_secondary_btn, set_success_btn, set_tool_btn
 
 
 class SortingView(QWidget):
@@ -69,10 +69,7 @@ class SortingView(QWidget):
 
         # Header
         header = QLabel("mRIXS Super-App Workspace")
-        font = QFont()
-        font.setPointSize(18)
-        font.setBold(True)
-        header.setFont(font)
+        header.setObjectName("header_title")
         header.setAlignment(Qt.AlignCenter)
         outer.addWidget(header)
 
@@ -83,9 +80,8 @@ class SortingView(QWidget):
         row1.addWidget(self.select_button)
 
         self.sort_button = QPushButton("\u2195 Sort Files")
-        self.sort_button.setStyleSheet(
-            "background-color: #1F6AA5; color: white; font-weight: bold;"
-        )
+        set_sort_btn(self.sort_button)
+        f = QFont(); f.setPointSize(14); f.setBold(True); self.sort_button.setFont(f)
         self.sort_button.clicked.connect(self.sort_files)
         row1.addWidget(self.sort_button)
         outer.addLayout(row1)
@@ -104,13 +100,13 @@ class SortingView(QWidget):
 
         self.remove_button = QPushButton("\u2715 Remove")
         self.remove_button.setFixedWidth(90)
-        self.remove_button.setStyleSheet("background-color: #aa3333; color: white;")
+        set_danger_btn(self.remove_button)
         self.remove_button.clicked.connect(self.remove_file)
         row2.addWidget(self.remove_button)
 
         self.clear_button = QPushButton("\U0001f5d1 Clear All")
         self.clear_button.setFixedWidth(100)
-        self.clear_button.setStyleSheet("background-color: #883333; color: white;")
+        set_danger_secondary_btn(self.clear_button)
         self.clear_button.clicked.connect(self.clear_all)
         row2.addWidget(self.clear_button)
         outer.addLayout(row2)
@@ -118,10 +114,8 @@ class SortingView(QWidget):
         # --- Launch buttons ---
         self.start_button = QPushButton("\u25ba Start Alignment Slideshow")
         self.start_button.setFixedHeight(40)
-        self.start_button.setStyleSheet(
-            f"background-color: {PALETTE['accent_green']}; color: white; "
-            "font-size: 14px; font-weight: bold;"
-        )
+        set_success_btn(self.start_button)
+        f = QFont(); f.setPointSize(14); f.setBold(True); self.start_button.setFont(f)
         self.start_button.clicked.connect(self.start_slideshow)
         outer.addWidget(self.start_button)
 
@@ -129,18 +123,16 @@ class SortingView(QWidget):
             "\U0001f52c Zeroth-Order Focus & FWHM Calibration"
         )
         self.zeroth_order_button.setFixedHeight(40)
-        self.zeroth_order_button.setStyleSheet(
-            "background-color: #1F6AA5; color: white; "
-            "font-size: 14px; font-weight: bold;"
-        )
+        set_sort_btn(self.zeroth_order_button)
+        f = QFont(); f.setPointSize(14); f.setBold(True); self.zeroth_order_button.setFont(f)
         self.zeroth_order_button.clicked.connect(self.start_zeroth_order)
         outer.addWidget(self.zeroth_order_button)
 
-        self.help_button = QPushButton("\u2753 Help / Guide")
-        self.help_button.setFixedWidth(140)
-        self.help_button.setStyleSheet("background-color: #555; color: white;")
+        self.help_button = QPushButton("\u2753 Guide + Credits")
+        self.help_button.setFixedWidth(170)
+        set_tool_btn(self.help_button)
         self.help_button.clicked.connect(self.show_help)
-        outer.addWidget(self.help_button, alignment=Qt.AlignLeft)
+        outer.addWidget(self.help_button, alignment=Qt.AlignCenter)
 
         # --- File list ---
         self.list_widget = QListWidget()
@@ -242,6 +234,7 @@ class SortingView(QWidget):
         self.list_widget.clear()
         for idx, filepath in enumerate(self.file_list):
             item = QListWidgetItem(os.path.basename(filepath))
+            item.setTextAlignment(Qt.AlignCenter)
             if idx == self.selected_index:
                 item.setBackground(Qt.blue)
                 item.setForeground(Qt.white)
@@ -256,7 +249,7 @@ class SortingView(QWidget):
     def show_help(self) -> None:
         """Open the help/guide dialog."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("Spectroscopy Alignment — Quick Guide")
+        dlg.setWindowTitle("mRIXS Super-App — Guide + Credits")
         dlg.resize(660, 580)
 
         dlg_layout = QVBoxLayout(dlg)
@@ -292,6 +285,10 @@ class SortingView(QWidget):
              "\u2022 ECC is recommended for most workflows\n"
              "\u2022 Use viridis colormap for best visibility of faint features\n"
              "\u2022 Each frame stores its own PCA threshold independently"),
+            ("Credits",
+             "mRIXS Super-App developed at Lawrence Berkeley National Laboratory.\n"
+             "App Credits:\n"
+             "• Nickolas Yang — Computing Student Assistant"),
         ]
 
         for title, body in guide_sections:

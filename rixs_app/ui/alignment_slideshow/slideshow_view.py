@@ -27,6 +27,7 @@ from rixs_app.ui.alignment_slideshow.tools_panel import SlideshowToolsPanel
 from rixs_app.ui.alignment_slideshow.clamping_panel import SlideshowClampingPanel
 from rixs_app.ui.alignment_slideshow.export_panel import SlideshowExportPanel
 from rixs_app.ui.alignment_slideshow.canvas_panel import SlideshowCanvasPanel
+from rixs_app.ui.theme import set_play_btn, set_active_btn, set_tool_btn
 
 
 class SlideshowView(QWidget):
@@ -341,11 +342,14 @@ class SlideshowView(QWidget):
     def change_engine(self, choice: str) -> None:
         """Switch alignment engine and re-render.
 
+        Also toggles visibility of manual-line buttons (PCA-only feature).
+
         Args:
             choice: Engine name: 'PCA', 'ECC', or 'Phase Correlation'.
         """
         self.manager.active_engine = choice
         self.control_panel.switch_engine(choice)
+        self.tools_panel.show_manual_buttons(choice == "PCA")
         self.canvas_panel.clear_photo_cache()
         self.load_and_render()
 
@@ -467,7 +471,7 @@ class SlideshowView(QWidget):
         """Start automatic frame cycling."""
         self.manager.autoplay_active = True
         self.navbar.autoplay_button.setText("\u23f8 Pause")
-        self.navbar.autoplay_button.setStyleSheet("background-color: #cc5500; color: white;")
+        set_active_btn(self.navbar.autoplay_button)
         self._autoplay_timer = QTimer(self)
         self._autoplay_timer.setInterval(self.manager.autoplay_speed_ms)
         self._autoplay_timer.timeout.connect(self._autoplay_tick)
@@ -477,10 +481,7 @@ class SlideshowView(QWidget):
         """Stop automatic frame cycling."""
         self.manager.autoplay_active = False
         self.navbar.autoplay_button.setText("\u25ba Play")
-        from rixs_app.ui.theme import PALETTE
-        self.navbar.autoplay_button.setStyleSheet(
-            f"background-color: {PALETTE['accent_green']}; color: white;"
-        )
+        set_play_btn(self.navbar.autoplay_button)
         if self._autoplay_timer is not None:
             self._autoplay_timer.stop()
             self._autoplay_timer = None
@@ -511,7 +512,15 @@ class SlideshowView(QWidget):
 
     def toggle_warp(self) -> None:
         """Toggle dynamic alignment warping on/off."""
-        self.manager.warp_enabled = self.navbar.warp_checkbox.isChecked()
+        self.manager.warp_enabled = not getattr(self.manager, 'warp_enabled', True)
+        if self.manager.warp_enabled:
+            self.navbar.warp_button.setText("Warp: ON")
+            from rixs_app.ui.theme import set_success_btn
+            set_success_btn(self.navbar.warp_button)
+        else:
+            self.navbar.warp_button.setText("Warp: OFF")
+            from rixs_app.ui.theme import set_tool_btn
+            set_tool_btn(self.navbar.warp_button)
         self.canvas_panel.clear_photo_cache()
         self.load_and_render()
 
@@ -522,14 +531,11 @@ class SlideshowView(QWidget):
             if getattr(self.manager, 'manual_mode', False):
                 self.toggle_manual_mode()
             self.tools_panel.zoom_in_button.setText("\U0001f50d Click Zoom...")
-            self.tools_panel.zoom_in_button.setStyleSheet(
-                "background-color: #cc5500; color: white;"
-            )
+            set_active_btn(self.tools_panel.zoom_in_button)
             self.canvas_panel.setCursor(Qt.CrossCursor)
         else:
             self.tools_panel.zoom_in_button.setText("\U0001f50d+ Zoom In")
-            from rixs_app.ui.theme import neutral_style
-            self.tools_panel.zoom_in_button.setStyleSheet(neutral_style())
+            set_tool_btn(self.tools_panel.zoom_in_button)
             self.canvas_panel.unsetCursor()
 
     def toggle_manual_mode(self) -> None:
@@ -539,15 +545,12 @@ class SlideshowView(QWidget):
             if getattr(self.manager, 'zoom_mode', False):
                 self.toggle_zoom_mode()
             self.tools_panel.manual_line_button.setText("\u270f Click 2 pts...")
-            self.tools_panel.manual_line_button.setStyleSheet(
-                "background-color: #cc5500; color: white;"
-            )
+            set_active_btn(self.tools_panel.manual_line_button)
             self.manager.manual_clicks.clear()
             self.canvas_panel.setCursor(Qt.CrossCursor)
         else:
             self.tools_panel.manual_line_button.setText("\u270f Manual Line")
-            from rixs_app.ui.theme import neutral_style
-            self.tools_panel.manual_line_button.setStyleSheet(neutral_style())
+            set_tool_btn(self.tools_panel.manual_line_button)
             self.canvas_panel.unsetCursor()
 
     def clear_manual_line(self) -> None:
@@ -692,40 +695,101 @@ class SlideshowView(QWidget):
             )
 
     def trigger_export(self) -> None:
-        """Compute alignment offsets and launch the background export worker."""
+        """Compute alignment offsets and launch the background export worker.
+
+        Both the offset computation and the sum generation run off the
+        GUI thread so the interface remains responsive throughout.
+        """
         self.stop_autoplay()
+        self._set_export_ui_state(False)
         self.export_panel.progress_label.setText("Computing offsets...")
 
-        def _progress_offsets(idx: int, total: int) -> None:
-            self.export_panel.progress_label.setText(
-                f"Computing offsets: {idx}/{total}..."
-            )
+        def _export_worker() -> None:
+            """Background worker: compute offsets then aligned/direct sums."""
+            n_frames = len(self.manager.file_list)
 
-        offsets = self.manager.compute_all_offsets_for_export(_progress_offsets)
-        self.export_panel.progress_label.setText("")
-
-        first_file = self.manager.file_list[0]
-        initial_dir = os.path.dirname(first_file)
-        self._set_export_ui_state(False)
-
-        def on_progress(msg: str) -> None:
-            self.export_panel.progress_label.setText(msg)
-
-        def on_complete(success: bool, result) -> None:
-            self._set_export_ui_state(True)
-            self.export_panel.progress_label.setText("")
-            if success:
-                aligned_sum, direct_sum = result
-                if self.on_show_export_comparison:
-                    self.on_show_export_comparison(aligned_sum, direct_sum, initial_dir)
-            else:
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.critical(
-                    self, "Export Failed",
-                    f"An error occurred during export:\n{result}"
+            def _progress_offsets(idx: int, total: int) -> None:
+                self._result_queue.put(
+                    lambda i=idx, t=total: self.export_panel.progress_label.setText(
+                        f"Computing offsets: {i}/{t}..."
+                    )
                 )
 
-        self.manager.compute_both_sums(offsets, on_progress, on_complete)
+            offsets = self.manager.compute_all_offsets_for_export(_progress_offsets)
+
+            # Now compute the sums (also in this same worker thread)
+            first_file = self.manager.file_list[0]
+            initial_dir = os.path.dirname(first_file)
+
+            try:
+                from rixs_app.core import generate_direct_sum, generate_aligned_sum
+
+                ref_raw = self.manager.get_raw(first_file)
+                if ref_raw is None:
+                    self._result_queue.put(
+                        lambda: self._finish_export(False, "Could not load reference frame.")
+                    )
+                    return
+
+                def _progress_direct(current, total):
+                    self._result_queue.put(
+                        lambda c=current, t=total: self.export_panel.progress_label.setText(
+                            f"Computing Direct Sum: {c}/{t}..."
+                        )
+                    )
+
+                direct_sum = generate_direct_sum(
+                    self.manager.file_list, self.manager.get_raw,
+                    ref_raw.shape, progress_callback=_progress_direct,
+                )
+
+                def _progress_aligned(current, total):
+                    self._result_queue.put(
+                        lambda c=current, t=total: self.export_panel.progress_label.setText(
+                            f"Computing Aligned Sum: {c}/{t}..."
+                        )
+                    )
+
+                aligned_sum = generate_aligned_sum(
+                    self.manager.file_list, self.manager.get_raw, offsets,
+                    ref_raw.shape, progress_callback=_progress_aligned,
+                )
+
+                self._result_queue.put(
+                    lambda: self._finish_export(True, (aligned_sum, direct_sum), initial_dir)
+                )
+            except Exception as e:
+                self._result_queue.put(
+                    lambda err=str(e): self._finish_export(False, err)
+                )
+
+        threading.Thread(target=_export_worker, daemon=True).start()
+
+    def _finish_export(
+        self,
+        success: bool,
+        result,
+        initial_dir: str = "",
+    ) -> None:
+        """Handle export completion on the GUI thread.
+
+        Args:
+            success: True if export succeeded.
+            result: (aligned_sum, direct_sum) tuple on success, or error string.
+            initial_dir: Default save directory for the comparison view.
+        """
+        self._set_export_ui_state(True)
+        self.export_panel.progress_label.setText("")
+        if success:
+            aligned_sum, direct_sum = result
+            if self.on_show_export_comparison:
+                self.on_show_export_comparison(aligned_sum, direct_sum, initial_dir)
+        else:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self, "Export Failed",
+                f"An error occurred during export:\n{result}"
+            )
 
     def _set_export_ui_state(self, enabled: bool) -> None:
         """Enable or disable UI elements during an export operation.
@@ -739,7 +803,7 @@ class SlideshowView(QWidget):
             self.tools_panel.manual_line_button, self.tools_panel.clear_manual_button,
             self.tools_panel.zoom_in_button, self.tools_panel.zoom_out_button,
             self.tools_panel.reset_view_button,
-            self.navbar.colormap_menu, self.navbar.warp_checkbox,
+            self.navbar.colormap_menu, self.control_panel.warp_button,
             self.export_panel.export_button,
         ]:
             w.setEnabled(enabled)
@@ -843,8 +907,8 @@ class SlideshowView(QWidget):
 
     @property
     def warp_switch(self):
-        """Warp checkbox (proxy to navbar warp_checkbox)."""
-        return self.navbar.warp_checkbox
+        """Warp button (proxy to control_panel warp_button)."""
+        return self.control_panel.warp_button
 
     @property
     def pca_slider(self):

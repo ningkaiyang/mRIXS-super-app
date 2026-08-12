@@ -6,7 +6,7 @@ A compact bottom bar showing export progress and a compare-and-save button.
 from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QLabel
-from rixs_app.ui.theme import PALETTE, accent_style
+from rixs_app.ui.theme import set_accent_btn
 
 
 class SlideshowExportPanel(QFrame):
@@ -39,6 +39,6 @@ class SlideshowExportPanel(QFrame):
 
         self.export_button = QPushButton("\U0001f4be Compare and Save")
         self.export_button.setFixedSize(200, 35)
-        self.export_button.setStyleSheet(accent_style())
+        set_accent_btn(self.export_button)
         self.export_button.clicked.connect(self.controller.trigger_export)
         layout.addWidget(self.export_button)

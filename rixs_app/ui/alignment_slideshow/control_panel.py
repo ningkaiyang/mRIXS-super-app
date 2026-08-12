@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QCheckBox, QStackedWidget, QWidget,
 )
 from PySide6.QtCore import Qt
-from rixs_app.ui.theme import PALETTE, accent_style, neutral_style
+from rixs_app.ui.theme import PALETTE, set_tool_btn, set_accent_btn, set_success_btn
 
 
 class PcaSettingsPanel(QWidget):
@@ -56,13 +56,13 @@ class PcaSettingsPanel(QWidget):
 
         self.auto_snap_button = QPushButton("Auto")
         self.auto_snap_button.setFixedWidth(55)
-        self.auto_snap_button.setStyleSheet(neutral_style())
+        set_tool_btn(self.auto_snap_button)
         self.auto_snap_button.clicked.connect(self.controller.trigger_auto_snap)
         layout.addWidget(self.auto_snap_button)
 
         self.auto_all_button = QPushButton("Auto All")
         self.auto_all_button.setFixedWidth(75)
-        self.auto_all_button.setStyleSheet(accent_style())
+        set_accent_btn(self.auto_all_button)
         self.auto_all_button.clicked.connect(self.controller.trigger_auto_snap_all)
         layout.addWidget(self.auto_all_button)
 
@@ -195,7 +195,7 @@ class EccSettingsPanel(QWidget):
 
         self.precompute_button = QPushButton("Precompute All")
         self.precompute_button.setFixedWidth(130)
-        self.precompute_button.setStyleSheet(accent_style())
+        set_accent_btn(self.precompute_button)
         self.precompute_button.clicked.connect(self.controller.trigger_auto_snap_all)
         layout.addWidget(self.precompute_button)
 
@@ -240,7 +240,7 @@ class PhaseCorrelationSettingsPanel(QWidget):
 
         self.precompute_button = QPushButton("Precompute All")
         self.precompute_button.setFixedWidth(130)
-        self.precompute_button.setStyleSheet(accent_style())
+        set_accent_btn(self.precompute_button)
         self.precompute_button.clicked.connect(self.controller.trigger_auto_snap_all)
         layout.addWidget(self.precompute_button)
 
@@ -278,7 +278,12 @@ class SlideshowControlPanel(QFrame):
         outer.setContentsMargins(6, 4, 6, 4)
         outer.setSpacing(4)
 
-        # Engine settings stack ------------------------------------------------
+        # Engine settings stack + Warp button row -------------------------------
+        engine_row = QFrame()
+        engine_layout = QHBoxLayout(engine_row)
+        engine_layout.setContentsMargins(0, 0, 0, 0)
+        engine_layout.setSpacing(8)
+
         self.pca_panel = PcaSettingsPanel(self, controller=controller)
         self.ecc_panel = EccSettingsPanel(self, controller=controller)
         self.phase_correlation_panel = PhaseCorrelationSettingsPanel(
@@ -290,7 +295,15 @@ class SlideshowControlPanel(QFrame):
         self._engine_stack.addWidget(self.ecc_panel)            # index 1
         self._engine_stack.addWidget(self.phase_correlation_panel)  # index 2
         self._engine_stack.setCurrentIndex(1)  # default: ECC
-        outer.addWidget(self._engine_stack)
+        engine_layout.addWidget(self._engine_stack, stretch=1)
+
+        self.warp_button = QPushButton("Warp: ON")
+        self.warp_button.setFixedWidth(100)
+        set_success_btn(self.warp_button)
+        self.warp_button.clicked.connect(self.controller.toggle_warp)
+        engine_layout.addWidget(self.warp_button)
+
+        outer.addWidget(engine_row)
 
         # Frame slider row -----------------------------------------------------
         slider_row = QFrame()
@@ -357,6 +370,7 @@ class SlideshowControlPanel(QFrame):
             enabled: True to enable, False to disable.
         """
         self._active_engine_panel.set_ui_state(enabled)
+        self.warp_button.setEnabled(enabled)
         self.frame_slider.setEnabled(enabled)
 
     def sync_timeline_label(self, current: int, total: int) -> None:

@@ -175,6 +175,7 @@ class SlideshowCanvasPanel(QWidget):
         Args:
             event: The QMouseEvent.
         """
+        self.setFocus()
         if event.button() == Qt.LeftButton:
             self.controller.handle_canvas_click(event)
 

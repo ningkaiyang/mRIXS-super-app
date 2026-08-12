@@ -84,6 +84,58 @@ class RixsApp(QMainWindow):
             self._maximize_window()
             self.show()
 
+        app = QApplication.instance()
+        if app:
+            app.installEventFilter(self)
+
+    # ------------------------------------------------------------------
+    # Global Event Filter for Keyboard Navigation
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        """Intercept application-wide events for focus clearing and frame navigation.
+
+        Clears focus from QLineEdit text inputs whenever the user clicks outside them
+        or presses Return/Escape, ensuring Left/Right arrow keys navigate frames reliably.
+        """
+        from PySide6.QtCore import QEvent
+        from PySide6.QtWidgets import QLineEdit, QTextEdit
+
+        # Clear text box focus on mouse click outside the focused text input
+        if event.type() == QEvent.MouseButtonPress:
+            focused = self.focusWidget()
+            if isinstance(focused, (QLineEdit, QTextEdit)):
+                if watched is not focused and not focused.isAncestorOf(watched):
+                    focused.clearFocus()
+
+        elif event.type() == QEvent.KeyPress:
+            key = event.key()
+            focused = self.focusWidget()
+
+            if isinstance(focused, (QLineEdit, QTextEdit)):
+                if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape):
+                    focused.clearFocus()
+                return super().eventFilter(watched, event)
+
+            if key in (Qt.Key_Left, Qt.Key_Right):
+                current = self._stack.currentIndex()
+                if key == Qt.Key_Left:
+                    if current == _IDX_SLIDESHOW:
+                        self.slideshow_view.prev_frame()
+                        return True
+                    elif current == _IDX_ZEROTH_ORDER:
+                        self.zeroth_order_view.prev_frame()
+                        return True
+                elif key == Qt.Key_Right:
+                    if current == _IDX_SLIDESHOW:
+                        self.slideshow_view.next_frame()
+                        return True
+                    elif current == _IDX_ZEROTH_ORDER:
+                        self.zeroth_order_view.next_frame()
+                        return True
+
+        return super().eventFilter(watched, event)
+
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
@@ -130,6 +182,10 @@ class RixsApp(QMainWindow):
     def show_slideshow_from_comparison(self) -> None:
         """Return from the comparison view back to the slideshow."""
         self._stack.setCurrentIndex(_IDX_SLIDESHOW)
+        focused = self.focusWidget()
+        if focused:
+            focused.clearFocus()
+        self.setFocus()
 
     # ------------------------------------------------------------------
     # Keyboard navigation
@@ -138,16 +194,20 @@ class RixsApp(QMainWindow):
     def keyPressEvent(self, event) -> None:  # noqa: N802
         """Handle global left/right arrow key presses for frame navigation.
 
+        Skips interception when focus is on a text input, combo box, or
+        slider — those widgets need arrow keys for their own cursor /
+        selection navigation.
+
         Args:
             event: The ``QKeyEvent``.
         """
         current = self._stack.currentIndex()
         key = event.key()
 
-        # Don't swallow slider-focused events
+        # Don't swallow events when an interactive input widget has focus
         focused = self.focusWidget()
-        from PySide6.QtWidgets import QSlider
-        if isinstance(focused, QSlider):
+        from PySide6.QtWidgets import QSlider, QLineEdit, QComboBox
+        if isinstance(focused, (QSlider, QLineEdit, QComboBox)):
             super().keyPressEvent(event)
             return
 
