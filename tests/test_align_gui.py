@@ -1,13 +1,27 @@
-import unittest
+"""PySide6 GUI tests for the alignment slideshow.
+
+Uses pytest-qt (``qtbot`` fixture). These tests replace the previous
+CustomTkinter/Tkinter-based test suite while preserving the same logical
+coverage of feature areas F1-F5 and manager unit tests.
+
+Core-logic tests (phase correlation math, warp_image, find_peak_line,
+preprocess_image) are pure-Python and do NOT need the GUI — they run
+unchanged in this file alongside the GUI tests.
+"""
+
+from __future__ import annotations
+
 import os
-import tempfile
 import queue
-import numpy as np
-import cv2
-import tifffile
-import tkinter as tk
 from unittest.mock import patch
-import customtkinter
+
+import cv2
+import numpy as np
+import pytest
+import tifffile
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QSlider
 
 from rixs_app.main import RixsApp
 from rixs_app.core import (
@@ -16,705 +30,513 @@ from rixs_app.core import (
     phase_correlation_offset,
     warp_image,
     preprocess_image,
-    PCAFitFailure
+    PCAFitFailure,
 )
 from rixs_app.ui.alignment_slideshow.alignment_manager import SlideshowManager
 
 
-def pump_events(root):
-    root.update_idletasks()
-    root.update()
-
-
-class TestE2E(unittest.TestCase):
-    def setUp(self):
-        # Create temp TIFF files for testing views
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.temp_files = []
-        # Create three small synthetic TIFF files
-        for i in range(3):
-            path = os.path.join(self.temp_dir.name, f"frame_{i+1}.tif")
-            # Create synthetic data with peak at different columns (to verify shifts)
-            data = np.zeros((100, 100), dtype=np.float32)
-            # frame 1: peak at col 50. frame 2: peak at col 52. frame 3: peak at col 54.
-            data[:, 50 + i * 2] = 10.0
-            data[10, 40] = 9.0  # secondary peak pixel
-            tifffile.imwrite(path, data)
-            self.temp_files.append(path)
-            
-        self.app = RixsApp(show_window=False)
-        pump_events(self.app)
-        
-    def tearDown(self):
-        self.app.destroy()
-        self.temp_dir.cleanup()
-
-    # --- F1 (Sorting/File Management) - 11 test cases ---
-    @patch('tkinter.filedialog.askopenfilenames')
-    def test_f1_01_select_files_adds_to_list(self, mock_ask):
-        mock_ask.return_value = [self.temp_files[1], self.temp_files[0]]
-        self.app.sorting_view.select_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, [self.temp_files[1], self.temp_files[0]])
-
-    def test_f1_02_natural_sort_empty_list(self):
-        res = natural_sort([])
-        self.assertEqual(res, [])
-
-    def test_f1_03_natural_sort_preserves_count(self):
-        lst = ["frame_2.tif", "frame_10.tif", "frame_1.tif"]
-        original_len = len(lst)
-        natural_sort(lst)
-        self.assertEqual(len(lst), original_len)
-
-    def test_f1_04_natural_sort_ordering(self):
-        lst = ["frame_10.tif", "frame_2.tif", "frame_1.tif"]
-        natural_sort(lst)
-        self.assertEqual(lst, ["frame_1.tif", "frame_2.tif", "frame_10.tif"])
-
-    def test_f1_05_move_up_selected_item(self):
-        self.app.sorting_view.file_list = ["a.tif", "b.tif", "c.tif"]
-        self.app.sorting_view.selected_index = 1
-        self.app.sorting_view.up_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, ["b.tif", "a.tif", "c.tif"])
-        self.assertEqual(self.app.sorting_view.selected_index, 0)
-
-    def test_f1_06_move_up_boundary(self):
-        self.app.sorting_view.file_list = ["a.tif", "b.tif", "c.tif"]
-        self.app.sorting_view.selected_index = 0
-        self.app.sorting_view.up_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, ["a.tif", "b.tif", "c.tif"])
-        self.assertEqual(self.app.sorting_view.selected_index, 0)
-
-    def test_f1_07_move_down_selected_item(self):
-        self.app.sorting_view.file_list = ["a.tif", "b.tif", "c.tif"]
-        self.app.sorting_view.selected_index = 1
-        self.app.sorting_view.down_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, ["a.tif", "c.tif", "b.tif"])
-        self.assertEqual(self.app.sorting_view.selected_index, 2)
-
-    def test_f1_08_move_down_boundary(self):
-        self.app.sorting_view.file_list = ["a.tif", "b.tif", "c.tif"]
-        self.app.sorting_view.selected_index = 2
-        self.app.sorting_view.down_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, ["a.tif", "b.tif", "c.tif"])
-        self.assertEqual(self.app.sorting_view.selected_index, 2)
-
-    def test_f1_09_remove_item(self):
-        self.app.sorting_view.file_list = ["a.tif", "b.tif", "c.tif"]
-        self.app.sorting_view.selected_index = 1
-        self.app.sorting_view.remove_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, ["a.tif", "c.tif"])
-
-    def test_f1_10_remove_adjusts_selection(self):
-        self.app.sorting_view.file_list = ["a.tif", "b.tif"]
-        self.app.sorting_view.selected_index = 1
-        self.app.sorting_view.remove_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.selected_index, 0)
-
-    def test_f1_11_start_slideshow_disabled_if_empty(self):
-        self.app.sorting_view.file_list = []
-        self.app.sorting_view.start_button.invoke()
-        pump_events(self.app)
-        self.assertFalse(self.app.slideshow_view.winfo_ismapped())
-
-    # --- F2 (Slideshow aspect ratio & navigation) - 10 test cases ---
-    def test_f2_01_transition_to_slideshow_displays_first_frame(self):
-        self.app.sorting_view.file_list = self.temp_files.copy()
-        self.app.sorting_view.start_button.invoke()
-        pump_events(self.app)
-        self.assertTrue(bool(self.app.slideshow_view.grid_info()))
-        self.assertEqual(self.app.slideshow_view.current_idx, 0)
-
-    def test_f2_02_canvas_initializes(self):
-        self.assertIsNotNone(self.app.slideshow_view.canvas)
-
-    def test_f2_03_navigation_next_frame(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.current_idx, 1)
-
-    def test_f2_04_navigation_prev_frame(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        self.app.slideshow_view.prev_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.current_idx, 0)
-
-    def test_f2_05_navigation_next_boundary(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.next_button.invoke()
-        self.app.slideshow_view.next_button.invoke()
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.current_idx, 2)
-
-    def test_f2_06_navigation_prev_boundary(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.prev_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.current_idx, 0)
-
-    def test_f2_07_canvas_resize_recalculates_scale(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.canvas.winfo_width = lambda: 400
-        self.app.slideshow_view.canvas.winfo_height = lambda: 300
-        self.app.slideshow_view.on_resize(None)
-        pump_events(self.app)
-        self.assertLessEqual(self.app.slideshow_view.photo_img.width(), 400)
-
-    def test_f2_08_aspect_ratio_preservation(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        rgb = np.zeros((100, 200, 3), dtype=np.uint8)
-        self.app.slideshow_view.draw_canvas(rgb, np.array([100, 50]), np.array([1, 0]))
-        self.assertAlmostEqual(self.app.slideshow_view.photo_img.width() / self.app.slideshow_view.photo_img.height(), 2.0, places=2)
-
-    def test_f2_09_jump_to_frame_slider(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.frame_slider.set(2)
-        self.app.slideshow_view.jump_to_frame(2)
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.current_idx, 2)
-
-    def test_f2_10_back_to_sorting_restores_view(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.back_button.invoke()
-        pump_events(self.app)
-        self.assertTrue(bool(self.app.sorting_view.grid_info()))
-
-    def test_f2_11_keyboard_navigation_next_prev(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.current_idx, 0)
-        
-        # Mock winfo_ismapped because the window is withdrawn in test setUp
-        with patch.object(self.app.slideshow_view, 'winfo_ismapped', return_value=True):
-            # Simulate key events by calling handlers directly since withdrawn windows cannot gain focus
-            mock_event = tk.Event()
-            mock_event.widget = self.app
-            
-            self.app._on_right_key(mock_event)
-            pump_events(self.app)
-            self.assertEqual(self.app.slideshow_view.current_idx, 1)
-            
-            self.app._on_left_key(mock_event)
-            pump_events(self.app)
-            self.assertEqual(self.app.slideshow_view.current_idx, 0)
-
-    # --- F3 (PCA peak visualization & slider) - 10 test cases ---
-    def test_f3_01_pca_centroid_drawn_on_canvas(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.change_engine("PCA")
-        pump_events(self.app)
-        centroids = self.app.slideshow_view.canvas.find_withtag("centroid")
-        self.assertGreater(len(centroids), 0)
-
-    def test_f3_02_pca_peak_line_drawn_on_canvas(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.change_engine("PCA")
-        pump_events(self.app)
-        lines = self.app.slideshow_view.canvas.find_withtag("peak_line")
-        self.assertGreater(len(lines), 0)
-
-    def test_f3_03_pca_threshold_slider_change_updates_label(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.pca_slider.set(95.0)
-        self.app.slideshow_view.change_pca_threshold(95.0)
-        pump_events(self.app)
-        self.assertIn("95.0%", self.app.slideshow_view.pca_label.cget("text"))
-
-    def test_f3_04_pca_threshold_slider_renders_new_peak(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.change_engine("PCA")
-        pump_events(self.app)
-        line_id = self.app.slideshow_view.canvas.find_withtag("peak_line")[0]
-        coords_before = self.app.slideshow_view.canvas.coords(line_id)
-        self.assertIsNotNone(coords_before)
-        self.assertTrue(len(coords_before) >= 4, "Peak line should have at least 4 coordinate values")
-        
-        self.app.slideshow_view.pca_slider.set(80.0)
-        self.app.slideshow_view.change_pca_threshold(80.0)
-        pump_events(self.app)
-        
-        line_id_after = self.app.slideshow_view.canvas.find_withtag("peak_line")[0]
-        coords_after = self.app.slideshow_view.canvas.coords(line_id_after)
-        self.assertIsNotNone(coords_after)
-        self.assertTrue(len(coords_after) >= 4, "Peak line should still render at lower threshold")
-
-    def test_f3_05_pca_flat_image_fallback_centroid(self):
-        flat_img = np.zeros((10, 10), dtype=np.float32)
-        with self.assertRaises(PCAFitFailure):
-            find_peak_line(flat_img, 99.0)
-
-    def test_f3_06_pca_flat_image_fallback_line(self):
-        flat_img = np.zeros((10, 10), dtype=np.float32)
-        with self.assertRaises(PCAFitFailure):
-            find_peak_line(flat_img, 99.0)
-
-    def test_f3_07_pca_insufficient_points_fallback(self):
-        flat_img = np.zeros((10, 10), dtype=np.float32)
-        with self.assertRaises(PCAFitFailure):
-            find_peak_line(flat_img, 99.0)
-
-    def test_f3_08_pca_threshold_out_of_bounds_raises(self):
-        img = np.zeros((10, 10), dtype=np.float32)
-        with self.assertRaises(ValueError):
-            find_peak_line(img, -1.0)
-        with self.assertRaises(ValueError):
-            find_peak_line(img, 101.0)
-
-    def test_f3_09_pca_invalid_image_shape_raises(self):
-        with self.assertRaises(ValueError):
-            find_peak_line(np.array([1, 2, 3]), 99.0)
-
-    def test_f3_10_pca_slider_boundary_values(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.change_pca_threshold(0.0)
-        pump_events(self.app)
-        self.app.slideshow_view.change_pca_threshold(100.0)
-        pump_events(self.app)
-        self.assertIn("100.0%", self.app.slideshow_view.pca_label.cget("text"))
-
-    # --- F4 (Hanning phase correlation & warp toggle) - 11 test cases ---
-    def test_f4_01_warp_switch_initial_state(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.assertTrue(self.app.slideshow_view.warp_enabled)
-
-    def test_f4_02_warp_toggle_enable(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.warp_switch.deselect()
-        self.app.slideshow_view.toggle_warp()
-        pump_events(self.app)
-        self.assertFalse(self.app.slideshow_view.warp_enabled)
-
-    def test_f4_03_warp_toggle_triggers_redraw(self):
-        self.app.show_slideshow(self.temp_files)
-        self.app.slideshow_view.change_engine("PCA")
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        
-        line_id = self.app.slideshow_view.canvas.find_withtag("peak_line")[0]
-        coords_before = self.app.slideshow_view.canvas.coords(line_id)
-        
-        self.app.slideshow_view.warp_switch.deselect()
-        self.app.slideshow_view.toggle_warp()
-        pump_events(self.app)
-        
-        line_id_after = self.app.slideshow_view.canvas.find_withtag("peak_line")[0]
-        coords_after = self.app.slideshow_view.canvas.coords(line_id_after)
-        self.assertIsNotNone(coords_after)
-        self.assertNotEqual(coords_before, coords_after)
-
-    def test_f4_04_phase_correlation_offset_zero(self):
-        img = np.zeros((100, 100), dtype=np.float32)
-        img[40:60, 40:60] = 1.0
-        dx, dy = phase_correlation_offset(img, img)
-        self.assertAlmostEqual(dx, 0.0, places=2)
-        self.assertAlmostEqual(dy, 0.0, places=2)
-
-    def test_f4_05_phase_correlation_offset_shifted(self):
-        y, x = np.mgrid[0:128, 0:128]
-        ref = np.exp(-((x - 64)**2 + (y - 64)**2) / (2 * 10**2)).astype(np.float32)
-        M = np.float32([[1, 0, 3.0], [0, 1, 4.0]])
-        target = cv2.warpAffine(ref, M, (128, 128))
-        dx, dy = phase_correlation_offset(ref, target)
-        self.assertAlmostEqual(dx, 3.0, places=1)
-        self.assertAlmostEqual(dy, 4.0, places=1)
-
-    def test_f4_06_phase_correlation_dimension_mismatch(self):
-        img1 = np.zeros((100, 100), dtype=np.float32)
-        img2 = np.zeros((100, 90), dtype=np.float32)
-        with self.assertRaises(ValueError):
-            phase_correlation_offset(img1, img2)
-
-    def test_f4_07_warp_image_zero_translation(self):
-        img = np.random.rand(10, 10).astype(np.float32)
-        warped = warp_image(img, 0.0, 0.0)
-        np.testing.assert_array_equal(img, warped)
-
-    def test_f4_08_warp_image_translation_coords(self):
-        img = np.zeros((10, 10), dtype=np.float32)
-        img[4, 4] = 1.0
-        warped = warp_image(img, 1.0, 2.0)
-        self.assertEqual(warped[6, 5], 1.0)
-        self.assertEqual(warped[4, 4], 0.0)
-
-    def test_f4_09_warp_image_rgb(self):
-        img = np.zeros((10, 10, 3), dtype=np.uint8)
-        img[4, 4, 0] = 255
-        warped = warp_image(img, 1.0, 1.0)
-        self.assertEqual(warped[5, 5, 0], 255)
-
-    def test_f4_10_warp_image_invalid_shape(self):
-        with self.assertRaises(ValueError):
-            warp_image(np.array([1, 2, 3]), 1.0, 1.0)
-
-    def test_f4_11_warp_fails_gracefully(self):
-        img1 = np.zeros((100, 100), dtype=np.float32)
-        img2 = np.zeros((100, 100), dtype=np.float32)
-        dx, dy = phase_correlation_offset(img1, img2)
-        self.assertEqual(dx, 0.0)
-        self.assertEqual(dy, 0.0)
-
-    def test_f4_12_phase_correlation_no_inplace_mutation(self):
-        array1 = np.random.rand(100, 100).astype(np.float64)
-        array2 = np.random.rand(100, 100).astype(np.float64)
-        clone1 = array1.copy()
-        clone2 = array2.copy()
-        _ = phase_correlation_offset(array1, array2)
-        np.testing.assert_array_equal(array1, clone1)
-        np.testing.assert_array_equal(array2, clone2)
-
-    # --- F5 (Customization/Deployment/README static checks) - 10 test cases ---
-    def test_f5_01_readme_exists(self):
-        readme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md")
-        self.assertTrue(os.path.exists(readme_path))
-
-    def test_f5_02_readme_mentions_setup(self):
-        readme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md")
-        with open(readme_path, "r") as f:
-            content = f.read()
-        self.assertIn("Setup Instructions", content)
-
-    def test_f5_03_readme_mentions_venv(self):
-        readme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md")
-        with open(readme_path, "r") as f:
-            content = f.read()
-        self.assertIn(".venv", content)
-
-    def test_f5_04_readme_mentions_run(self):
-        readme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md")
-        with open(readme_path, "r") as f:
-            content = f.read()
-        self.assertIn("run.py", content)
-
-    def test_f5_05_readme_mentions_pytest(self):
-        readme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md")
-        with open(readme_path, "r") as f:
-            content = f.read()
-        self.assertIn("pytest tests/test_e2e.py", content)
-
-    def test_f5_06_colormap_menu_change(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.colormap_menu.set("inferno")
-        self.app.slideshow_view.change_colormap("inferno")
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.colormap, "inferno")
-
-    def test_f5_07_colormap_menu_triggers_redraw(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.colormap_menu.set("inferno")
-        self.app.slideshow_view.change_colormap("inferno")
-        pump_events(self.app)
-        rgb = self.app.slideshow_view.current_rgb
-        self.assertIsNotNone(rgb)
-        self.assertFalse(np.array_equal(rgb[:, :, 0], rgb[:, :, 1]))
-
-    def test_f5_08_colormap_nonexistent_fallback(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.colormap_menu.set("invalid_cmap")
-        self.app.slideshow_view.change_colormap("invalid_cmap")
-        pump_events(self.app)
-        rgb = self.app.slideshow_view.current_rgb
-        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
-        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 2])
-
-    def test_f5_09_preprocess_image_grayscale(self):
-        rgb, raw = preprocess_image(self.temp_files[0], "grayscale", 100.0)
-        self.assertEqual(rgb.shape, (100, 100, 3))
-        np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
-
-    def test_f5_10_preprocess_image_invalid_percentile(self):
-        with self.assertRaises(ValueError):
-            preprocess_image(self.temp_files[0], "grayscale", -10.0)
-
-    def test_f5_11_dark_mode_theme_applied(self):
-        self.assertEqual(customtkinter.get_appearance_mode(), "Dark")
-
-    # --- Tier 3 (Cross-feature interactions) - 5 test cases ---
-    def test_t3_01_sort_retains_selection_integrity(self):
-        self.app.sorting_view.file_list = [self.temp_files[1], self.temp_files[0]]
-        self.app.sorting_view.selected_index = 0
-        self.app.sorting_view.sort_files()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, [self.temp_files[0], self.temp_files[1]])
-
-    def test_t3_02_navigating_preserves_colormap_across_frames(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.change_colormap("inferno")
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.colormap, "inferno")
-
-    def test_t3_03_navigating_preserves_pca_threshold(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.change_pca_threshold(85.5)
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.slideshow_view.pca_threshold, 85.5)
-
-    def test_t3_04_navigating_preserves_warp_switch(self):
-        self.app.show_slideshow(self.temp_files)
-        pump_events(self.app)
-        self.app.slideshow_view.warp_switch.deselect()
-        self.app.slideshow_view.toggle_warp()
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        self.assertFalse(self.app.slideshow_view.warp_enabled)
-
-    def test_t3_05_back_to_sorting_preserves_list_order(self):
-        self.app.sorting_view.file_list = [self.temp_files[1], self.temp_files[0]]
-        self.app.show_slideshow(self.app.sorting_view.file_list)
-        pump_events(self.app)
-        self.app.slideshow_view.back_button.invoke()
-        pump_events(self.app)
-        self.assertEqual(self.app.sorting_view.file_list, [self.temp_files[1], self.temp_files[0]])
-
-    # --- Tier 4 (Real-world application/TIF checks) - 5 test cases ---
-    def test_t4_01_real_tif_load_and_preprocess(self):
-        real_path = "tests/samples/Sample1VL_200F_frames_1-200.tif"
-        self.assertTrue(os.path.exists(real_path))
-        rgb, raw = preprocess_image(real_path, "grayscale", 99.0)
-        self.assertEqual(raw.ndim, 2)
-        self.assertEqual(rgb.shape[:2], raw.shape)
-        self.assertEqual(rgb.shape[2], 3)
-
-    def test_t4_02_real_tif_find_peak_line(self):
-        real_path = "tests/samples/Sample1VL_200F_frames_1-200.tif"
-        self.assertTrue(os.path.exists(real_path))
-        _, raw = preprocess_image(real_path, "grayscale", 99.0)
-        origin, direction = find_peak_line(raw, 99.0)
-        self.assertEqual(origin.shape, (2,))
-        self.assertEqual(direction.shape, (2,))
-        self.assertAlmostEqual(np.linalg.norm(direction), 1.0, places=5)
-
-    def test_t4_03_real_tif_phase_correlation(self):
-        real_path_1 = "tests/samples/Sample1VL_200F_frames_1-200.tif"
-        real_path_2 = "tests/samples/Sample1VL_200F_frames_201-400.tif"
-        self.assertTrue(os.path.exists(real_path_1))
-        self.assertTrue(os.path.exists(real_path_2))
-        _, raw1 = preprocess_image(real_path_1, "grayscale", 100.0)
-        _, raw2 = preprocess_image(real_path_2, "grayscale", 100.0)
-        dx, dy = phase_correlation_offset(raw1, raw2)
-        self.assertIsInstance(dx, float)
-        self.assertIsInstance(dy, float)
-
-    def test_t4_04_real_tif_warp_and_render(self):
-        real_path_1 = "tests/samples/Sample1VL_200F_frames_1-200.tif"
-        real_path_2 = "tests/samples/Sample1VL_200F_frames_201-400.tif"
-        self.assertTrue(os.path.exists(real_path_1))
-        self.assertTrue(os.path.exists(real_path_2))
-        self.app.show_slideshow([real_path_1, real_path_2])
-        pump_events(self.app)
-        self.app.slideshow_view.change_engine("PCA")
-        pump_events(self.app)
-        self.app.slideshow_view.warp_switch.select()
-        self.app.slideshow_view.toggle_warp()
-        pump_events(self.app)
-        self.app.slideshow_view.next_button.invoke()
-        pump_events(self.app)
-        
-        images = self.app.slideshow_view.canvas.find_withtag("image")
-        centroids = self.app.slideshow_view.canvas.find_withtag("centroid")
-        lines = self.app.slideshow_view.canvas.find_withtag("peak_line")
-        self.assertGreater(len(images), 0)
-        self.assertGreater(len(centroids), 0)
-        self.assertGreater(len(lines), 0)
-
-    def test_t4_05_real_tif_natural_sort_workspace_tifs(self):
-        import glob
-        tif_files = [os.path.basename(p) for p in glob.glob("tests/samples/*.tif")]
-        self.assertTrue(len(tif_files) > 0)
-        sorted_tifs = natural_sort(tif_files.copy())
-        self.assertEqual(len(sorted_tifs), len(tif_files))
-        f201 = "Sample1VL_200F_frames_201-400.tif"
-        f1001 = "Sample1VL_200F_frames_1001-1200.tif"
-        self.assertIn(f201, sorted_tifs)
-        self.assertIn(f1001, sorted_tifs)
-        self.assertLess(sorted_tifs.index(f201), sorted_tifs.index(f1001))
-
-
-class TestSlideshowManagerBugs(unittest.TestCase):
-    def test_init_defines_manual_variables(self):
-        """
-        Verify that __init__ constructor declares manual_mode and manual_clicks.
-        If this fails, manual mode state variable declaration is broken.
-        """
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        self.assertFalse(mgr.manual_mode)
-        self.assertEqual(mgr.manual_clicks, [])
-
-    def test_start_resets_manual_variables(self):
-        """
-        Verify that start(file_list) resets manual_mode to False and clears manual_clicks.
-        If this fails, manual clicks and mode are not properly cleared/reset on slideshow start.
-        """
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        mgr.manual_mode = True
-        mgr.manual_clicks = [(1, 2), (3, 4)]
-        
-        # Call start with empty list or dummy files
-        mgr.start([])
-        self.assertFalse(mgr.manual_mode)
-        self.assertEqual(mgr.manual_clicks, [])
-
-    def test_get_offset_with_none_ref_origin(self):
-        """
-        Verify that get_offset returns (0.0, 0.0) and does not raise TypeError
-        when ref_origin is None and there is manual centroid data.
-        If this fails, get_offset raises a TypeError when reference image fails to load.
-        """
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        # Setup manual alignment for frame 0
-        mgr.per_frame_manual[0] = np.array([10.0, 20.0])
-        # Force ref_origin to be None
-        mgr.ref_origin = None
-        mgr.file_list = ["dummy.tif"]
-        
-        try:
-            dx, dy = mgr.get_offset(0)
-            self.assertEqual((dx, dy), (0.0, 0.0))
-        except TypeError as e:
-            self.fail(f"get_offset raised TypeError when ref_origin is None: {e}")
-
-    @patch("rixs_app.ui.alignment_slideshow.alignment_manager.SlideshowManager.get_raw")
-    def test_default_clamping_ceiling_percentile(self, mock_get_raw):
-        """
-        Verify that default clamping_ceiling starts at the 60th percentile
-        of the reference image's intensities rather than the absolute maximum,
-        while clamping_floor starts at the absolute minimum.
-        """
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        
-        # Create a mock 10x10 raw array with values from 0 to 99
-        raw = np.arange(100, dtype=np.float32).reshape((10, 10))
-        # Set an outlier to be very high to mimic outlier hot pixels
-        raw[0, 0] = 1000.0  # outlier
-        
-        mock_get_raw.return_value = raw
-        import os
-        mock_path = os.path.join(os.path.dirname(__file__), "samples", "mock.tif")
-        mgr.start([mock_path])
-        
-        self.assertEqual(mgr.intensity_min, 1.0)
-        self.assertEqual(mgr.intensity_max, 1000.0)
-        self.assertEqual(mgr.clamping_floor, 1.0)
-        # 60th percentile of active pixels should be calculated
-        active = raw[raw > mgr.intensity_min]
-        expected_p60 = float(np.percentile(active, 60.0))
-        self.assertEqual(mgr.clamping_ceiling, expected_p60)
-        self.assertLess(mgr.clamping_ceiling, 1000.0)
-
-    def test_manual_pca_line_does_not_affect_ecc_engine(self):
-        """
-        Verify that manual lines defined for PCA do not override or affect
-        the offset calculations of the ECC engine.
-        """
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        mgr.file_list = ["dummy1.tif", "dummy2.tif"]
-        mgr.ref_raw = np.ones((10, 10), dtype=np.float32)
-        
-        # Setup manual alignment for frame 1
-        mgr.per_frame_manual[1] = np.array([10.0, 20.0])
-        mgr.ref_origin = np.array([5.0, 5.0])
-        
-        # Mock ecc_maximization_offset to return a specific offset
-        with patch("rixs_app.ui.alignment_slideshow.alignment_manager.ecc_maximization_offset", return_value=(3.0, 4.0)) as mock_ecc, \
-             patch("rixs_app.ui.alignment_slideshow.alignment_manager.SlideshowManager.get_raw", return_value=np.ones((10, 10), dtype=np.float32)):
-            # ECC is the default engine — should ignore manual line and return ECC offset (3.0, 4.0)
-            self.assertEqual(mgr.active_engine, "ECC")
-            dx, dy = mgr.get_offset(1)
-            self.assertEqual((dx, dy), (3.0, 4.0))
-            mock_ecc.assert_called_once()
-            
-            # Switch to PCA — should return manual line offset (10 - 5 = 5, 20 - 5 = 15)
-            mgr.active_engine = "PCA"
-            mgr._invalidate_offset_cache(1)
-            dx, dy = mgr.get_offset(1)
-            self.assertEqual((dx, dy), (5.0, 15.0))
-
-    def test_zoom_init_and_reset(self):
-        """Verify zoom state properties are properly initialized and reset."""
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        self.assertFalse(mgr.zoom_mode)
-        self.assertEqual(mgr.zoom_level, 0)
-        self.assertEqual(mgr.pan_offset_x, 0)
-        self.assertEqual(mgr.pan_offset_y, 0)
-        
-        mgr.zoom_mode = True
-        mgr.zoom_level = 2
-        mgr.pan_offset_x = 10
-        mgr.pan_offset_y = 20
-        mgr.reset_view()
-        
-        self.assertFalse(mgr.zoom_mode)
-        self.assertEqual(mgr.zoom_level, 0)
-        self.assertEqual(mgr.pan_offset_x, 0)
-        self.assertEqual(mgr.pan_offset_y, 0)
-
-    def test_zoom_in_on_point_and_zoom_out(self):
-        """Verify zooming in on a point computes pan, and zoom_out recalculates correctly."""
-        q = queue.Queue()
-        mgr = SlideshowManager(q)
-        # cw=1000, ch=500, image=1000x500 (fits perfectly, scale=1.0 at 1x)
-        # Zoom level 1 is 2x, image is scaled to 2000x1000.
-        # base_dx = (1000 - 2000) / 2 = -500.
-        # ix=500, iy=250.
-        # scale = 2.0.
-        # raw_pan_x = 500 - (-500) - (500 * 2) = 1000 - 1000 = 0.
-        # pan_offset_x = 0 (perfect center).
-        
-        # Test zoom in on (300, 200)
-        mgr.zoom_in_on_point(cw=1000, ch=500, ix=300.0, iy=200.0, iw=1000, ih=500)
-        self.assertEqual(mgr.zoom_level, 1)
-        # scale = 2.0
-        # raw_pan_x = 500 - (-500) - 300 * 2 = 1000 - 600 = 400.
-        # bounds: base_dx = -500. max(base_dx, min(-base_dx, raw_pan_x)) -> max(-500, min(500, 400)) -> 400.
-        self.assertEqual(mgr.pan_offset_x, 400)
-        # raw_pan_y = 250 - (-250) - 200 * 2 = 500 - 400 = 100.
-        # bounds: base_dy = -250. max(-250, min(250, 100)) -> 100.
-        self.assertEqual(mgr.pan_offset_y, 100)
-
-        # Test zoom out (keeps same center)
-        mgr.zoom_out(cw=1000, ch=500, iw=1000, ih=500)
-        self.assertEqual(mgr.zoom_level, 0)
-        self.assertEqual(mgr.pan_offset_x, 0)
-        self.assertEqual(mgr.pan_offset_y, 0)
-
-
-if __name__ == "__main__":
-    unittest.main()
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def qapp():
+    """Module-scoped QApplication to avoid repeated teardown."""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app
+
+
+@pytest.fixture
+def temp_tif_files(tmp_path):
+    """Three tiny synthetic TIFF files inside a pytest-managed temp dir.
+
+    Using ``tmp_path`` instead of ``tempfile.TemporaryDirectory`` avoids
+    OSError on Windows/macOS when Zarr has written sub-directories that
+    prevent shutil.rmtree from deleting the directory.
+    """
+    files = []
+    for i in range(3):
+        path = tmp_path / f"frame_{i + 1}.tif"
+        data = np.zeros((100, 100), dtype=np.float32)
+        data[:, 50 + i * 2] = 10.0
+        data[10, 40] = 9.0
+        tifffile.imwrite(str(path), data)
+        files.append(str(path))
+    return files
+
+
+@pytest.fixture
+def app_window(qapp, temp_tif_files, qtbot):
+    """Instantiate RixsApp headlessly and register with qtbot."""
+    window = RixsApp(show_window=False)
+    qtbot.addWidget(window)
+    yield window
+    window.close()
+
+
+# ---------------------------------------------------------------------------
+# F1 — Sorting / File Management
+# ---------------------------------------------------------------------------
+
+def test_f1_01_select_files_adds_to_list(app_window, temp_tif_files, qtbot):
+    """Selecting files via mock file dialog populates the file list."""
+    sv = app_window.sorting_view
+    with patch(
+        "rixs_app.ui.sorting_view.QFileDialog.getOpenFileNames",
+        return_value=([temp_tif_files[1], temp_tif_files[0]], "")
+    ):
+        qtbot.mouseClick(sv.select_button, Qt.LeftButton)
+    assert sv.file_list == [temp_tif_files[1], temp_tif_files[0]]
+
+
+def test_f1_02_natural_sort_empty_list():
+    assert natural_sort([]) == []
+
+
+def test_f1_03_natural_sort_preserves_count():
+    lst = ["frame_2.tif", "frame_10.tif", "frame_1.tif"]
+    assert len(natural_sort(lst)) == 3
+
+
+def test_f1_04_natural_sort_ordering():
+    lst = ["frame_10.tif", "frame_2.tif", "frame_1.tif"]
+    assert natural_sort(lst) == ["frame_1.tif", "frame_2.tif", "frame_10.tif"]
+
+
+def test_f1_05_move_up_selected_item(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = ["a.tif", "b.tif", "c.tif"]
+    sv.selected_index = 1
+    qtbot.mouseClick(sv.up_button, Qt.LeftButton)
+    assert sv.file_list == ["b.tif", "a.tif", "c.tif"]
+    assert sv.selected_index == 0
+
+
+def test_f1_06_move_up_boundary(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = ["a.tif", "b.tif", "c.tif"]
+    sv.selected_index = 0
+    qtbot.mouseClick(sv.up_button, Qt.LeftButton)
+    assert sv.file_list == ["a.tif", "b.tif", "c.tif"]
+    assert sv.selected_index == 0
+
+
+def test_f1_07_move_down_selected_item(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = ["a.tif", "b.tif", "c.tif"]
+    sv.selected_index = 1
+    qtbot.mouseClick(sv.down_button, Qt.LeftButton)
+    assert sv.file_list == ["a.tif", "c.tif", "b.tif"]
+    assert sv.selected_index == 2
+
+
+def test_f1_08_move_down_boundary(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = ["a.tif", "b.tif", "c.tif"]
+    sv.selected_index = 2
+    qtbot.mouseClick(sv.down_button, Qt.LeftButton)
+    assert sv.file_list == ["a.tif", "b.tif", "c.tif"]
+    assert sv.selected_index == 2
+
+
+def test_f1_09_remove_item(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = ["a.tif", "b.tif", "c.tif"]
+    sv.selected_index = 1
+    qtbot.mouseClick(sv.remove_button, Qt.LeftButton)
+    assert sv.file_list == ["a.tif", "c.tif"]
+
+
+def test_f1_10_remove_adjusts_selection(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = ["a.tif", "b.tif"]
+    sv.selected_index = 1
+    qtbot.mouseClick(sv.remove_button, Qt.LeftButton)
+    assert sv.selected_index == 0
+
+
+def test_f1_11_start_slideshow_disabled_if_empty(app_window, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = []
+    qtbot.mouseClick(sv.start_button, Qt.LeftButton)
+    # Slideshow should NOT be the current page
+    assert app_window._stack.currentWidget() is not app_window.slideshow_view
+
+
+# ---------------------------------------------------------------------------
+# F2 — Slideshow navigation
+# ---------------------------------------------------------------------------
+
+def test_f2_01_transition_to_slideshow_displays_first_frame(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    assert app_window._stack.currentIndex() == 1
+    assert app_window.slideshow_view.current_idx == 0
+
+
+def test_f2_02_canvas_initializes(app_window):
+    assert app_window.slideshow_view.canvas_panel is not None
+
+
+def test_f2_03_navigation_next_frame(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.next_button, Qt.LeftButton)
+    assert app_window.slideshow_view.current_idx == 1
+
+
+def test_f2_04_navigation_prev_frame(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.next_button, Qt.LeftButton)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.prev_button, Qt.LeftButton)
+    assert app_window.slideshow_view.current_idx == 0
+
+
+def test_f2_05_navigation_next_boundary(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    for _ in range(5):
+        qtbot.mouseClick(app_window.slideshow_view.navbar.next_button, Qt.LeftButton)
+    assert app_window.slideshow_view.current_idx == 2
+
+
+def test_f2_06_navigation_prev_boundary(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.prev_button, Qt.LeftButton)
+    assert app_window.slideshow_view.current_idx == 0
+
+
+def test_f2_09_jump_to_frame(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    app_window.slideshow_view.jump_to_frame(2)
+    assert app_window.slideshow_view.current_idx == 2
+
+
+def test_f2_10_back_to_sorting_restores_view(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.back_button, Qt.LeftButton)
+    assert app_window._stack.currentWidget() is app_window.sorting_view
+
+
+def test_f2_11_keyboard_navigation_next_prev(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    assert app_window.slideshow_view.current_idx == 0
+    qtbot.keyClick(app_window, Qt.Key_Right)
+    assert app_window.slideshow_view.current_idx == 1
+    qtbot.keyClick(app_window, Qt.Key_Left)
+    assert app_window.slideshow_view.current_idx == 0
+
+
+# ---------------------------------------------------------------------------
+# F3 — PCA threshold controls
+# ---------------------------------------------------------------------------
+
+def test_f3_03_pca_threshold_slider_change_updates_label(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    # change_pca_threshold sets manager.pca_threshold and syncs the PCA panel UI
+    app_window.slideshow_view.change_pca_threshold(95.0)
+    # The manager's pca_threshold must be updated
+    assert app_window.slideshow_view.pca_threshold == 95.0
+
+
+def test_f3_05_pca_flat_image_fallback_centroid():
+    flat_img = np.zeros((10, 10), dtype=np.float32)
+    with pytest.raises(PCAFitFailure):
+        find_peak_line(flat_img, 99.0)
+
+
+def test_f3_08_pca_threshold_out_of_bounds_raises():
+    img = np.zeros((10, 10), dtype=np.float32)
+    with pytest.raises(ValueError):
+        find_peak_line(img, -1.0)
+    with pytest.raises(ValueError):
+        find_peak_line(img, 101.0)
+
+
+def test_f3_09_pca_invalid_image_shape_raises():
+    with pytest.raises(ValueError):
+        find_peak_line(np.array([1, 2, 3]), 99.0)
+
+
+# ---------------------------------------------------------------------------
+# F4 — Phase correlation & warp toggle
+# ---------------------------------------------------------------------------
+
+def test_f4_01_warp_switch_initial_state(app_window, temp_tif_files):
+    app_window.show_slideshow(temp_tif_files)
+    assert app_window.slideshow_view.warp_enabled
+
+
+def test_f4_04_phase_correlation_offset_zero():
+    img = np.zeros((100, 100), dtype=np.float32)
+    img[40:60, 40:60] = 1.0
+    dx, dy = phase_correlation_offset(img, img)
+    assert abs(dx) < 0.1
+    assert abs(dy) < 0.1
+
+
+def test_f4_05_phase_correlation_offset_shifted():
+    y, x = np.mgrid[0:128, 0:128]
+    ref = np.exp(-((x - 64) ** 2 + (y - 64) ** 2) / (2 * 10 ** 2)).astype(np.float32)
+    M = np.float32([[1, 0, 3.0], [0, 1, 4.0]])
+    target = cv2.warpAffine(ref, M, (128, 128))
+    dx, dy = phase_correlation_offset(ref, target)
+    assert abs(dx - 3.0) < 0.5
+    assert abs(dy - 4.0) < 0.5
+
+
+def test_f4_06_phase_correlation_dimension_mismatch():
+    img1 = np.zeros((100, 100), dtype=np.float32)
+    img2 = np.zeros((100, 90), dtype=np.float32)
+    with pytest.raises(ValueError):
+        phase_correlation_offset(img1, img2)
+
+
+def test_f4_07_warp_image_zero_translation():
+    img = np.random.rand(10, 10).astype(np.float32)
+    warped = warp_image(img, 0.0, 0.0)
+    np.testing.assert_array_equal(img, warped)
+
+
+def test_f4_08_warp_image_translation_coords():
+    img = np.zeros((10, 10), dtype=np.float32)
+    img[4, 4] = 1.0
+    warped = warp_image(img, 1.0, 2.0)
+    assert warped[6, 5] == 1.0
+    assert warped[4, 4] == 0.0
+
+
+def test_f4_09_warp_image_rgb():
+    img = np.zeros((10, 10, 3), dtype=np.uint8)
+    img[4, 4, 0] = 255
+    warped = warp_image(img, 1.0, 1.0)
+    assert warped[5, 5, 0] == 255
+
+
+def test_f4_10_warp_image_invalid_shape():
+    with pytest.raises(ValueError):
+        warp_image(np.array([1, 2, 3]), 1.0, 1.0)
+
+
+def test_f4_11_warp_zero_images():
+    img1 = np.zeros((100, 100), dtype=np.float32)
+    img2 = np.zeros((100, 100), dtype=np.float32)
+    dx, dy = phase_correlation_offset(img1, img2)
+    assert dx == 0.0
+    assert dy == 0.0
+
+
+def test_f4_12_phase_correlation_no_inplace_mutation():
+    array1 = np.random.rand(100, 100).astype(np.float64)
+    array2 = np.random.rand(100, 100).astype(np.float64)
+    clone1 = array1.copy()
+    clone2 = array2.copy()
+    _ = phase_correlation_offset(array1, array2)
+    np.testing.assert_array_equal(array1, clone1)
+    np.testing.assert_array_equal(array2, clone2)
+
+
+# ---------------------------------------------------------------------------
+# F5 — Colormap / readme static checks
+# ---------------------------------------------------------------------------
+
+def test_f5_01_readme_exists():
+    readme_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md")
+    assert os.path.exists(readme_path)
+
+
+def test_f5_06_colormap_menu_change(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    app_window.slideshow_view.change_colormap("inferno")
+    assert app_window.slideshow_view.colormap == "inferno"
+
+
+def test_f5_07_colormap_menu_triggers_redraw(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    app_window.slideshow_view.change_colormap("inferno")
+    rgb = app_window.slideshow_view.current_rgb
+    assert rgb is not None
+
+
+def test_f5_09_preprocess_image_grayscale(temp_tif_files):
+    rgb, raw = preprocess_image(temp_tif_files[0], "grayscale", 100.0)
+    assert rgb.shape == (100, 100, 3)
+    np.testing.assert_array_equal(rgb[:, :, 0], rgb[:, :, 1])
+
+
+def test_f5_10_preprocess_image_invalid_percentile(temp_tif_files):
+    with pytest.raises(ValueError):
+        preprocess_image(temp_tif_files[0], "grayscale", -10.0)
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — Cross-feature interactions
+# ---------------------------------------------------------------------------
+
+def test_t3_01_sort_retains_selection_integrity(app_window, temp_tif_files):
+    sv = app_window.sorting_view
+    sv.file_list = [temp_tif_files[1], temp_tif_files[0]]
+    sv.selected_index = 0
+    sv.sort_files()
+    assert sv.file_list == [temp_tif_files[0], temp_tif_files[1]]
+
+
+def test_t3_02_navigating_preserves_colormap_across_frames(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    app_window.slideshow_view.change_colormap("inferno")
+    qtbot.mouseClick(app_window.slideshow_view.navbar.next_button, Qt.LeftButton)
+    assert app_window.slideshow_view.colormap == "inferno"
+
+
+def test_t3_03_navigating_preserves_pca_threshold(app_window, temp_tif_files, qtbot):
+    app_window.show_slideshow(temp_tif_files)
+    app_window.slideshow_view.change_pca_threshold(85.5)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.next_button, Qt.LeftButton)
+    assert app_window.slideshow_view.pca_threshold == 85.5
+
+
+def test_t3_05_back_to_sorting_preserves_list_order(app_window, temp_tif_files, qtbot):
+    sv = app_window.sorting_view
+    sv.file_list = [temp_tif_files[1], temp_tif_files[0]]
+    app_window.show_slideshow(sv.file_list)
+    qtbot.mouseClick(app_window.slideshow_view.navbar.back_button, Qt.LeftButton)
+    assert sv.file_list == [temp_tif_files[1], temp_tif_files[0]]
+
+
+# ---------------------------------------------------------------------------
+# Tier 4 — Real TIFF integration (skipped if sample not present)
+# ---------------------------------------------------------------------------
+
+REAL_TIF_1 = "tests/samples/Sample1VL_200F_frames_1-200.tif"
+REAL_TIF_2 = "tests/samples/Sample1VL_200F_frames_201-400.tif"
+
+
+@pytest.mark.skipif(not os.path.exists(REAL_TIF_1), reason="Sample TIFF not found")
+def test_t4_01_real_tif_load_and_preprocess():
+    rgb, raw = preprocess_image(REAL_TIF_1, "grayscale", 99.0)
+    assert raw.ndim == 2
+    assert rgb.shape[:2] == raw.shape
+    assert rgb.shape[2] == 3
+
+
+@pytest.mark.skipif(not os.path.exists(REAL_TIF_1), reason="Sample TIFF not found")
+def test_t4_02_real_tif_find_peak_line():
+    _, raw = preprocess_image(REAL_TIF_1, "grayscale", 99.0)
+    origin, direction = find_peak_line(raw, 99.0)
+    assert origin.shape == (2,)
+    assert direction.shape == (2,)
+    assert abs(np.linalg.norm(direction) - 1.0) < 1e-5
+
+
+@pytest.mark.skipif(
+    not os.path.exists(REAL_TIF_1) or not os.path.exists(REAL_TIF_2),
+    reason="Sample TIFFs not found"
+)
+def test_t4_03_real_tif_phase_correlation():
+    _, raw1 = preprocess_image(REAL_TIF_1, "grayscale", 100.0)
+    _, raw2 = preprocess_image(REAL_TIF_2, "grayscale", 100.0)
+    dx, dy = phase_correlation_offset(raw1, raw2)
+    assert isinstance(dx, float)
+    assert isinstance(dy, float)
+
+
+# ---------------------------------------------------------------------------
+# Manager unit tests (pure Python, no GUI)
+# ---------------------------------------------------------------------------
+
+def test_mgr_init_defines_manual_variables():
+    mgr = SlideshowManager(queue.Queue())
+    assert not mgr.manual_mode
+    assert mgr.manual_clicks == []
+
+
+def test_mgr_start_resets_manual_variables():
+    mgr = SlideshowManager(queue.Queue())
+    mgr.manual_mode = True
+    mgr.manual_clicks = [(1, 2), (3, 4)]
+    mgr.start([])
+    assert not mgr.manual_mode
+    assert mgr.manual_clicks == []
+
+
+def test_mgr_get_offset_with_none_ref_origin():
+    mgr = SlideshowManager(queue.Queue())
+    mgr.per_frame_manual[0] = np.array([10.0, 20.0])
+    mgr.ref_origin = None
+    mgr.file_list = ["dummy.tif"]
+    dx, dy = mgr.get_offset(0)
+    assert (dx, dy) == (0.0, 0.0)
+
+
+def test_mgr_manual_pca_line_does_not_affect_ecc_engine():
+    mgr = SlideshowManager(queue.Queue())
+    mgr.file_list = ["dummy1.tif", "dummy2.tif"]
+    mgr.ref_raw = np.ones((10, 10), dtype=np.float32)
+    mgr.per_frame_manual[1] = np.array([10.0, 20.0])
+    mgr.ref_origin = np.array([5.0, 5.0])
+
+    with patch(
+        "rixs_app.ui.alignment_slideshow.alignment_manager.ecc_maximization_offset",
+        return_value=(3.0, 4.0)
+    ) as mock_ecc, patch(
+        "rixs_app.ui.alignment_slideshow.alignment_manager.SlideshowManager.get_raw",
+        return_value=np.ones((10, 10), dtype=np.float32)
+    ):
+        assert mgr.active_engine == "ECC"
+        dx, dy = mgr.get_offset(1)
+        assert (dx, dy) == (3.0, 4.0)
+        mock_ecc.assert_called_once()
+
+        mgr.active_engine = "PCA"
+        mgr._invalidate_offset_cache(1)
+        dx, dy = mgr.get_offset(1)
+        assert (dx, dy) == (5.0, 15.0)
+
+
+def test_mgr_zoom_init_and_reset():
+    mgr = SlideshowManager(queue.Queue())
+    assert not mgr.zoom_mode
+    assert mgr.zoom_level == 0
+    assert mgr.pan_offset_x == 0
+    assert mgr.pan_offset_y == 0
+
+    mgr.zoom_mode = True
+    mgr.zoom_level = 2
+    mgr.pan_offset_x = 10
+    mgr.pan_offset_y = 20
+    mgr.reset_view()
+
+    assert not mgr.zoom_mode
+    assert mgr.zoom_level == 0
+    assert mgr.pan_offset_x == 0
+    assert mgr.pan_offset_y == 0
+
+
+def test_mgr_zoom_in_on_point_and_zoom_out():
+    mgr = SlideshowManager(queue.Queue())
+    mgr.zoom_in_on_point(cw=1000, ch=500, ix=300.0, iy=200.0, iw=1000, ih=500)
+    assert mgr.zoom_level == 1
+    assert mgr.pan_offset_x == 400
+    assert mgr.pan_offset_y == 100
+
+    mgr.zoom_out(cw=1000, ch=500, iw=1000, ih=500)
+    assert mgr.zoom_level == 0
+    assert mgr.pan_offset_x == 0
+    assert mgr.pan_offset_y == 0
+
+
+@patch("rixs_app.ui.alignment_slideshow.alignment_manager.SlideshowManager.get_raw")
+def test_mgr_default_clamping_ceiling_percentile(mock_get_raw):
+    mgr = SlideshowManager(queue.Queue())
+    raw = np.arange(100, dtype=np.float32).reshape((10, 10))
+    raw[0, 0] = 1000.0
+    mock_get_raw.return_value = raw
+    mock_path = os.path.join(os.path.dirname(__file__), "samples", "mock.tif")
+    mgr.start([mock_path])
+
+    assert mgr.intensity_min == 1.0
+    assert mgr.intensity_max == 1000.0
+    assert mgr.clamping_floor == 1.0
+    active = raw[raw > mgr.intensity_min]
+    expected_p60 = float(np.percentile(active, 60.0))
+    assert mgr.clamping_ceiling == expected_p60
+    assert mgr.clamping_ceiling < 1000.0

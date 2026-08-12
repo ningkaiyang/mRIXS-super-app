@@ -1,35 +1,44 @@
-# rixs_app/ui/slideshow/export_panel.py
+"""Alignment slideshow export panel — PySide6 port.
 
-import customtkinter
+A compact bottom bar showing export progress and a compare-and-save button.
+"""
 
-class SlideshowExportPanel(customtkinter.CTkFrame):
+from __future__ import annotations
+
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QLabel
+from rixs_app.ui.theme import PALETTE, accent_style
+
+
+class SlideshowExportPanel(QFrame):
+    """Bottom action bar for triggering the export comparison workflow.
+
+    Args:
+        parent: Parent widget.
+        controller: The ``SlideshowView`` controller.
     """
-    GUI panel displaying export progress and triggering the compilation of the aligned sum image.
 
-    Features:
-    - Progress Label: Displays status text during alignment estimation and frame accumulation.
-    - Export Button: Disables the UI during export, prompts the user for a save location, and launches 
-      the background export worker thread. Re-enables the UI upon completion.
-    """
-    def __init__(self, parent, controller, **kwargs):
-        """
-        Initialize the SlideshowExportPanel.
+    def __init__(self, parent=None, *, controller):
+        """Initialise the export panel.
 
         Args:
-            parent: The parent widget.
-            controller: The controller managing the slideshow logic and state.
-            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
         """
-        super().__init__(parent, **kwargs)
+        super().__init__(parent)
         self.controller = controller
 
-        self.progress_label = customtkinter.CTkLabel(self, text="", text_color="#aaaaaa")
-        self.progress_label.pack(side="left", padx=5)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
 
-        self.export_button = customtkinter.CTkButton(
-            self, text="💾 Compare and Save",
-            command=self.controller.trigger_export,
-            width=200, height=35,
-            fg_color="#2F72A5", hover_color="#1F5A85"
-        )
-        self.export_button.pack(side="left", padx=5)
+        self.progress_label = QLabel("")
+        self.progress_label.setObjectName("muted_label")
+        layout.addWidget(self.progress_label)
+
+        layout.addStretch()
+
+        self.export_button = QPushButton("\U0001f4be Compare and Save")
+        self.export_button.setFixedSize(200, 35)
+        self.export_button.setStyleSheet(accent_style())
+        self.export_button.clicked.connect(self.controller.trigger_export)
+        layout.addWidget(self.export_button)

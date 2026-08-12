@@ -1,68 +1,100 @@
-# rixs_app/ui/slideshow/navbar.py
+"""Alignment slideshow navigation bar — PySide6 port.
 
-import customtkinter
+Provides back/prev/next navigation, autoplay toggle, warp image switch,
+colormap selector, and alignment engine selector in a compact horizontal
+toolbar row.
+"""
 
-class SlideshowNavBar(customtkinter.CTkFrame):
+from __future__ import annotations
+
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QComboBox, QCheckBox, QLabel
+from PySide6.QtCore import Qt
+
+from rixs_app.ui.theme import PALETTE, success_style, neutral_style
+
+
+class SlideshowNavBar(QFrame):
+    """Top navigation bar for the alignment slideshow view.
+
+    Contains frame navigation buttons, autoplay toggle, warp toggle,
+    colormap dropdown, and alignment engine dropdown.
+
+    Args:
+        parent: Parent widget.
+        controller: The ``SlideshowView`` instance used to dispatch actions.
     """
-    Modular UI navigation bar positioned at the top of the slideshow view.
 
-    GUI Structure & Operations:
-      - Provides frame scrubbing buttons (Back, Prev, Next).
-      - Provides an autoplay toggle button linked to a periodic timer job in the main UI loop.
-      - Provides colormap selection menu (supporting viridis, inferno, plasma, magma, and grayscale).
-      - Provides toggle switches to show/hide the reference line overlay and enable/disable real-time warping.
-    """
-    def __init__(self, parent, controller, **kwargs):
-        """
-        Initialize the SlideshowNavBar.
+    def __init__(self, parent=None, *, controller):
+        """Initialise the navigation bar.
 
         Args:
-            parent: The parent widget.
-            controller: The controller managing the slideshow logic and state.
-            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
         """
-        super().__init__(parent, **kwargs)
+        super().__init__(parent)
         self.controller = controller
+        self.setObjectName("navbar_frame")
+        self.setFixedHeight(44)
 
-        self.back_button = customtkinter.CTkButton(
-            self, text="◀ Back", command=self.controller.back_to_sorting, width=80
-        )
-        self.back_button.pack(side="left", padx=5)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(6)
 
-        self.prev_button = customtkinter.CTkButton(
-            self, text="◀ Prev", command=self.controller.prev_frame, width=80
-        )
-        self.prev_button.pack(side="left", padx=5)
+        # --- Left controls ---
+        self.back_button = QPushButton("\u25c4 Back")
+        self.back_button.setFixedWidth(80)
+        self.back_button.clicked.connect(self.controller.back_to_sorting)
+        layout.addWidget(self.back_button)
 
-        self.next_button = customtkinter.CTkButton(
-            self, text="Next ▶", command=self.controller.next_frame, width=80
-        )
-        self.next_button.pack(side="left", padx=5)
+        self.prev_button = QPushButton("\u25c4 Prev")
+        self.prev_button.setFixedWidth(80)
+        self.prev_button.clicked.connect(self.controller.prev_frame)
+        layout.addWidget(self.prev_button)
 
-        self.autoplay_button = customtkinter.CTkButton(
-            self, text="▶ Play", command=self.controller.toggle_autoplay,
-            width=80, fg_color="#2FA572", hover_color="#238a5a"
-        )
-        self.autoplay_button.pack(side="left", padx=5)
+        self.next_button = QPushButton("Next \u25ba")
+        self.next_button.setFixedWidth(80)
+        self.next_button.clicked.connect(self.controller.next_frame)
+        layout.addWidget(self.next_button)
 
-        self.warp_switch = customtkinter.CTkSwitch(
-            self, text="Warp Image", command=self.controller.toggle_warp
-        )
-        self.warp_switch.select()
-        self.warp_switch.pack(side="right", padx=5)
+        self.autoplay_button = QPushButton("\u25ba Play")
+        self.autoplay_button.setFixedWidth(80)
+        self.autoplay_button.setStyleSheet(f"background-color: {PALETTE['accent_green']}; color: white;")
+        self.autoplay_button.clicked.connect(self.controller.toggle_autoplay)
+        layout.addWidget(self.autoplay_button)
 
-        self.colormap_menu = customtkinter.CTkOptionMenu(
-            self,
-            values=["viridis", "inferno", "plasma", "magma", "grayscale"],
-            command=self.controller.change_colormap
-        )
-        self.colormap_menu.set("viridis")
-        self.colormap_menu.pack(side="right", padx=5)
+        layout.addStretch()
 
-        self.engine_menu = customtkinter.CTkOptionMenu(
-            self,
-            values=["PCA", "ECC", "Phase Correlation"],
-            command=self.controller.change_engine
-        )
-        self.engine_menu.set("ECC")
-        self.engine_menu.pack(side="right", padx=5)
+        # --- Right controls ---
+        self.warp_checkbox = QCheckBox("Warp Image")
+        self.warp_checkbox.setChecked(True)
+        self.warp_checkbox.stateChanged.connect(self._on_warp_changed)
+        layout.addWidget(self.warp_checkbox)
+
+        self.colormap_menu = QComboBox()
+        self.colormap_menu.addItems(["viridis", "inferno", "plasma", "magma", "grayscale"])
+        self.colormap_menu.setCurrentText("viridis")
+        self.colormap_menu.currentTextChanged.connect(self.controller.change_colormap)
+        layout.addWidget(self.colormap_menu)
+
+        self.engine_menu = QComboBox()
+        self.engine_menu.addItems(["PCA", "ECC", "Phase Correlation"])
+        self.engine_menu.setCurrentText("ECC")
+        self.engine_menu.currentTextChanged.connect(self.controller.change_engine)
+        layout.addWidget(self.engine_menu)
+
+    # ------------------------------------------------------------------
+    # Compatibility shims (old code used .get() on warp_switch)
+    # ------------------------------------------------------------------
+
+    @property
+    def warp_switch(self):
+        """Alias so old code that references ``navbar.warp_switch`` still works."""
+        return self.warp_checkbox
+
+    def _on_warp_changed(self, state: int) -> None:
+        """Forward warp checkbox state change to the controller.
+
+        Args:
+            state: Qt check-state integer.
+        """
+        self.controller.toggle_warp()

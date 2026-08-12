@@ -1,187 +1,385 @@
-# rixs_app/ui/slideshow/control_panel.py
+"""Alignment slideshow control panel — PySide6 port.
 
-import customtkinter
+Contains engine-specific settings panels (PCA, ECC, Phase Correlation)
+and the timeline frame scrub slider.
+"""
 
-class PcaSettingsPanel(customtkinter.CTkFrame):
-    def __init__(self, parent, controller, **kwargs):
-        super().__init__(parent, **kwargs)
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QSlider,
+    QLineEdit, QCheckBox, QStackedWidget, QWidget,
+)
+from PySide6.QtCore import Qt
+from rixs_app.ui.theme import PALETTE, accent_style, neutral_style
+
+
+class PcaSettingsPanel(QWidget):
+    """Settings panel for the PCA alignment engine.
+
+    Provides a threshold slider, numeric entry, auto-snap buttons,
+    and a 'Show Ref Line' toggle checkbox.
+
+    Args:
+        parent: Parent widget.
+        controller: SlideshowView controller.
+    """
+
+    def __init__(self, parent=None, *, controller):
+        """Initialise the PCA settings panel.
+
+        Args:
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
+        """
+        super().__init__(parent)
         self.controller = controller
 
-        self.pca_label = customtkinter.CTkLabel(self, text="PCA Threshold: 99.9000%")
-        self.pca_label.pack(side="left", padx=5)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
 
-        self.pca_slider = customtkinter.CTkSlider(
-            self, from_=95.0, to=99.9999,
-            number_of_steps=4999, command=self.controller.handle_pca_slider_drag
-        )
-        self.pca_slider.set(99.9)
-        self.pca_slider.pack(side="left", fill="x", expand=True, padx=5)
+        self.pca_label = QLabel("PCA Threshold: 99.9000%")
+        layout.addWidget(self.pca_label)
 
-        self.pca_entry = customtkinter.CTkEntry(self, width=80, placeholder_text="99.9000")
-        self.pca_entry.pack(side="left", padx=2)
-        self.pca_entry.insert(0, "99.9000")
-        self.pca_entry.bind("<Return>", self._on_pca_entry_submit)
+        self.pca_slider = QSlider(Qt.Horizontal)
+        self.pca_slider.setMinimum(95000)
+        self.pca_slider.setMaximum(99999)
+        self.pca_slider.setValue(99900)
+        self.pca_slider.valueChanged.connect(self._on_slider_move)
+        layout.addWidget(self.pca_slider, stretch=1)
 
-        self.auto_snap_button = customtkinter.CTkButton(
-            self, text="Auto", command=self.controller.trigger_auto_snap,
-            width=50, fg_color="#555", hover_color="#777"
-        )
-        self.auto_snap_button.pack(side="left", padx=2)
+        self.pca_entry = QLineEdit("99.9000")
+        self.pca_entry.setFixedWidth(90)
+        self.pca_entry.returnPressed.connect(self._on_entry_submit)
+        layout.addWidget(self.pca_entry)
 
-        self.auto_all_button = customtkinter.CTkButton(
-            self, text="Auto All", command=self.controller.trigger_auto_snap_all,
-            width=65, fg_color="#2F72A5", hover_color="#1F5A85"
-        )
-        self.auto_all_button.pack(side="left", padx=2)
+        self.auto_snap_button = QPushButton("Auto")
+        self.auto_snap_button.setFixedWidth(55)
+        self.auto_snap_button.setStyleSheet(neutral_style())
+        self.auto_snap_button.clicked.connect(self.controller.trigger_auto_snap)
+        layout.addWidget(self.auto_snap_button)
 
-        self.show_line_switch = customtkinter.CTkSwitch(
-            self, text="Show Ref Line", command=self.controller._render_display
-        )
-        self.show_line_switch.select()
-        self.show_line_switch.pack(side="right", padx=5)
+        self.auto_all_button = QPushButton("Auto All")
+        self.auto_all_button.setFixedWidth(75)
+        self.auto_all_button.setStyleSheet(accent_style())
+        self.auto_all_button.clicked.connect(self.controller.trigger_auto_snap_all)
+        layout.addWidget(self.auto_all_button)
 
-    def set_ui_state(self, state: str):
-        self.pca_slider.configure(state=state)
-        self.pca_entry.configure(state=state)
-        self.auto_snap_button.configure(state=state)
-        self.auto_all_button.configure(state=state)
-        self.show_line_switch.configure(state=state)
+        # Show line toggle (right-aligned)
+        self.show_line_switch = QCheckBox("Show Ref Line")
+        self.show_line_switch.setChecked(True)
+        self.show_line_switch.stateChanged.connect(self.controller._render_display)
+        layout.addWidget(self.show_line_switch)
 
-    def _format_threshold(self, t):
+    # ------------------------------------------------------------------
+    # Slider value <-> float threshold conversion
+    # Slider range: 95000..99999 represents 95.000..99.999 %
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _slider_to_float(val: int) -> float:
+        """Convert slider integer position to float percentage.
+
+        Args:
+            val: Slider integer in range [95000, 99999].
+
+        Returns:
+            Float threshold percentage, e.g. 99.9.
+        """
+        return val / 1000.0
+
+    @staticmethod
+    def _float_to_slider(t: float) -> int:
+        """Convert float percentage threshold to slider integer.
+
+        Args:
+            t: Float threshold, e.g. 99.9.
+
+        Returns:
+            Slider integer.
+        """
+        return int(min(99999, max(95000, round(t * 1000))))
+
+    def _on_slider_move(self, val: int) -> None:
+        """Handle PCA slider drag without applying (debounced by controller).
+
+        Args:
+            val: Slider integer position.
+        """
+        t = self._slider_to_float(val)
+        self.controller.handle_pca_slider_drag(t)
+
+    def _on_entry_submit(self) -> None:
+        """Handle PCA entry box return-key submission."""
+        self.controller.handle_pca_entry_submit(self.pca_entry.text())
+
+    # ------------------------------------------------------------------
+    # Public sync helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fmt(t: float) -> str:
+        """Format threshold for display, stripping trailing zeros.
+
+        Args:
+            t: Float threshold value.
+
+        Returns:
+            Formatted string like '99.9' or '95.05'.
+        """
         s = f"{t:.4f}".rstrip('0')
-        if s.endswith('.'):
-            s += '0'
-        return s
+        return s if not s.endswith('.') else s + '0'
 
-    def sync_pca_elements(self, t):
-        self.pca_slider.set(min(t, 99.9999))
-        self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(t)}%")
-        self.pca_entry.delete(0, "end")
-        self.pca_entry.insert(0, f"{t:.4f}")
+    def sync_pca_elements(self, t: float) -> None:
+        """Synchronise slider, label, and entry to threshold t.
 
-    def sync_pca_label_and_entry(self, t):
-        self.pca_label.configure(text=f"PCA Threshold: {self._format_threshold(t)}%")
-        self.pca_entry.delete(0, "end")
-        self.pca_entry.insert(0, f"{t:.4f}")
+        Args:
+            t: New threshold value.
+        """
+        self.pca_slider.blockSignals(True)
+        self.pca_slider.setValue(self._float_to_slider(t))
+        self.pca_slider.blockSignals(False)
+        self.pca_label.setText(f"PCA Threshold: {self._fmt(t)}%")
+        self.pca_entry.setText(f"{t:.4f}")
 
-    def _on_pca_entry_submit(self, event=None):
-        self.controller.handle_pca_entry_submit(self.pca_entry.get())
+    def sync_pca_label_and_entry(self, t: float) -> None:
+        """Synchronise only the label and entry (during live drag).
+
+        Args:
+            t: New threshold value.
+        """
+        self.pca_label.setText(f"PCA Threshold: {self._fmt(t)}%")
+        self.pca_entry.setText(f"{t:.4f}")
+
+    def set_ui_state(self, enabled: bool) -> None:
+        """Enable or disable all interactive elements.
+
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        self.pca_slider.setEnabled(enabled)
+        self.pca_entry.setEnabled(enabled)
+        self.auto_snap_button.setEnabled(enabled)
+        self.auto_all_button.setEnabled(enabled)
+        self.show_line_switch.setEnabled(enabled)
 
 
-class EccSettingsPanel(customtkinter.CTkFrame):
-    def __init__(self, parent, controller, **kwargs):
-        super().__init__(parent, **kwargs)
+class EccSettingsPanel(QWidget):
+    """Settings panel for the ECC alignment engine.
+
+    Shows an informational label and a 'Precompute All' button.
+
+    Args:
+        parent: Parent widget.
+        controller: SlideshowView controller.
+    """
+
+    def __init__(self, parent=None, *, controller):
+        """Initialise the ECC settings panel.
+
+        Args:
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
+        """
+        super().__init__(parent)
         self.controller = controller
-        
-        self.info_label = customtkinter.CTkLabel(self, text="ECC uses automatic coarse-to-fine pyramiding.")
-        self.info_label.pack(side="left", fill="x", expand=True, padx=5)
 
-        self.precompute_button = customtkinter.CTkButton(
-            self, text="Precompute All", command=self.controller.trigger_auto_snap_all,
-            width=100, fg_color="#2F72A5", hover_color="#1F5A85"
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        layout.addWidget(
+            QLabel("ECC uses automatic coarse-to-fine pyramiding."), stretch=1
         )
-        self.precompute_button.pack(side="right", padx=2)
 
-    def set_ui_state(self, state: str):
-        self.precompute_button.configure(state=state)
+        self.precompute_button = QPushButton("Precompute All")
+        self.precompute_button.setFixedWidth(130)
+        self.precompute_button.setStyleSheet(accent_style())
+        self.precompute_button.clicked.connect(self.controller.trigger_auto_snap_all)
+        layout.addWidget(self.precompute_button)
+
+    def set_ui_state(self, enabled: bool) -> None:
+        """Enable or disable the precompute button.
+
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        self.precompute_button.setEnabled(enabled)
 
 
-class PhaseCorrelationSettingsPanel(customtkinter.CTkFrame):
+class PhaseCorrelationSettingsPanel(QWidget):
     """Settings panel for the Phase Correlation alignment engine.
 
-    Provides an informational label describing the algorithm and a
-    'Precompute All' button to batch-compute offsets for all frames.
+    Args:
+        parent: Parent widget.
+        controller: SlideshowView controller.
     """
-    def __init__(self, parent, controller, **kwargs):
-        """Initializes the PhaseCorrelationSettingsPanel.
+
+    def __init__(self, parent=None, *, controller):
+        """Initialise the phase correlation settings panel.
 
         Args:
-            parent: The parent widget.
-            controller: The controller managing the slideshow logic.
-            **kwargs: Additional keyword arguments for CTkFrame.
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
         """
-        super().__init__(parent, **kwargs)
+        super().__init__(parent)
         self.controller = controller
 
-        self.info_label = customtkinter.CTkLabel(
-            self, text="Phase Correlation uses Fourier-domain cross-correlation for sub-pixel drift estimation."
-        )
-        self.info_label.pack(side="left", fill="x", expand=True, padx=5)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
 
-        self.precompute_button = customtkinter.CTkButton(
-            self, text="Precompute All", command=self.controller.trigger_auto_snap_all,
-            width=100, fg_color="#2F72A5", hover_color="#1F5A85"
+        layout.addWidget(
+            QLabel(
+                "Phase Correlation uses Fourier-domain cross-correlation for "
+                "sub-pixel drift estimation."
+            ),
+            stretch=1,
         )
-        self.precompute_button.pack(side="right", padx=2)
 
-    def set_ui_state(self, state: str):
-        """Sets the interactive state of all child widgets.
+        self.precompute_button = QPushButton("Precompute All")
+        self.precompute_button.setFixedWidth(130)
+        self.precompute_button.setStyleSheet(accent_style())
+        self.precompute_button.clicked.connect(self.controller.trigger_auto_snap_all)
+        layout.addWidget(self.precompute_button)
+
+    def set_ui_state(self, enabled: bool) -> None:
+        """Enable or disable the precompute button.
 
         Args:
-            state (str): 'normal' or 'disabled'.
+            enabled: True to enable, False to disable.
         """
-        self.precompute_button.configure(state=state)
+        self.precompute_button.setEnabled(enabled)
 
 
-class SlideshowControlPanel(customtkinter.CTkFrame):
+class SlideshowControlPanel(QFrame):
+    """Compound control panel with engine settings and frame scrub slider.
+
+    Uses a ``QStackedWidget`` to swap engine-specific panels (PCA / ECC /
+    Phase Correlation) without recreating them.
+
+    Args:
+        parent: Parent widget.
+        controller: SlideshowView controller.
     """
-    GUI panel hosting Engine settings and timeline navigation elements.
-    """
-    def __init__(self, parent, controller, **kwargs):
-        super().__init__(parent, **kwargs)
+
+    def __init__(self, parent=None, *, controller):
+        """Initialise the control panel.
+
+        Args:
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
+        """
+        super().__init__(parent)
         self.controller = controller
 
-        self.pca_panel = PcaSettingsPanel(self, controller)
-        self.ecc_panel = EccSettingsPanel(self, controller)
-        self.phase_correlation_panel = PhaseCorrelationSettingsPanel(self, controller)
-        
-        # Start with ECC visible (the default engine)
-        self.active_engine_panel = self.ecc_panel
-        self.active_engine_panel.pack(fill="x", pady=2)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setSpacing(4)
 
-        # Frame slider row
-        self.frame_nav_frame = customtkinter.CTkFrame(self)
-        self.frame_nav_frame.pack(fill="x", pady=2)
-
-        self.frame_label = customtkinter.CTkLabel(self.frame_nav_frame, text="Frame: 0/0")
-        self.frame_label.pack(side="left", padx=5)
-
-        self.frame_slider = customtkinter.CTkSlider(
-            self.frame_nav_frame, from_=0, to=1,
-            number_of_steps=1, command=self.controller.handle_frame_slider_move
+        # Engine settings stack ------------------------------------------------
+        self.pca_panel = PcaSettingsPanel(self, controller=controller)
+        self.ecc_panel = EccSettingsPanel(self, controller=controller)
+        self.phase_correlation_panel = PhaseCorrelationSettingsPanel(
+            self, controller=controller
         )
-        self.frame_slider.set(0)
-        self.frame_slider.pack(side="left", fill="x", expand=True, padx=5)
 
-    def switch_engine(self, engine_name: str):
-        """Switches the visible engine settings panel based on the selected engine.
+        self._engine_stack = QStackedWidget()
+        self._engine_stack.addWidget(self.pca_panel)            # index 0
+        self._engine_stack.addWidget(self.ecc_panel)            # index 1
+        self._engine_stack.addWidget(self.phase_correlation_panel)  # index 2
+        self._engine_stack.setCurrentIndex(1)  # default: ECC
+        outer.addWidget(self._engine_stack)
+
+        # Frame slider row -----------------------------------------------------
+        slider_row = QFrame()
+        slider_layout = QHBoxLayout(slider_row)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.setSpacing(6)
+
+        self.frame_label = QLabel("Frame: 0/0")
+        self.frame_label.setObjectName("dim_label")
+        slider_layout.addWidget(self.frame_label)
+
+        self.frame_slider = QSlider(Qt.Horizontal)
+        self.frame_slider.setMinimum(0)
+        self.frame_slider.setMaximum(1)
+        self.frame_slider.setValue(0)
+        self.frame_slider.valueChanged.connect(
+            lambda v: self.controller.handle_frame_slider_move(v)
+        )
+        slider_layout.addWidget(self.frame_slider, stretch=1)
+
+        outer.addWidget(slider_row)
+
+        # Track current active panel for set_ui_state
+        self._active_engine_panel = self.ecc_panel
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def active_engine_panel(self):
+        """The currently visible engine-specific settings panel."""
+        return self._active_engine_panel
+
+    @property
+    def show_line_switch(self):
+        """Shortcut to the PCA panel's show-line checkbox."""
+        return self.pca_panel.show_line_switch
+
+    def switch_engine(self, engine_name: str) -> None:
+        """Switch the visible engine settings panel.
 
         Args:
-            engine_name (str): The name of the engine to switch to ('PCA', 'ECC', or 'Phase Correlation').
+            engine_name: One of 'PCA', 'ECC', or 'Phase Correlation'.
 
         Raises:
-            ValueError: If engine_name is not a recognized engine.
+            ValueError: If engine_name is unknown.
         """
-        self.active_engine_panel.pack_forget()
-        if engine_name == "PCA":
-            self.active_engine_panel = self.pca_panel
-        elif engine_name == "ECC":
-            self.active_engine_panel = self.ecc_panel
-        elif engine_name == "Phase Correlation":
-            self.active_engine_panel = self.phase_correlation_panel
-        else:
+        mapping = {
+            "PCA": (0, self.pca_panel),
+            "ECC": (1, self.ecc_panel),
+            "Phase Correlation": (2, self.phase_correlation_panel),
+        }
+        if engine_name not in mapping:
             raise ValueError(f"Unknown engine: {engine_name}")
-        self.active_engine_panel.pack(fill="x", pady=2, before=self.frame_nav_frame)
+        idx, panel = mapping[engine_name]
+        self._engine_stack.setCurrentIndex(idx)
+        self._active_engine_panel = panel
 
-    def set_ui_state(self, state: str):
-        self.active_engine_panel.set_ui_state(state)
-        self.frame_slider.configure(state=state)
+    def set_ui_state(self, enabled: bool) -> None:
+        """Enable or disable interactive elements across all panels.
 
-    def sync_timeline_label(self, current, total):
-        self.frame_label.configure(text=f"Frame: {current}/{total}")
+        Args:
+            enabled: True to enable, False to disable.
+        """
+        self._active_engine_panel.set_ui_state(enabled)
+        self.frame_slider.setEnabled(enabled)
 
-    def sync_pca_elements(self, t):
+    def sync_timeline_label(self, current: int, total: int) -> None:
+        """Update the frame counter label.
+
+        Args:
+            current: 1-based current frame index.
+            total: Total number of frames.
+        """
+        self.frame_label.setText(f"Frame: {current}/{total}")
+
+    def sync_pca_elements(self, t: float) -> None:
+        """Synchronise PCA slider, label, and entry to threshold t.
+
+        Args:
+            t: Threshold value to display.
+        """
         self.pca_panel.sync_pca_elements(t)
 
-    def sync_pca_label_and_entry(self, t):
+    def sync_pca_label_and_entry(self, t: float) -> None:
+        """Synchronise PCA label and entry only.
+
+        Args:
+            t: Threshold value to display.
+        """
         self.pca_panel.sync_pca_label_and_entry(t)

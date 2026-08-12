@@ -1,21 +1,41 @@
-"""Export panel for exporting side-by-side diagnostic plots for the whole sequence."""
+"""Zeroth-order slideshow export panel — PySide6 port."""
 
-import customtkinter
+from __future__ import annotations
 
-class ZerothOrderExportPanel(customtkinter.CTkFrame):
-    """UI bar containing bulk export triggers and background worker progress labels."""
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QLabel
+from rixs_app.ui.theme import accent_style
 
-    def __init__(self, parent, controller, **kwargs):
-        super().__init__(parent, **kwargs)
+
+class ZerothOrderExportPanel(QFrame):
+    """Bottom export bar for the zeroth-order slideshow.
+
+    Args:
+        parent: Parent widget.
+        controller: ZerothOrderSlideshowView controller.
+    """
+
+    def __init__(self, parent=None, *, controller):
+        """Initialise the export panel.
+
+        Args:
+            parent: Parent QWidget.
+            controller: ZerothOrderSlideshowView controller.
+        """
+        super().__init__(parent)
         self.controller = controller
 
-        self.progress_label = customtkinter.CTkLabel(self, text="", text_color="#aaaaaa")
-        self.progress_label.pack(side="left", padx=10)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
 
-        self.export_button = customtkinter.CTkButton(
-            self, text="💾 Export Diagnostic PNGs",
-            command=self.controller.trigger_export,
-            width=200, height=35,
-            fg_color="#2F72A5", hover_color="#1F5A85"
-        )
-        self.export_button.pack(side="right", padx=10)
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("muted_label")
+        layout.addWidget(self.status_label)
+
+        layout.addStretch()
+
+        self.export_button = QPushButton("\U0001f4be Export Calibration")
+        self.export_button.setFixedSize(200, 35)
+        self.export_button.setStyleSheet(accent_style())
+        self.export_button.clicked.connect(self.controller.trigger_export)
+        layout.addWidget(self.export_button)

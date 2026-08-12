@@ -1,11 +1,19 @@
-customtkinter==5.2.2
+# Core scientific stack
 numpy==2.4.6
 pillow==12.2.0
 tifffile==2026.6.1
 matplotlib==3.10.9
 opencv-python==4.13.0.92
-pytest==9.0.3
 scipy
 scikit-image
 zarr
+
+# GUI framework (PySide6 replaces customtkinter)
+PySide6>=6.6.0
+
+# Testing
+pytest==9.0.3
+pytest-qt>=4.4.0
+
+# Utilities
 pyshortcuts==1.9.9

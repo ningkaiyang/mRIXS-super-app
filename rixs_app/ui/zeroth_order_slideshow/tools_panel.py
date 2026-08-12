@@ -1,97 +1,208 @@
-"""Tools panel providing image zoom options, intensity clamping, fitted-line toggle, and energy dispersion input."""
+"""Zeroth-order slideshow tools panel — PySide6 port.
 
-import customtkinter
+Houses zoom controls, intensity slicing RangeSlider, fitted-line toggle,
+support-points toggle, extrapolation toggle, and energy dispersion input.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QFrame, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QLineEdit, QCheckBox,
+)
+from PySide6.QtCore import Qt
+from rixs_app.ui.theme import neutral_style
 from rixs_app.ui.widgets import RangeSlider
 
-class ZerothOrderToolsPanel(customtkinter.CTkFrame):
-    """Panel housing zoom helpers, custom RangeSlider, fitted-line toggle, and energy dispersion input."""
 
-    def __init__(self, parent, controller, **kwargs):
-        super().__init__(parent, **kwargs)
+class ZerothOrderToolsPanel(QFrame):
+    """Full tools panel for zeroth-order calibration view.
+
+    Provides zoom controls, intensity slicing (floor/ceiling via RangeSlider +
+    text entries), and display toggle checkboxes (support points, extrapolation,
+    fitted line).
+
+    Args:
+        parent: Parent widget.
+        controller: ZerothOrderSlideshowView controller.
+    """
+
+    def __init__(self, parent=None, *, controller):
+        """Initialise the tools panel.
+
+        Args:
+            parent: Parent QWidget.
+            controller: ZerothOrderSlideshowView controller.
+        """
+        super().__init__(parent)
         self.controller = controller
 
-        # Left side: Zoom Controls
-        self.zoom_in_button = customtkinter.CTkButton(
-            self, text="🔍+ Zoom In", command=self.controller.zoom_in,
-            width=100, fg_color="#555", hover_color="#777"
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setSpacing(6)
+
+        # --- Zoom controls ---
+        self.zoom_in_button = QPushButton("\U0001f50d+ Zoom In")
+        self.zoom_in_button.setFixedWidth(110)
+        self.zoom_in_button.setStyleSheet(neutral_style())
+        self.zoom_in_button.clicked.connect(self.controller.zoom_in)
+        layout.addWidget(self.zoom_in_button)
+
+        self.zoom_out_button = QPushButton("\U0001f50d- Zoom Out")
+        self.zoom_out_button.setFixedWidth(110)
+        self.zoom_out_button.setStyleSheet(neutral_style())
+        self.zoom_out_button.clicked.connect(self.controller.zoom_out)
+        layout.addWidget(self.zoom_out_button)
+
+        self.reset_view_button = QPushButton("\u27f2 Reset View")
+        self.reset_view_button.setFixedWidth(110)
+        self.reset_view_button.setStyleSheet(neutral_style())
+        self.reset_view_button.clicked.connect(self.controller.reset_view)
+        layout.addWidget(self.reset_view_button)
+
+        self.zoom_label = QLabel("Zoom: 1.0\u00d7")
+        layout.addWidget(self.zoom_label)
+
+        # --- Intensity slicing ---
+        layout.addWidget(QLabel("Slicing:"))
+
+        self.floor_entry = QLineEdit()
+        self.floor_entry.setFixedWidth(80)
+        self.floor_entry.returnPressed.connect(self._on_floor_submit)
+        layout.addWidget(self.floor_entry)
+
+        self.range_slider = RangeSlider(self, command=self.controller.handle_slicing_change)
+        self.range_slider.setMinimumWidth(120)
+        layout.addWidget(self.range_slider, stretch=1)
+
+        self.ceiling_entry = QLineEdit()
+        self.ceiling_entry.setFixedWidth(80)
+        self.ceiling_entry.returnPressed.connect(self._on_ceiling_submit)
+        layout.addWidget(self.ceiling_entry)
+
+        # --- Toggle checkboxes ---
+        self.show_support_points_var = False  # backing value
+        self.support_points_cb = QCheckBox("Show support points")
+        self.support_points_cb.setChecked(False)
+        self.support_points_cb.stateChanged.connect(
+            lambda _: self.controller.load_and_render()
         )
-        self.zoom_in_button.pack(side="left", padx=5)
+        layout.addWidget(self.support_points_cb)
 
-        self.zoom_out_button = customtkinter.CTkButton(
-            self, text="🔍- Zoom Out", command=self.controller.zoom_out,
-            width=100, fg_color="#555", hover_color="#777"
+        self.show_extrapolation_var = False
+        self.extrapolation_cb = QCheckBox("Show extrapolation")
+        self.extrapolation_cb.setChecked(False)
+        self.extrapolation_cb.stateChanged.connect(
+            lambda _: self.controller.load_and_render()
         )
-        self.zoom_out_button.pack(side="left", padx=2)
+        layout.addWidget(self.extrapolation_cb)
 
-        self.reset_view_button = customtkinter.CTkButton(
-            self, text="⟲ Reset View", command=self.controller.reset_view,
-            width=100, fg_color="#555", hover_color="#777"
+        self.show_fitted_line_var = True
+        self.fitted_line_cb = QCheckBox("Show fitted line")
+        self.fitted_line_cb.setChecked(True)
+        self.fitted_line_cb.stateChanged.connect(
+            lambda _: self.controller.load_and_render()
         )
-        self.reset_view_button.pack(side="left", padx=2)
+        layout.addWidget(self.fitted_line_cb)
 
-        self.zoom_label = customtkinter.CTkLabel(self, text="Zoom: 1.0×")
-        self.zoom_label.pack(side="left", padx=5)
+    # ------------------------------------------------------------------
+    # Checkbox value shims (old code accessed .get() on CTkBooleanVar)
+    # ------------------------------------------------------------------
 
-        # Right side: Slicing adjustments
-        self.slicing_label = customtkinter.CTkLabel(self, text="Slicing:")
-        self.slicing_label.pack(side="left", padx=(20, 5))
+    @property
+    def show_support_points_var(self):
+        """Boolean property for support points visibility."""
+        return _CheckboxShim(self, 'support_points_cb')
 
-        self.floor_entry = customtkinter.CTkEntry(self, width=80)
-        self.floor_entry.pack(side="left", padx=5)
-        self.floor_entry.bind("<Return>", self._on_floor_submit)
+    @show_support_points_var.setter
+    def show_support_points_var(self, val):
+        """Setter ignored (backing value stored in checkbox widget)."""
+        pass  # backing value stored in the QCheckBox
 
-        self.range_slider = RangeSlider(
-            self, height=25, command=self.controller.handle_slicing_change
-        )
-        self.range_slider.pack(side="left", fill="x", expand=True, padx=5)
+    @property
+    def show_extrapolation_var(self):
+        """Boolean property for extrapolation visibility."""
+        return _CheckboxShim(self, 'extrapolation_cb')
 
-        self.ceiling_entry = customtkinter.CTkEntry(self, width=80)
-        self.ceiling_entry.pack(side="left", padx=5)
-        self.ceiling_entry.bind("<Return>", self._on_ceiling_submit)
+    @show_extrapolation_var.setter
+    def show_extrapolation_var(self, val):
+        """Setter ignored (backing value stored in checkbox widget)."""
+        pass
 
-        # Options checkboxes and energy dispersion
-        self.options_frame = customtkinter.CTkFrame(self, fg_color="transparent")
-        self.options_frame.pack(side="left", padx=20)
+    @property
+    def show_fitted_line_var(self):
+        """Boolean property for fitted line visibility."""
+        return _CheckboxShim(self, 'fitted_line_cb')
 
-        self.show_support_points_var = customtkinter.BooleanVar(value=False)
-        self.support_points_cb = customtkinter.CTkCheckBox(
-            self.options_frame, text="Show support points",
-            variable=self.show_support_points_var,
-            command=self.controller.load_and_render
-        )
-        self.support_points_cb.pack(side="top", pady=2, anchor="w")
+    @show_fitted_line_var.setter
+    def show_fitted_line_var(self, val):
+        """Setter ignored (backing value stored in checkbox widget)."""
+        pass
 
-        self.show_extrapolation_var = customtkinter.BooleanVar(value=False)
-        self.extrapolation_cb = customtkinter.CTkCheckBox(
-            self.options_frame, text="Show fitted-line extrapolation",
-            variable=self.show_extrapolation_var,
-            command=self.controller.load_and_render
-        )
-        self.extrapolation_cb.pack(side="top", pady=2, anchor="w")
+    # ------------------------------------------------------------------
+    # Public sync API
+    # ------------------------------------------------------------------
 
-        # Show fitted line toggle (default ON)
-        self.show_fitted_line_var = customtkinter.BooleanVar(value=True)
-        self.fitted_line_cb = customtkinter.CTkCheckBox(
-            self.options_frame, text="Show fitted line",
-            variable=self.show_fitted_line_var,
-            command=self.controller.load_and_render
-        )
-        self.fitted_line_cb.pack(side="top", pady=2, anchor="w")
+    def sync_zoom_label(self, val) -> None:
+        """Update the zoom factor display.
 
+        Args:
+            val: Current zoom factor (float or int).
+        """
+        self.zoom_label.setText(f"Zoom: {float(val):.1f}\u00d7")
 
+    def sync_slicing_inputs(self, floor: float, ceiling: float) -> None:
+        """Synchronise the floor/ceiling entries and range slider.
 
-    def sync_zoom_label(self, val):
-        self.zoom_label.configure(text=f"Zoom: {val:.1f}×")
-
-    def sync_slicing_inputs(self, floor, ceiling):
-        self.floor_entry.delete(0, "end")
-        self.floor_entry.insert(0, f"{floor:.4f}")
-        self.ceiling_entry.delete(0, "end")
-        self.ceiling_entry.insert(0, f"{ceiling:.4f}")
+        Args:
+            floor: Current floor intensity value.
+            ceiling: Current ceiling intensity value.
+        """
+        self.floor_entry.setText(f"{floor:.4f}")
+        self.ceiling_entry.setText(f"{ceiling:.4f}")
         self.range_slider.set_values(floor, ceiling)
 
-    def _on_floor_submit(self, event=None):
-        self.controller.handle_floor_entry_submit(self.floor_entry.get())
+    # ------------------------------------------------------------------
+    # Internal handlers
+    # ------------------------------------------------------------------
 
-    def _on_ceiling_submit(self, event=None):
-        self.controller.handle_ceiling_entry_submit(self.ceiling_entry.get())
+    def _on_floor_submit(self) -> None:
+        """Handle return-key in the floor entry."""
+        self.controller.handle_floor_entry_submit(self.floor_entry.text())
+
+    def _on_ceiling_submit(self) -> None:
+        """Handle return-key in the ceiling entry."""
+        self.controller.handle_ceiling_entry_submit(self.ceiling_entry.text())
+
+
+class _CheckboxShim:
+    """Thin shim to make ``cb.get()`` work like a ``BooleanVar`` from Tkinter.
+
+    The old zeroth-order controller reads
+    ``self.tools_panel.show_support_points_var.get()``.
+    This shim wraps the underlying ``QCheckBox`` so the same call works.
+
+    Args:
+        panel: The parent ZerothOrderToolsPanel.
+        attr: String name of the QCheckBox attribute on the panel.
+    """
+
+    def __init__(self, panel, attr: str):
+        """Initialise the shim.
+
+        Args:
+            panel: Parent ZerothOrderToolsPanel widget.
+            attr: Name of the QCheckBox attribute.
+        """
+        self._panel = panel
+        self._attr = attr
+
+    def get(self) -> bool:
+        """Return the current check state of the underlying QCheckBox.
+
+        Returns:
+            True if checked, False otherwise.
+        """
+        cb = getattr(self._panel, self._attr, None)
+        if cb is None:
+            return False
+        return cb.isChecked()

@@ -1,279 +1,204 @@
+"""Sorting view — PySide6 port.
+
+Allows users to select, sort, and manage a list of TIFF files before
+launching the alignment slideshow or zeroth-order calibration.
+"""
+
+from __future__ import annotations
+
 import os
-import customtkinter
-import tkinter.filedialog
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QListWidget, QListWidgetItem, QFileDialog, QDialog,
+    QScrollArea, QDialogButtonBox, QMessageBox,
+)
+
 from rixs_app.core import natural_sort
+from rixs_app.ui.theme import PALETTE, accent_style
 
-class SortingView(customtkinter.CTkFrame):
-    """
-    A view that allows users to select, organize, and sort files for the slideshow.
 
-    This UI component provides buttons to add files via a file dialog, sort them
-    naturally, reorder them manually (up/down), and remove them. It acts as the
-    entry point before launching the main image analysis slideshow.
+class SortingView(QWidget):
+    """Main sorting/workspace view for the mRIXS Super-App.
+
+    Provides file selection, natural sort, manual up/down reorder,
+    file removal, and buttons to launch the alignment slideshow or
+    zeroth-order calibration.
+
+    Args:
+        parent: Parent widget.
+        on_start_slideshow: Callback invoked with a file list when the user
+            clicks Start Alignment Slideshow.
+        on_zeroth_order: Callback invoked with (file_list, txt_path=...) when
+            the user clicks Zeroth-Order Calibration.
     """
-    def __init__(self, parent, on_start_slideshow=None, on_zeroth_order=None, **kwargs):
-        """
-        Initialize the sorting view and set up the user interface.
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        on_start_slideshow=None,
+        on_zeroth_order=None,
+    ):
+        """Initialise the sorting view.
 
         Args:
-            parent: The parent widget that contains this frame.
-            on_start_slideshow (callable, optional): Callback triggered when the
-                start slideshow button is clicked.
-            on_zeroth_order (callable, optional): Callback triggered when the
-                zeroth-order calibration button is clicked.
-            **kwargs: Additional keyword arguments passed to the CTkFrame constructor.
+            parent: Parent QWidget.
+            on_start_slideshow: Callback for launching alignment slideshow.
+            on_zeroth_order: Callback for launching zeroth-order calibration.
         """
-        super().__init__(parent, **kwargs)
+        super().__init__(parent)
         self.on_start_slideshow = on_start_slideshow
         self.on_zeroth_order = on_zeroth_order
-        self.file_list = []
-        self.selected_index = -1
+        self.file_list: list[str] = []
+        self.selected_index: int = -1
 
-        # Header label
-        self.header_label = customtkinter.CTkLabel(
-            self, text="mRIXS Super-App Workspace",
-            font=customtkinter.CTkFont(size=22, weight="bold"),
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        """Build and lay out all widgets."""
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setSpacing(8)
+
+        # Header
+        header = QLabel("mRIXS Super-App Workspace")
+        font = QFont()
+        font.setPointSize(18)
+        font.setBold(True)
+        header.setFont(font)
+        header.setAlignment(Qt.AlignCenter)
+        outer.addWidget(header)
+
+        # --- Button row 1: Select / Sort ---
+        row1 = QHBoxLayout()
+        self.select_button = QPushButton("\U0001f4c1 Select Files")
+        self.select_button.clicked.connect(self.select_files)
+        row1.addWidget(self.select_button)
+
+        self.sort_button = QPushButton("\u2195 Sort Files")
+        self.sort_button.setStyleSheet(
+            "background-color: #1F6AA5; color: white; font-weight: bold;"
         )
-        self.header_label.pack(pady=(15, 5))
+        self.sort_button.clicked.connect(self.sort_files)
+        row1.addWidget(self.sort_button)
+        outer.addLayout(row1)
 
-        # Stub widgets
-        self.select_button = customtkinter.CTkButton(self, text="📁 Select Files", command=self.select_files)
-        self.select_button.pack(pady=5)
+        # --- Button row 2: Up / Down / Remove / Clear ---
+        row2 = QHBoxLayout()
+        self.up_button = QPushButton("\u25b2 Up")
+        self.up_button.setFixedWidth(80)
+        self.up_button.clicked.connect(self.move_up)
+        row2.addWidget(self.up_button)
 
-        self.sort_button = customtkinter.CTkButton(
-            self, text="↕ Sort Files", command=self.sort_files,
-            fg_color="#1F6AA5", hover_color="#165a8a",
-            font=customtkinter.CTkFont(size=14, weight="bold"),
-            height=36
+        self.down_button = QPushButton("\u25bc Down")
+        self.down_button.setFixedWidth(80)
+        self.down_button.clicked.connect(self.move_down)
+        row2.addWidget(self.down_button)
+
+        self.remove_button = QPushButton("\u2715 Remove")
+        self.remove_button.setFixedWidth(90)
+        self.remove_button.setStyleSheet("background-color: #aa3333; color: white;")
+        self.remove_button.clicked.connect(self.remove_file)
+        row2.addWidget(self.remove_button)
+
+        self.clear_button = QPushButton("\U0001f5d1 Clear All")
+        self.clear_button.setFixedWidth(100)
+        self.clear_button.setStyleSheet("background-color: #883333; color: white;")
+        self.clear_button.clicked.connect(self.clear_all)
+        row2.addWidget(self.clear_button)
+        outer.addLayout(row2)
+
+        # --- Launch buttons ---
+        self.start_button = QPushButton("\u25ba Start Alignment Slideshow")
+        self.start_button.setFixedHeight(40)
+        self.start_button.setStyleSheet(
+            f"background-color: {PALETTE['accent_green']}; color: white; "
+            "font-size: 14px; font-weight: bold;"
         )
-        self.sort_button.pack(pady=5)
+        self.start_button.clicked.connect(self.start_slideshow)
+        outer.addWidget(self.start_button)
 
-        self.up_button = customtkinter.CTkButton(self, text="▲ Up", command=self.move_up, width=80)
-        self.up_button.pack(pady=3)
-
-        self.down_button = customtkinter.CTkButton(self, text="▼ Down", command=self.move_down, width=80)
-        self.down_button.pack(pady=3)
-
-        self.remove_button = customtkinter.CTkButton(
-            self, text="✕ Remove", command=self.remove_file,
-            width=80, fg_color="#aa3333", hover_color="#882222"
+        self.zeroth_order_button = QPushButton(
+            "\U0001f52c Zeroth-Order Focus & FWHM Calibration"
         )
-        self.remove_button.pack(pady=3)
-
-        self.clear_button = customtkinter.CTkButton(
-            self, text="🗑 Clear All", command=self.clear_all,
-            width=80, fg_color="#883333", hover_color="#662222"
+        self.zeroth_order_button.setFixedHeight(40)
+        self.zeroth_order_button.setStyleSheet(
+            "background-color: #1F6AA5; color: white; "
+            "font-size: 14px; font-weight: bold;"
         )
-        self.clear_button.pack(pady=3)
+        self.zeroth_order_button.clicked.connect(self.start_zeroth_order)
+        outer.addWidget(self.zeroth_order_button)
 
-        self.start_button = customtkinter.CTkButton(
-            self, text="▶ Start Alignment Slideshow", command=self.start_slideshow,
-            fg_color="#2FA572", hover_color="#238a5a",
-            font=customtkinter.CTkFont(size=14, weight="bold"),
-            height=38
+        self.help_button = QPushButton("\u2753 Help / Guide")
+        self.help_button.setFixedWidth(140)
+        self.help_button.setStyleSheet("background-color: #555; color: white;")
+        self.help_button.clicked.connect(self.show_help)
+        outer.addWidget(self.help_button, alignment=Qt.AlignLeft)
+
+        # --- File list ---
+        self.list_widget = QListWidget()
+        self.list_widget.itemClicked.connect(
+            lambda item: self._select_item(self.list_widget.row(item))
         )
-        self.start_button.pack(pady=(8, 3))
+        outer.addWidget(self.list_widget, stretch=1)
 
-        self.zeroth_order_button = customtkinter.CTkButton(
-            self, text="🔬 Zeroth-Order Focus & FWHM Calibration", command=self.start_zeroth_order,
-            fg_color="#1F6AA5", hover_color="#165a8a",
-            font=customtkinter.CTkFont(size=14, weight="bold"),
-            height=38
-        )
-        self.zeroth_order_button.pack(pady=(3, 8))
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
 
-        self.help_button = customtkinter.CTkButton(
-            self, text="❓ Help / Guide", command=self.show_help,
-            width=120, fg_color="#555", hover_color="#777"
-        )
-        self.help_button.pack(pady=5)
-
-        self.scroll_frame = customtkinter.CTkScrollableFrame(self, label_text="Selected Files")
-        self.scroll_frame.pack(pady=5, fill="both", expand=True)
-        
-        self.labels = []
-
-    def show_help(self):
-        """Open a help/guide dialog."""
-        help_win = customtkinter.CTkToplevel(self)
-        help_win.title("Spectroscopy Alignment — Quick Guide")
-        help_win.geometry("620x560")
-        help_win.attributes("-topmost", True)
-
-        scroll = customtkinter.CTkScrollableFrame(help_win)
-        scroll.pack(fill="both", expand=True, padx=10, pady=10)
-
-        guide_sections = [
-            ("Step 1: Load Files", (
-                "Click '📁 Select Files' to choose your TIFF spectroscopy images.\n"
-                "You can select multiple files at once.\n"
-                "Use '🗑 Clear All' to remove all files and start over."
-            )),
-            ("Step 2: Sort Files", (
-                "Click '↕ Sort Files' to auto-sort by filename (natural sorting).\n"
-                "Use '▲ Up' / '▼ Down' to manually reorder if needed.\n"
-                "Frame 1 (top of list) is the REFERENCE frame — all other frames\n"
-                "will be aligned to it."
-            )),
-            ("Step 3: Start Slideshow", (
-                "Click '▶ Start Alignment Slideshow' to begin analysis.\n"
-                "The default alignment engine is ECC (Enhanced Correlation\n"
-                "Coefficient), which works well for most datasets. Warp is\n"
-                "ON by default — frames are translated to align with Frame 1."
-            )),
-            ("Zeroth-Order Calibration", (
-                "Click '🔬 Zeroth-Order Calibration' from the main menu to analyze mirror pitch.\n"
-                "This mode visualizes the zeroth-order line pipeline (Raw, Denoised, Masked) for each\n"
-                "frame, alongside the 1D Gaussian profile fit and FWHM (px / meV).\n"
-                "Optionally select a scan log TXT file to map motor pitch positions to frames,\n"
-                "then Export to generate the focus curve (mirror pitch vs FWHM)."
-            )),
-            ("Alignment Engines", (
-                "Switch engines using the dropdown in the top-right navbar:\n\n"
-                "• ECC (default) — Iterative Enhanced Correlation Coefficient.\n"
-                "  Uses a 2-stage coarse-to-fine Gaussian pyramid for robust\n"
-                "  sub-pixel alignment. Best for general/diffuse datasets.\n\n"
-                "• PCA — Peak-Line Fitting via SVD + Phase Correlation.\n"
-                "  Detects the spectral line via intensity thresholding and\n"
-                "  fits a reference line through Frame 1. Best for datasets\n"
-                "  with a sharp, well-defined spectral line. Use the threshold\n"
-                "  slider to tune sensitivity, or 'Auto' / 'Auto All' to\n"
-                "  optimize automatically.\n\n"
-                "• Phase Correlation — Fast Fourier-domain translation\n"
-                "  estimation. Very fast but less accurate on noisy data.\n"
-                "  Also used internally as a fallback by PCA.\n\n"
-                "Precomputation:\n"
-                "Click the 'Precompute' button in the navbar to batch-process alignments\n"
-                "for all frames in the background. This caches the results for instant playback."
-            )),
-            ("Step 4: Navigate & Inspect", (
-                "Use ← → arrow keys or '◀ Prev' / 'Next ▶' to step through frames.\n"
-                "Use the frame slider for quick jumping.\n"
-                "'▶ Play' auto-cycles through all frames.\n\n"
-                "With Warp ON, frames should look aligned when flipping between\n"
-                "them. Toggle Warp OFF to see the original unaligned frames."
-            )),
-            ("Step 5: Zoom", (
-                "Click '🔍+ Zoom In' to toggle interactive zoom mode, then click\n"
-                "anywhere on the image to zoom into that point.\n"
-                "Zoom steps are 1× → 2× → 4× → 8× → 16×.\n"
-                "'🔍- Zoom Out' zooms out from the current view center.\n"
-                "'⟲ Reset View' returns to 1×."
-            )),
-            ("Step 6: Manual Line Correction (PCA only)", (
-                "If PCA auto-fit doesn't align a frame well:\n\n"
-                "1. Switch to PCA engine in the navbar dropdown\n"
-                "2. Click '✏ Manual Line' (button turns orange)\n"
-                "3. Click TWO points on the spectroscopic line, far apart\n"
-                "   (zoom to 8× or 16× for precision)\n"
-                "4. The app computes the midpoint between your clicks and\n"
-                "   draws a line through it using Frame 1's reference slope\n"
-                "5. The warp offset is recalculated automatically\n\n"
-                "You can draw manual lines directly on the warped image —\n"
-                "the app back-calculates the un-warped coordinates.\n\n"
-                "'Clear Manual' removes the manual override for that frame."
-            )),
-            ("Step 7: Multi-plot Export Comparison", (
-                "Click 'Export' to generate and review final images.\n"
-                "This opens a multi-plot comparison window showing the Aligned Sum\n"
-                "vs the Direct (Unaligned) Sum side-by-side. This workflow lets you\n"
-                "visually verify the alignment quality improvements before choosing\n"
-                "to save the resulting sums and alignment shifts to disk."
-            )),
-            ("Tips", (
-                "• ECC is recommended for most workflows\n"
-                "• PCA threshold slider and red line overlay are only visible\n"
-                "  when the PCA engine is selected\n"
-                "• Each frame stores its own PCA threshold independently\n"
-                "• Warp is purely translational (no rotation or stretching)\n"
-                "• Use viridis colormap for best visibility of faint features"
-            )),
-        ]
-
-        for title, body in guide_sections:
-            title_label = customtkinter.CTkLabel(
-                scroll, text=title,
-                font=customtkinter.CTkFont(size=15, weight="bold"),
-                anchor="w"
-            )
-            title_label.pack(fill="x", padx=5, pady=(10, 2))
-
-            body_label = customtkinter.CTkLabel(
-                scroll, text=body,
-                anchor="w", justify="left",
-                wraplength=560
-            )
-            body_label.pack(fill="x", padx=15, pady=(0, 5))
-
-    def select_files(self):
-        """
-        Open a file dialog to allow the user to select multiple TIFF images.
-
-        The selected files are appended to the current file list and the
-        display is updated.
-        """
-        # Allow mock override of file dialog
-        files = tkinter.filedialog.askopenfilenames(
-            title="Select TIFF files",
-            filetypes=[("TIFF Files", "*.tif;*.tiff")]
+    def select_files(self) -> None:
+        """Open a file dialog to choose multiple TIFF files."""
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select TIFF files", "",
+            "TIFF Files (*.tif *.tiff)"
         )
         if files:
             self.file_list.extend(list(files))
             self.update_listbox()
 
-    def sort_files(self):
-        """
-        Sort the current list of files using a natural sorting algorithm.
-
-        Natural sorting ensures that numbered files like 'file_2.tif' appear
-        before 'file_10.tif'. Updates the display after sorting.
-        """
+    def sort_files(self) -> None:
+        """Sort the file list using natural sorting."""
         self.file_list = natural_sort(self.file_list)
         self.update_listbox()
 
-    def select_item(self, idx):
-        """
-        Highlight and select an item in the file list.
+    def _select_item(self, idx: int) -> None:
+        """Select an item by index.
 
         Args:
-            idx (int): The index of the file to select.
+            idx: The item index.
         """
         self.selected_index = idx
         self.update_listbox()
 
-    def move_up(self):
-        """
-        Move the currently selected file one position up in the list.
-
-        Does nothing if the file is already at the top of the list or if
-        no file is selected.
-        """
+    def move_up(self) -> None:
+        """Move the selected file one position up in the list."""
         idx = self.selected_index
         if 0 < idx < len(self.file_list):
-            self.file_list[idx], self.file_list[idx-1] = self.file_list[idx-1], self.file_list[idx]
+            self.file_list[idx], self.file_list[idx - 1] = (
+                self.file_list[idx - 1], self.file_list[idx]
+            )
             self.selected_index = idx - 1
             self.update_listbox()
 
-    def move_down(self):
-        """
-        Move the currently selected file one position down in the list.
-
-        Does nothing if the file is already at the bottom of the list or if
-        no file is selected.
-        """
+    def move_down(self) -> None:
+        """Move the selected file one position down in the list."""
         idx = self.selected_index
         if 0 <= idx < len(self.file_list) - 1:
-            self.file_list[idx], self.file_list[idx+1] = self.file_list[idx+1], self.file_list[idx]
+            self.file_list[idx], self.file_list[idx + 1] = (
+                self.file_list[idx + 1], self.file_list[idx]
+            )
             self.selected_index = idx + 1
             self.update_listbox()
 
-    def remove_file(self):
-        """
-        Remove the currently selected file from the list.
-
-        After removal, the selection is automatically shifted to the nearest
-        available item to maintain a valid selection state.
-        """
+    def remove_file(self) -> None:
+        """Remove the currently selected file."""
         idx = self.selected_index
         if 0 <= idx < len(self.file_list):
             self.file_list.pop(idx)
@@ -283,65 +208,118 @@ class SortingView(customtkinter.CTkFrame):
                 self.selected_index = -1
             self.update_listbox()
 
-    def clear_all(self):
-        """
-        Clear all selected files from the list and reset selection state.
-
-        This provides a quick way to deselect all files instead of removing
-        them one-by-one with the Remove button.
-        """
+    def clear_all(self) -> None:
+        """Clear all files from the list."""
         self.file_list.clear()
         self.selected_index = -1
         self.update_listbox()
 
-    def start_slideshow(self):
-        """
-        Trigger the callback to start the slideshow with the current file list.
-
-        Only executes if the file list is not empty and a callback is provided.
-        """
+    def start_slideshow(self) -> None:
+        """Trigger the alignment slideshow callback."""
         if self.on_start_slideshow and self.file_list:
             self.on_start_slideshow(self.file_list)
 
-    def start_zeroth_order(self):
-        """
-        Trigger the callback to start zeroth-order calibration with the current file list.
-
-        Prompts the user to optionally select a scan log TXT file for motor pitch metadata.
-        Only executes if the file list is not empty and a callback is provided.
-        """
+    def start_zeroth_order(self) -> None:
+        """Prompt for an optional scan log, then trigger zeroth-order callback."""
         if not self.on_zeroth_order or not self.file_list:
             return
-        txt_path = tkinter.filedialog.askopenfilename(
-            title="Select Motor Scan Log (.txt) — Cancel to skip",
-            filetypes=[("Text files", "*.txt")],
+        txt_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Motor Scan Log (.txt) — Cancel to skip",
+            "",
+            "Text files (*.txt)",
         )
         if not txt_path:
-            tkinter.messagebox.showinfo(
-                "No Scan Log Selected",
+            QMessageBox.information(
+                self, "No Scan Log Selected",
                 "Proceeding without motor scan metadata.\n"
                 "Export will not include mirror pitch vs. FWHM focus curve."
             )
         self.on_zeroth_order(self.file_list, txt_path=txt_path if txt_path else None)
 
-    def update_listbox(self):
-        """
-        Refresh the visual list of files displayed in the scrollable frame.
+    def update_listbox(self) -> None:
+        """Refresh the visual file list."""
+        self.list_widget.clear()
+        for idx, filepath in enumerate(self.file_list):
+            item = QListWidgetItem(os.path.basename(filepath))
+            if idx == self.selected_index:
+                item.setBackground(Qt.blue)
+                item.setForeground(Qt.white)
+            self.list_widget.addItem(item)
+        if 0 <= self.selected_index < self.list_widget.count():
+            self.list_widget.setCurrentRow(self.selected_index)
 
-        Clears existing labels, creates new ones for the current file list,
-        and applies highlighting to the selected item.
-        """
-        for lbl in self.labels:
-            lbl.destroy()
-        self.labels.clear()
+    # ------------------------------------------------------------------
+    # Help dialog
+    # ------------------------------------------------------------------
 
-        for idx, filename in enumerate(self.file_list):
-            bg = "blue" if idx == self.selected_index else "transparent"
-            lbl = customtkinter.CTkLabel(
-                self.scroll_frame,
-                text=os.path.basename(filename),
-                fg_color=bg
-            )
-            lbl.bind("<Button-1>", lambda event, i=idx: self.select_item(i))
-            lbl.pack(fill="x", anchor="w")
-            self.labels.append(lbl)
+    def show_help(self) -> None:
+        """Open the help/guide dialog."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Spectroscopy Alignment — Quick Guide")
+        dlg.resize(660, 580)
+
+        dlg_layout = QVBoxLayout(dlg)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_content = QWidget()
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setSpacing(8)
+        scroll.setWidget(scroll_content)
+        dlg_layout.addWidget(scroll)
+
+        guide_sections = [
+            ("Step 1: Load Files",
+             "Click '\U0001f4c1 Select Files' to choose your TIFF spectroscopy images.\n"
+             "You can select multiple files at once.\n"
+             "Use '\U0001f5d1 Clear All' to remove all files and start over."),
+            ("Step 2: Sort Files",
+             "Click '\u2195 Sort Files' to auto-sort by filename (natural sorting).\n"
+             "Use '\u25b2 Up' / '\u25bc Down' to manually reorder if needed.\n"
+             "Frame 1 (top of list) is the REFERENCE frame — all other frames "
+             "will be aligned to it."),
+            ("Step 3: Start Slideshow",
+             "Click '\u25ba Start Alignment Slideshow' to begin analysis.\n"
+             "The default alignment engine is ECC (Enhanced Correlation "
+             "Coefficient), which works well for most datasets. Warp is "
+             "ON by default — frames are translated to align with Frame 1."),
+            ("Zeroth-Order Calibration",
+             "Click '\U0001f52c Zeroth-Order Calibration' from the main menu to analyze mirror pitch.\n"
+             "Optionally select a scan log TXT file to map motor pitch positions to frames,\n"
+             "then Export to generate the focus curve (mirror pitch vs FWHM)."),
+            ("Tips",
+             "\u2022 ECC is recommended for most workflows\n"
+             "\u2022 Use viridis colormap for best visibility of faint features\n"
+             "\u2022 Each frame stores its own PCA threshold independently"),
+        ]
+
+        for title, body in guide_sections:
+            title_lbl = QLabel(title)
+            f = QFont()
+            f.setPointSize(12)
+            f.setBold(True)
+            title_lbl.setFont(f)
+            content_layout.addWidget(title_lbl)
+
+            body_lbl = QLabel(body)
+            body_lbl.setWordWrap(True)
+            content_layout.addWidget(body_lbl)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        buttons.accepted.connect(dlg.accept)
+        dlg_layout.addWidget(buttons)
+
+        dlg.exec()
+
+    # ------------------------------------------------------------------
+    # Compatibility shim (tests call this to refresh the displayed list)
+    # ------------------------------------------------------------------
+
+    def select_item(self, idx: int) -> None:
+        """Select an item (public API shim used by unit tests).
+
+        Args:
+            idx: Item index to select.
+        """
+        self._select_item(idx)

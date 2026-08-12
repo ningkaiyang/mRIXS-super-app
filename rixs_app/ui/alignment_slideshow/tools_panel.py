@@ -1,73 +1,81 @@
-# rixs_app/ui/slideshow/tools_panel.py
+"""Alignment slideshow tools panel — PySide6 port.
 
-import customtkinter
+Houses manual-alignment controls, zoom in/out/reset buttons, a zoom level
+label, and a per-frame info label.
+"""
 
-class SlideshowToolsPanel(customtkinter.CTkFrame):
+from __future__ import annotations
+
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QLabel
+from rixs_app.ui.theme import neutral_style
+
+
+class SlideshowToolsPanel(QFrame):
+    """Horizontal toolbar providing manual-line and zoom tools.
+
+    Args:
+        parent: Parent widget.
+        controller: The ``SlideshowView`` controller.
     """
-    Modular UI panel for manual alignment tools and viewport configurations.
 
-    GUI Structure & Manual Alignment:
-      - "Manual Line": Activates cursor-crosshairs, letting users click two points on the canvas.
-      - Computes the sub-pixel midpoint of clicked points relative to letterbox dimensions to override PCA centroids.
-      - Provides Zoom In, Zoom Out, and Reset buttons that update the canvas viewport scale and center.
-      - Displays real-time frame details (e.g., custom thresholds or manual override notifications).
-    """
-    def __init__(self, parent, controller, **kwargs):
-        """
-        Initialize the SlideshowToolsPanel.
+    def __init__(self, parent=None, *, controller):
+        """Initialise the tools panel.
 
         Args:
-            parent: The parent widget.
-            controller: The controller managing the slideshow logic and state.
-            **kwargs: Additional keyword arguments for the customtkinter.CTkFrame.
+            parent: Parent QWidget.
+            controller: SlideshowView controller.
         """
-        super().__init__(parent, **kwargs)
+        super().__init__(parent)
         self.controller = controller
+        self.setFixedHeight(40)
 
-        self.manual_line_button = customtkinter.CTkButton(
-            self, text="✏ Manual Line", command=self.controller.toggle_manual_mode,
-            width=110, fg_color="#555", hover_color="#777"
-        )
-        self.manual_line_button.pack(side="left", padx=5)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setSpacing(6)
 
-        self.clear_manual_button = customtkinter.CTkButton(
-            self, text="Clear Manual", command=self.controller.clear_manual_line,
-            width=100, fg_color="#555", hover_color="#777"
-        )
-        self.clear_manual_button.pack(side="left", padx=2)
+        self.manual_line_button = QPushButton("\u270f Manual Line")
+        self.manual_line_button.setFixedWidth(120)
+        self.manual_line_button.setStyleSheet(neutral_style())
+        self.manual_line_button.clicked.connect(self.controller.toggle_manual_mode)
+        layout.addWidget(self.manual_line_button)
 
-        self.zoom_in_button = customtkinter.CTkButton(
-            self, text="🔍+ Zoom In", command=self.controller.zoom_in,
-            width=100, fg_color="#555", hover_color="#777"
-        )
-        self.zoom_in_button.pack(side="left", padx=5)
+        self.clear_manual_button = QPushButton("Clear Manual")
+        self.clear_manual_button.setFixedWidth(110)
+        self.clear_manual_button.setStyleSheet(neutral_style())
+        self.clear_manual_button.clicked.connect(self.controller.clear_manual_line)
+        layout.addWidget(self.clear_manual_button)
 
-        self.zoom_out_button = customtkinter.CTkButton(
-            self, text="🔍- Zoom Out", command=self.controller.zoom_out,
-            width=100, fg_color="#555", hover_color="#777"
-        )
-        self.zoom_out_button.pack(side="left", padx=2)
+        self.zoom_in_button = QPushButton("\U0001f50d+ Zoom In")
+        self.zoom_in_button.setFixedWidth(110)
+        self.zoom_in_button.setStyleSheet(neutral_style())
+        self.zoom_in_button.clicked.connect(self.controller.zoom_in)
+        layout.addWidget(self.zoom_in_button)
 
-        self.reset_view_button = customtkinter.CTkButton(
-            self, text="⟲ Reset View", command=self.controller.reset_view,
-            width=100, fg_color="#555", hover_color="#777"
-        )
-        self.reset_view_button.pack(side="left", padx=2)
+        self.zoom_out_button = QPushButton("\U0001f50d- Zoom Out")
+        self.zoom_out_button.setFixedWidth(110)
+        self.zoom_out_button.setStyleSheet(neutral_style())
+        self.zoom_out_button.clicked.connect(self.controller.zoom_out)
+        layout.addWidget(self.zoom_out_button)
 
-        self.zoom_label = customtkinter.CTkLabel(self, text="Zoom: 1×")
-        self.zoom_label.pack(side="left", padx=5)
+        self.reset_view_button = QPushButton("\u27f2 Reset View")
+        self.reset_view_button.setFixedWidth(110)
+        self.reset_view_button.setStyleSheet(neutral_style())
+        self.reset_view_button.clicked.connect(self.controller.reset_view)
+        layout.addWidget(self.reset_view_button)
 
-        # Per-frame info label
-        self.frame_info_label = customtkinter.CTkLabel(
-            self, text="", text_color="#88aacc"
-        )
-        self.frame_info_label.pack(side="right", padx=10)
+        self.zoom_label = QLabel("Zoom: 1\u00d7")
+        layout.addWidget(self.zoom_label)
 
-    def sync_zoom_label(self, factor):
-        """
-        Update the displayed zoom multiplier text on the interface.
+        layout.addStretch()
+
+        self.frame_info_label = QLabel("")
+        self.frame_info_label.setObjectName("dim_label")
+        layout.addWidget(self.frame_info_label)
+
+    def sync_zoom_label(self, factor) -> None:
+        """Update the zoom multiplier display.
 
         Args:
-            factor (float or int): The zoom factor to display (e.g., 2 for 2x zoom).
+            factor: Current zoom factor (e.g. 2 for 2\u00d7).
         """
-        self.zoom_label.configure(text=f"Zoom: {factor}×")
+        self.zoom_label.setText(f"Zoom: {factor}\u00d7")
