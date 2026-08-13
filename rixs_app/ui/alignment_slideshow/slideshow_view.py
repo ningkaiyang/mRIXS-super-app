@@ -69,6 +69,9 @@ class SlideshowView(QWidget):
         # Logical state manager (no GUI dependencies)
         self.manager = SlideshowManager()
 
+        # Active workers set (prevents Python GC from destroying workers before signal delivery)
+        self._workers: set = set()
+
         # Debounce timer IDs
         self._pca_debounce_timer: QTimer | None = None
         self._frame_debounce_timer: QTimer | None = None
@@ -76,6 +79,12 @@ class SlideshowView(QWidget):
         self._autoplay_timer: QTimer | None = None
 
         self._build_ui()
+
+    def _run_worker(self, worker) -> None:
+        """Keep a strong reference to worker so signals are delivered safely before GC."""
+        self._workers.add(worker)
+        worker.signals.finished.connect(lambda: self._workers.discard(worker))
+        QThreadPool.globalInstance().start(worker)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -381,8 +390,13 @@ class SlideshowView(QWidget):
             self._sync_slider_to_frame()
             self.load_and_render()
 
+        def _on_error(_err: str) -> None:
+            pca_panel.auto_snap_button.setText("Auto")
+            pca_panel.auto_snap_button.setEnabled(True)
+
         worker.signals.result.connect(_on_result)
-        QThreadPool.globalInstance().start(worker)
+        worker.signals.error.connect(_on_error)
+        self._run_worker(worker)
 
     def trigger_auto_snap_all(self) -> None:
         """Find optimal threshold for all frames (async)."""
@@ -401,10 +415,14 @@ class SlideshowView(QWidget):
                 precomp_btn.setText("Precompute All")
                 precomp_btn.setEnabled(True)
                 self.load_and_render()
+            def _on_error(_err: str) -> None:
+                precomp_btn.setText("Precompute All")
+                precomp_btn.setEnabled(True)
 
             worker.signals.progress.connect(_on_progress)
             worker.signals.result.connect(_on_result)
-            QThreadPool.globalInstance().start(worker)
+            worker.signals.error.connect(_on_error)
+            self._run_worker(worker)
             return
 
         auto_all_btn = active_panel.auto_all_button
@@ -430,10 +448,15 @@ class SlideshowView(QWidget):
             self.canvas_panel.clear_photo_cache()
             self._sync_slider_to_frame()
             self.load_and_render()
+        def _on_error(_err: str) -> None:
+            auto_all_btn.setText("Auto All")
+            auto_all_btn.setEnabled(True)
+            auto_snap_btn.setEnabled(True)
 
         worker.signals.progress.connect(_on_progress)
         worker.signals.result.connect(_on_result)
-        QThreadPool.globalInstance().start(worker)
+        worker.signals.error.connect(_on_error)
+        self._run_worker(worker)
 
     def handle_frame_slider_move(self, val: int) -> None:
         """Handle frame timeline slider movement.
@@ -741,11 +764,15 @@ class SlideshowView(QWidget):
             sums_worker.signals.progress_msg.connect(_on_msg)
             sums_worker.signals.result.connect(_on_sums_result)
             sums_worker.signals.error.connect(_on_error)
-            QThreadPool.globalInstance().start(sums_worker)
+            self._run_worker(sums_worker)
+
+        def _on_offset_error(err: str) -> None:
+            self._finish_export(False, err)
 
         offset_worker.signals.progress.connect(_on_offset_progress)
         offset_worker.signals.result.connect(_on_offset_result)
-        QThreadPool.globalInstance().start(offset_worker)
+        offset_worker.signals.error.connect(_on_offset_error)
+        self._run_worker(offset_worker)
 
     def _finish_export(
         self,

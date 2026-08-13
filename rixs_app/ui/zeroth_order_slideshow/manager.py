@@ -212,6 +212,21 @@ class ZerothOrderManager:
                 best_idx = idx
         return best_idx
 
+    def get_motor_info(self, idx: int) -> tuple[str, str]:
+        """Return (motor_name, motor_value_str) for frame at idx from parsed txt_metadata."""
+        if not self.txt_metadata or idx < 0 or idx >= len(self.file_list):
+            return ("Motor", "N/A")
+        motor_name = self.txt_metadata.get("motor_name", "Motor")
+        filename = os.path.basename(self.file_list[idx])
+        fm = self.txt_metadata.get("frames", {}).get(filename)
+        if fm:
+            val = fm.get("motor_actual")
+            if val is None or np.isnan(val):
+                val = fm.get("motor_goal")
+            if val is not None and not np.isnan(val):
+                return (motor_name, f"{val:.4f}")
+        return (motor_name, "N/A")
+
     def run_precompute_worker(self, on_progress, on_complete):
         """Spawns background thread worker to evaluate and cache all frames."""
         total = len(self.file_list)

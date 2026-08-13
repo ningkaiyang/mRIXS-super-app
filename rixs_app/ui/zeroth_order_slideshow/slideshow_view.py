@@ -50,6 +50,9 @@ class ZerothOrderSlideshowView(QWidget):
         self.on_back_to_sorting = on_back_to_sorting
         self.manager = ZerothOrderManager()
 
+        # Active workers set (prevents Python GC from destroying workers before signal delivery)
+        self._workers: set = set()
+
         # State
         self.autoplay_speed_ms: int = 600
         self.zoom_factor: float = 1.0
@@ -62,6 +65,12 @@ class ZerothOrderSlideshowView(QWidget):
         self._slicing_timer.timeout.connect(self.load_and_render)
 
         self._build_ui()
+
+    def _run_worker(self, worker) -> None:
+        """Keep a strong reference to worker so signals are delivered safely before GC."""
+        self._workers.add(worker)
+        worker.signals.finished.connect(lambda: self._workers.discard(worker))
+        QThreadPool.globalInstance().start(worker)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -100,12 +109,17 @@ class ZerothOrderSlideshowView(QWidget):
             txt_path: Optional path to a scan log TXT file.
         """
         txt_metadata = None
-        if txt_path:
+        if txt_path and os.path.exists(txt_path):
             from rixs_app.core.txt_metadata_parser import parse_scan_log, validate_tif_coverage
             try:
                 txt_metadata = parse_scan_log(txt_path)
-            except (ValueError, FileNotFoundError) as e:
-                QMessageBox.warning(self, "Scan Log Error", str(e))
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Scan Log Parse Error",
+                    f"Failed to parse scan log file '{os.path.basename(txt_path)}':\n{e}\n\n"
+                    "Proceeding with frame index ordering."
+                )
                 txt_metadata = None
             if txt_metadata:
                 matched, unmatched = validate_tif_coverage(file_list, txt_metadata)
@@ -160,15 +174,36 @@ class ZerothOrderSlideshowView(QWidget):
         """Fetch pipeline data for the current frame and update all panels."""
         idx = self.manager.current_idx
         total = len(self.manager.file_list)
+        if total == 0 or idx >= total:
+            return
+
+        filename = os.path.basename(self.manager.file_list[idx])
         self.control_panel.frame_label.setText(f"Frame: {idx + 1}/{total}")
         slider = self.control_panel.frame_slider
         slider.blockSignals(True)
         slider.setValue(idx)
         slider.blockSignals(False)
 
+        # Update read-only metadata summary bar
+        motor_name, motor_val = self.manager.get_motor_info(idx)
+
         data = self.manager.get_frame_pipeline_data(idx)
         if not data:
+            self.control_panel.update_metadata(
+                filename, motor_name, motor_val
+            )
             return
+
+        er = data.get("evaluator_result")
+        fwhm_px = er.fwhm_px if (er is not None and er.fwhm_px is not None) else None
+        fwhm_mev = (fwhm_px * self.manager.energy_dispersion) if (fwhm_px is not None and self.manager.energy_dispersion > 0) else None
+        score = data.get("score")
+
+        self.control_panel.update_metadata(
+            filename, motor_name, motor_val,
+            fwhm_px=fwhm_px, fwhm_mev=fwhm_mev,
+            score=score
+        )
 
         stage = getattr(self.manager, "pipeline_stage", "Raw")
         if stage == "Raw":
@@ -299,7 +334,7 @@ class ZerothOrderSlideshowView(QWidget):
         worker.signals.progress.connect(_on_progress)
         worker.signals.result.connect(_on_result)
         worker.signals.error.connect(_on_error)
-        QThreadPool.globalInstance().start(worker)
+        self._run_worker(worker)
 
     def toggle_autoplay(self) -> None:
         """Toggle autoplay between active and paused."""
@@ -502,7 +537,7 @@ class ZerothOrderSlideshowView(QWidget):
         worker.signals.progress.connect(_on_progress)
         worker.signals.result.connect(_on_result)
         worker.signals.error.connect(_on_error)
-        QThreadPool.globalInstance().start(worker)
+        self._run_worker(worker)
 
     def set_energy_dispersion(self, value: float) -> None:
         """Update energy dispersion and re-render.
@@ -529,19 +564,4 @@ class ZerothOrderSlideshowView(QWidget):
         if hasattr(self, 'canvas_panel') and hasattr(self.canvas_panel, '_teardown_mpl'):
             self.canvas_panel._teardown_mpl()
 
-    # ------------------------------------------------------------------
-    # Stub callbacks for buttons in control_panel that don't have matching
-    # manager methods in this simplified port
-    # ------------------------------------------------------------------
 
-    def handle_motor_entry_submit(self) -> None:
-        """Placeholder — motor entry submission (no-op unless manager supports it)."""
-        pass
-
-    def add_calibration_point(self) -> None:
-        """Placeholder — add calibration point (no-op unless manager supports it)."""
-        pass
-
-    def clear_calibration_points(self) -> None:
-        """Placeholder — clear calibration points (no-op unless manager supports it)."""
-        pass

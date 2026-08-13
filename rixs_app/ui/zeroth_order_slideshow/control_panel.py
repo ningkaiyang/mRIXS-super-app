@@ -1,23 +1,21 @@
 """Zeroth-order slideshow control panel — PySide6 port.
 
-Contains the measured X position display, SMU3 motor entry fields,
-and the frame scrub slider.
+Contains the read-only frame metadata info bar and the frame scrub slider.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QVBoxLayout, QLabel, QSlider, QLineEdit, QPushButton,
+    QFrame, QHBoxLayout, QVBoxLayout, QLabel, QSlider,
 )
 from PySide6.QtCore import Qt
-from rixs_app.ui.theme import neutral_style
 
 
 class ZerothOrderControlPanel(QFrame):
     """Control panel for zeroth-order calibration.
 
-    Displays measured centroid X positions, motor value inputs,
-    and a frame scrub slider.
+    Displays a read-only metadata summary bar (filename, scan log motor position,
+    FWHM, and score) and a frame scrub slider.
 
     Args:
         parent: Parent widget.
@@ -35,41 +33,20 @@ class ZerothOrderControlPanel(QFrame):
         self.controller = controller
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setContentsMargins(8, 4, 8, 4)
         outer.setSpacing(4)
 
-        # Measurement display row
-        meas_row = QFrame()
-        meas_layout = QHBoxLayout(meas_row)
-        meas_layout.setContentsMargins(0, 0, 0, 0)
-        meas_layout.setSpacing(8)
+        # Read-only metadata summary row
+        info_row = QFrame()
+        info_layout = QHBoxLayout(info_row)
+        info_layout.setContentsMargins(4, 4, 4, 4)
+        info_layout.setSpacing(8)
 
-        meas_layout.addWidget(QLabel("Measured X:"))
-        self.measured_x_label = QLabel("N/A")
-        self.measured_x_label.setObjectName("value_label")
-        meas_layout.addWidget(self.measured_x_label)
+        self.metadata_label = QLabel()
+        self.metadata_label.setStyleSheet("font-size: 17px; font-weight: 500; background: transparent;")
+        info_layout.addWidget(self.metadata_label, stretch=1)
 
-        meas_layout.addWidget(QLabel("SM3 Motor:"))
-        self.motor_entry = QLineEdit()
-        self.motor_entry.setFixedWidth(100)
-        self.motor_entry.setPlaceholderText("Motor value")
-        self.motor_entry.returnPressed.connect(self.controller.handle_motor_entry_submit)
-        meas_layout.addWidget(self.motor_entry)
-
-        self.add_point_button = QPushButton("+ Add Calibration Point")
-        self.add_point_button.setFixedWidth(190)
-        self.add_point_button.setStyleSheet(neutral_style())
-        self.add_point_button.clicked.connect(self.controller.add_calibration_point)
-        meas_layout.addWidget(self.add_point_button)
-
-        self.clear_points_button = QPushButton("Clear Points")
-        self.clear_points_button.setFixedWidth(110)
-        self.clear_points_button.setStyleSheet(neutral_style())
-        self.clear_points_button.clicked.connect(self.controller.clear_calibration_points)
-        meas_layout.addWidget(self.clear_points_button)
-
-        meas_layout.addStretch()
-        outer.addWidget(meas_row)
+        outer.addWidget(info_row)
 
         # Frame slider row
         slider_row = QFrame()
@@ -91,3 +68,50 @@ class ZerothOrderControlPanel(QFrame):
         slider_layout.addWidget(self.frame_slider, stretch=1)
 
         outer.addWidget(slider_row)
+
+    def update_metadata(
+        self,
+        filename: str,
+        motor_name: str,
+        motor_val: str,
+        fwhm_px: float | None = None,
+        fwhm_mev: float | None = None,
+        score: float | None = None,
+    ) -> None:
+        """Update the metadata summary label with rich HTML styling.
+
+        Args:
+            filename: TIF image basename.
+            motor_name: Parsed motor variable name (e.g. 'SM3 Mirror Pitch' or 'Sample X').
+            motor_val: Parsed motor position string or 'N/A'.
+            fwhm_px: Optional line fit FWHM in pixels.
+            fwhm_mev: Optional line fit FWHM in meV.
+            score: Optional FWHM focus score (1/FWHM).
+        """
+        if fwhm_px is not None:
+            fwhm_str = f"{fwhm_px:.2f} px"
+            if fwhm_mev is not None and fwhm_mev > 0:
+                fwhm_str += f" ({fwhm_mev:.1f} meV)"
+        else:
+            fwhm_str = "—"
+
+        score_str = f"{score:.4f}" if score is not None else "—"
+        sep = "&nbsp;&nbsp;<span style='color: #4c5d73;'>|</span>&nbsp;&nbsp;"
+
+        html = (
+            f"<div style='font-size: 17px; font-weight: 500;'>"
+            f"<span style='color: #88aacc;'>Filename:</span> "
+            f"<b style='color: #ffffff;'>{filename}</b>"
+            f"{sep}"
+            f"<span style='color: #88aacc;'>{motor_name}:</span> "
+            f"<b style='color: #38bdf8;'>{motor_val}</b>"
+            f"{sep}"
+            f"<span style='color: #88aacc;'>FWHM:</span> "
+            f"<b style='color: #fbbf24;'>{fwhm_str}</b>"
+            f"{sep}"
+            f"<span style='color: #88aacc;'>Score:</span> "
+            f"<b style='color: #4ade80;'>{score_str}</b>"
+            f"</div>"
+        )
+
+        self.metadata_label.setText(html)

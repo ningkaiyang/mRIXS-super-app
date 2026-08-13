@@ -211,22 +211,32 @@ class SortingView(QWidget):
             self.on_start_slideshow(self.file_list)
 
     def start_zeroth_order(self) -> None:
-        """Prompt for an optional scan log, then trigger zeroth-order callback."""
+        """Automatically find scan log across all selected TIFF directories, then trigger zeroth-order callback."""
         if not self.on_zeroth_order or not self.file_list:
             return
-        txt_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Motor Scan Log (.txt) \u2014 Cancel to skip",
-            "",
-            "Text files (*.txt)",
-        )
+
+        txt_path = None
+        seen_dirs = dict.fromkeys(os.path.dirname(f) for f in self.file_list if f)
+        for directory in seen_dirs:
+            if directory and os.path.isdir(directory):
+                txt_files = [
+                    os.path.join(directory, f)
+                    for f in sorted(os.listdir(directory))
+                    if f.lower().endswith(".txt")
+                ]
+                if txt_files:
+                    txt_path = txt_files[0]
+                    break
+
         if not txt_path:
-            QMessageBox.information(
-                self, "No Scan Log Selected",
-                "Proceeding without motor scan metadata.\n"
-                "Export will not include mirror pitch vs. FWHM focus curve."
+            QMessageBox.warning(
+                self,
+                "No Scan Log Found",
+                "No motor scan log (.txt) file was found in any of the dataset directories.\n\n"
+                "Proceeding without motor scan metadata (using frame indices)."
             )
-        self.on_zeroth_order(self.file_list, txt_path=txt_path if txt_path else None)
+
+        self.on_zeroth_order(self.file_list, txt_path=txt_path)
 
     def update_listbox(self) -> None:
         """Refresh the visual file list."""

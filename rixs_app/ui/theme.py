@@ -148,6 +148,8 @@ QPushButton#active_btn:pressed {{
 QPushButton#accent_btn {{
     background-color: {PALETTE['accent_blue']};
     color: white;
+    font-size: 14px;
+    font-weight: bold;
 }}
 QPushButton#accent_btn:hover {{
     background-color: #42a5f5;
@@ -224,6 +226,7 @@ QPushButton#cancel_btn:pressed {{
 QPushButton#amber_btn {{
     background-color: #d97706;
     color: white;
+    font-size: 14px;
     font-weight: bold;
 }}
 QPushButton#amber_btn:hover {{
