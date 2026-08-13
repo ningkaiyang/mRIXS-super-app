@@ -1,25 +1,23 @@
 """Zeroth-order slideshow tools panel — PySide6 port.
 
-Houses zoom controls, intensity slicing RangeSlider, fitted-line toggle,
-support-points toggle, extrapolation toggle, and energy dispersion input.
+Houses zoom controls and intensity slicing RangeSlider.
 """
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QLineEdit, QCheckBox,
+    QFrame, QHBoxLayout, QPushButton, QLabel, QLineEdit,
 )
 from PySide6.QtCore import Qt
-from rixs_app.ui.theme import neutral_style
+from rixs_app.ui.theme import set_tool_btn
 from rixs_app.ui.widgets import RangeSlider
 
 
 class ZerothOrderToolsPanel(QFrame):
-    """Full tools panel for zeroth-order calibration view.
+    """Middle toolbar for zeroth-order calibration view.
 
-    Provides zoom controls, intensity slicing (floor/ceiling via RangeSlider +
-    text entries), and display toggle checkboxes (support points, extrapolation,
-    fitted line).
+    Provides zoom controls and intensity slicing (floor/ceiling via RangeSlider +
+    text entries).
 
     Args:
         parent: Parent widget.
@@ -43,19 +41,19 @@ class ZerothOrderToolsPanel(QFrame):
         # --- Zoom controls ---
         self.zoom_in_button = QPushButton("\U0001f50d+ Zoom In")
         self.zoom_in_button.setFixedWidth(110)
-        self.zoom_in_button.setStyleSheet(neutral_style())
+        set_tool_btn(self.zoom_in_button)
         self.zoom_in_button.clicked.connect(self.controller.zoom_in)
         layout.addWidget(self.zoom_in_button)
 
         self.zoom_out_button = QPushButton("\U0001f50d- Zoom Out")
         self.zoom_out_button.setFixedWidth(110)
-        self.zoom_out_button.setStyleSheet(neutral_style())
+        set_tool_btn(self.zoom_out_button)
         self.zoom_out_button.clicked.connect(self.controller.zoom_out)
         layout.addWidget(self.zoom_out_button)
 
         self.reset_view_button = QPushButton("\u27f2 Reset View")
         self.reset_view_button.setFixedWidth(110)
-        self.reset_view_button.setStyleSheet(neutral_style())
+        set_tool_btn(self.reset_view_button)
         self.reset_view_button.clicked.connect(self.controller.reset_view)
         layout.addWidget(self.reset_view_button)
 
@@ -80,30 +78,36 @@ class ZerothOrderToolsPanel(QFrame):
         self.ceiling_entry.returnPressed.connect(self._on_ceiling_submit)
         layout.addWidget(self.ceiling_entry)
 
-        # --- Toggle checkboxes ---
-        self.show_support_points_var = False  # backing value
-        self.support_points_cb = QCheckBox("Show support points")
-        self.support_points_cb.setChecked(False)
-        self.support_points_cb.stateChanged.connect(
-            lambda _: self.controller.load_and_render()
-        )
-        layout.addWidget(self.support_points_cb)
+    # ------------------------------------------------------------------
+    # Compatibility properties for legacy code/tests
+    # ------------------------------------------------------------------
 
-        self.show_extrapolation_var = False
-        self.extrapolation_cb = QCheckBox("Show extrapolation")
-        self.extrapolation_cb.setChecked(False)
-        self.extrapolation_cb.stateChanged.connect(
-            lambda _: self.controller.load_and_render()
-        )
-        layout.addWidget(self.extrapolation_cb)
+    @property
+    def support_points_cb(self):
+        """Backwards compatibility proxy object for support points toggle."""
+        panel = self
+        class _Proxy:
+            def isChecked(self):
+                return panel.controller.bottom_bar.show_support_points
+        return _Proxy()
 
-        self.show_fitted_line_var = True
-        self.fitted_line_cb = QCheckBox("Show fitted line")
-        self.fitted_line_cb.setChecked(True)
-        self.fitted_line_cb.stateChanged.connect(
-            lambda _: self.controller.load_and_render()
-        )
-        layout.addWidget(self.fitted_line_cb)
+    @property
+    def extrapolation_cb(self):
+        """Backwards compatibility proxy object for extrapolation toggle."""
+        panel = self
+        class _Proxy:
+            def isChecked(self):
+                return panel.controller.bottom_bar.show_extrapolation
+        return _Proxy()
+
+    @property
+    def fitted_line_cb(self):
+        """Backwards compatibility proxy object for fitted line toggle."""
+        panel = self
+        class _Proxy:
+            def isChecked(self):
+                return panel.controller.bottom_bar.show_fitted_line
+        return _Proxy()
 
     # ------------------------------------------------------------------
     # Public sync API
@@ -130,5 +134,3 @@ class ZerothOrderToolsPanel(QFrame):
     def _on_ceiling_submit(self) -> None:
         """Handle return-key in the ceiling entry."""
         self.controller.handle_ceiling_entry_submit(self.ceiling_entry.text())
-
-

@@ -522,3 +522,22 @@ def test_mgr_default_clamping_ceiling_percentile(mock_get_raw):
     expected_p60 = float(np.percentile(active, 60.0))
     assert mgr.clamping_ceiling == expected_p60
     assert mgr.clamping_ceiling < 1000.0
+
+
+def test_handle_clamping_release(qtbot):
+    from rixs_app.ui.alignment_slideshow.slideshow_view import SlideshowView
+    view = SlideshowView()
+    qtbot.addWidget(view)
+
+    # Call handle_clamping_change and verify timer started
+    view.handle_clamping_change(2.0, 50.0)
+    assert view.manager.clamping_floor == 2.0
+    assert view.manager.clamping_ceiling == 50.0
+    assert view._clamping_timer.isActive()
+
+    # Call handle_clamping_release and verify timer stopped
+    with patch.object(view, "_apply_clamping_change") as mock_apply:
+        view.handle_clamping_release(2.0, 50.0)
+        assert not view._clamping_timer.isActive()
+        mock_apply.assert_called_once()
+

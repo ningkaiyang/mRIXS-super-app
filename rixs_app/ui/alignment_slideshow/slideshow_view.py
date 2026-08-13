@@ -75,8 +75,11 @@ class SlideshowView(QWidget):
         # Debounce timer IDs
         self._pca_debounce_timer: QTimer | None = None
         self._frame_debounce_timer: QTimer | None = None
-        self._clamping_debounce_timer: QTimer | None = None
         self._autoplay_timer: QTimer | None = None
+
+        self._clamping_timer = QTimer(self)
+        self._clamping_timer.setSingleShot(True)
+        self._clamping_timer.timeout.connect(self._apply_clamping_change)
 
         self._build_ui()
 
@@ -666,7 +669,7 @@ class SlideshowView(QWidget):
         self._render_display()
 
     def handle_clamping_change(self, floor: float, ceiling: float) -> None:
-        """Handle range slider clamping changes.
+        """Handle range slider clamping change (debounced live inputs update).
 
         Args:
             floor: New lower clamp value.
@@ -675,7 +678,17 @@ class SlideshowView(QWidget):
         self.manager.clamping_floor = floor
         self.manager.clamping_ceiling = ceiling
         self.clamping_panel.sync_clamping_inputs(floor, ceiling)
-        QTimer.singleShot(80, self._apply_clamping_change)
+        self._clamping_timer.start(150)
+
+    def handle_clamping_release(self, floor: float, ceiling: float) -> None:
+        """Handle mouse release on clamping range slider (immediate render).
+
+        Args:
+            floor: Final lower clamp value.
+            ceiling: Final upper clamp value.
+        """
+        self._clamping_timer.stop()
+        self._apply_clamping_change()
 
     def _apply_clamping_change(self) -> None:
         """Apply debounced clamping change and clear caches."""
@@ -827,6 +840,8 @@ class SlideshowView(QWidget):
     def _teardown_mpl(self) -> None:
         """Stop timers on window close (called by main window closeEvent)."""
         self.stop_autoplay()
+        if hasattr(self, '_clamping_timer'):
+            self._clamping_timer.stop()
         if hasattr(self, '_poll_timer'):
             self._poll_timer.stop()
 

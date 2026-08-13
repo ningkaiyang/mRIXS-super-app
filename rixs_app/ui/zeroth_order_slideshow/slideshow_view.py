@@ -219,9 +219,9 @@ class ZerothOrderSlideshowView(QWidget):
         else:
             img_2d = data["raw_img"]
 
-        show_pts = self.tools_panel.support_points_cb.isChecked()
-        show_extrap = self.tools_panel.extrapolation_cb.isChecked()
-        show_line = self.tools_panel.fitted_line_cb.isChecked()
+        show_pts = self.bottom_bar.show_support_points
+        show_extrap = self.bottom_bar.show_extrapolation
+        show_line = self.bottom_bar.show_fitted_line
 
         self.canvas_panel.draw_plots(
             img_2d, data.get("1d_profile"), stage,

@@ -45,6 +45,7 @@ class SlideshowClampingPanel(QFrame):
         layout.addWidget(self.floor_entry)
 
         self.range_slider = RangeSlider(self, command=self.controller.handle_clamping_change)
+        self.range_slider.slider_released.connect(self.controller.handle_clamping_release)
         self.range_slider.setMinimumWidth(120)
         layout.addWidget(self.range_slider, stretch=1)
 

@@ -345,3 +345,36 @@ def test_zo_export_focus_curve_without_txt_metadata(app_window, temp_tif_files, 
         mono_energy_ev=0.0,
     )
     assert os.path.exists(os.path.join(export_dir, "focus_curve.png"))
+
+
+def test_zo_display_toggle_buttons(app_window, temp_tif_files, qtbot):
+    """Clicking display toggle buttons in the bottom bar must toggle states and styles."""
+    app_window.show_zeroth_order_calibration(temp_tif_files)
+    v = app_window.zeroth_order_view
+    b = v.bottom_bar
+
+    # Default states
+    assert not b.show_support_points
+    assert not b.show_extrapolation
+    assert b.show_fitted_line
+
+    # Toggle support points
+    qtbot.mouseClick(b.support_points_button, Qt.LeftButton)
+    assert b.show_support_points
+    assert b.support_points_button.text() == "Support Points: ON"
+
+    # Toggle extrapolation
+    qtbot.mouseClick(b.extrapolation_button, Qt.LeftButton)
+    assert b.show_extrapolation
+    assert b.extrapolation_button.text() == "Extrapolation: ON"
+
+    # Toggle fitted line
+    qtbot.mouseClick(b.fitted_line_button, Qt.LeftButton)
+    assert not b.show_fitted_line
+    assert b.fitted_line_button.text() == "Fitted Line: OFF"
+
+    # Check compatibility properties on tools_panel
+    assert v.tools_panel.support_points_cb.isChecked() is True
+    assert v.tools_panel.extrapolation_cb.isChecked() is True
+    assert v.tools_panel.fitted_line_cb.isChecked() is False
+
