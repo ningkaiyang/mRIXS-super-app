@@ -17,9 +17,6 @@ Key columns (0-indexed):
 """
 
 import os
-import re
-from pathlib import PureWindowsPath
-from typing import Optional
 
 
 HEADER_LINES = 14  # Lines before the column header row

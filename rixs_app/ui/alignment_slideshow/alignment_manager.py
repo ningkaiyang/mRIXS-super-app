@@ -38,11 +38,11 @@ class SlideshowManager:
       - Threshold Optimization: Runs a multi-stage search (coarse, fine, ultra-fine) on background worker threads
         to minimize line fit perpendicular spread for automated snapping.
     """
-    def __init__(self, result_queue: queue.Queue):
+    def __init__(self, result_queue: queue.Queue = None):
         """Initializes the SlideshowManager state and configurations.
 
         Args:
-            result_queue (queue.Queue): Thread-safe queue used to dispatch callbacks to the main GUI thread.
+            result_queue (queue.Queue, optional): Thread-safe queue used to dispatch callbacks. Defaults to None.
         """
         self.result_queue = result_queue
         self.file_list = []

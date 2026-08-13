@@ -137,21 +137,7 @@ class SlideshowCanvasPanel(QWidget):
         """Clear the internal pixmap LRU cache."""
         self._pixmap_cache.clear()
 
-    # photo_img compatibility property — returns the current QPixmap
-    @property
-    def photo_img(self):
-        """The most recently rendered QPixmap (mirrors old .photo_img)."""
-        return self._pixmap
 
-    # photo_cache compatibility property
-    @property
-    def photo_cache(self):
-        """The internal pixmap cache dict."""
-        return self._pixmap_cache
-
-    @photo_cache.setter
-    def photo_cache(self, val):
-        self._pixmap_cache = val
 
     # ------------------------------------------------------------------
     # Qt event overrides

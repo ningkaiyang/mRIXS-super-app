@@ -23,7 +23,7 @@ def _call_on_complete(on_complete, success, err_msg=None):
 class ZerothOrderManager:
     """Logical model encapsulating zeroth-order calibration pipeline computations, state caching, and threads."""
 
-    def __init__(self, result_queue: queue.Queue):
+    def __init__(self, result_queue: queue.Queue = None):
         self.result_queue = result_queue
         self._local = threading.local()
         self._file_list = []

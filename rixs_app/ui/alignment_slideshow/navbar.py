@@ -101,20 +101,4 @@ class SlideshowNavBar(QFrame):
         """Proxy to control_panel.warp_button."""
         return self.controller.control_panel.warp_button
 
-    @property
-    def warp_switch(self):
-        """Compatibility wrapper so legacy tests referencing navbar.warp_switch still work."""
-        class _WarpSwitchShim:
-            def __init__(shim_self, btn):
-                shim_self._btn = btn
 
-            def get(shim_self):
-                return shim_self._btn.text() == "Warp: ON"
-
-            def select(shim_self):
-                shim_self._btn.setText("Warp: ON")
-
-            def deselect(shim_self):
-                shim_self._btn.setText("Warp: OFF")
-
-        return _WarpSwitchShim(self.controller.control_panel.warp_button)

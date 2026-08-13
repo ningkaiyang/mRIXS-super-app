@@ -108,13 +108,6 @@ class SortingView(QWidget):
         self.caption_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.caption_label)
 
-        # --- File list ---
-        self.list_widget = DragDropListWidget(self, on_reordered=self._on_list_reordered)
-        self.list_widget.itemClicked.connect(
-            lambda item: self._select_item(self.list_widget.row(item))
-        )
-        outer.addWidget(self.list_widget, stretch=1)
-
         # --- Row 2: Remove / Clear All ---
         row2 = QHBoxLayout()
         self.remove_button = QPushButton("\u2715 Remove Selected")
@@ -152,6 +145,13 @@ class SortingView(QWidget):
         set_tool_btn(self.help_button)
         self.help_button.clicked.connect(self.show_help)
         outer.addWidget(self.help_button, alignment=Qt.AlignCenter)
+
+        # --- File list (underneath all buttons) ---
+        self.list_widget = DragDropListWidget(self, on_reordered=self._on_list_reordered)
+        self.list_widget.itemClicked.connect(
+            lambda item: self._select_item(self.list_widget.row(item))
+        )
+        outer.addWidget(self.list_widget, stretch=1)
 
     # ------------------------------------------------------------------
     # Actions

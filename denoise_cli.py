@@ -14,7 +14,7 @@ import cv2
 import tifffile
 
 from rixs_app.core.io import load_raw
-from rixs_app.core.zeroth_order import denoise_image
+from rixs_app.core.preprocessing import denoise_image
 
 def get_spike_count(img: np.ndarray, mad_threshold: float = 5.0) -> int:
     """Calculate the number of spike pixels in the image using MAD despiking threshold logic.

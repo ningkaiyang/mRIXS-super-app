@@ -13,11 +13,9 @@ SlideshowView is the controller/view for the alignment slideshow. It:
 from __future__ import annotations
 
 import os
-import threading
-from queue import Queue, Empty
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QThreadPool
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel
 
 from rixs_app.ui.alignment_slideshow.alignment_manager import SlideshowManager
@@ -27,6 +25,12 @@ from rixs_app.ui.alignment_slideshow.tools_panel import SlideshowToolsPanel
 from rixs_app.ui.alignment_slideshow.clamping_panel import SlideshowClampingPanel
 from rixs_app.ui.alignment_slideshow.export_panel import SlideshowExportPanel
 from rixs_app.ui.alignment_slideshow.canvas_panel import SlideshowCanvasPanel
+from rixs_app.ui.alignment_slideshow.workers import (
+    AutoSnapWorker,
+    AutoSnapAllWorker,
+    PrecomputeOffsetsWorker,
+    ExportSumsWorker,
+)
 from rixs_app.ui.theme import set_play_btn, set_active_btn, set_tool_btn
 
 
@@ -34,7 +38,7 @@ class SlideshowView(QWidget):
     """Main controller/view for the alignment slideshow.
 
     Coordinates all sub-panels, owns the ``SlideshowManager`` state object,
-    and drives periodic queue polling via ``QTimer``.
+    and dispatches background workers via ``QThreadPool``.
 
     Args:
         parent: Parent widget.
@@ -62,11 +66,8 @@ class SlideshowView(QWidget):
         self.on_back_to_sorting = on_back_to_sorting
         self.on_show_export_comparison = on_show_export_comparison
 
-        # Thread-safe result queue (background workers post GUI callbacks here)
-        self._result_queue: Queue = Queue()
-
         # Logical state manager (no GUI dependencies)
-        self.manager = SlideshowManager(self._result_queue)
+        self.manager = SlideshowManager()
 
         # Debounce timer IDs
         self._pca_debounce_timer: QTimer | None = None
@@ -75,7 +76,6 @@ class SlideshowView(QWidget):
         self._autoplay_timer: QTimer | None = None
 
         self._build_ui()
-        self._start_queue_poll()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -365,7 +365,15 @@ class SlideshowView(QWidget):
         pca_panel.auto_snap_button.setText("...")
         pca_panel.auto_snap_button.setEnabled(False)
 
-        def on_complete(best_t: float) -> None:
+        idx = self.manager.current_idx
+        if idx >= len(self.manager.file_list):
+            return
+        raw = self.manager.get_raw(self.manager.file_list[idx])
+        if raw is None:
+            return
+
+        worker = AutoSnapWorker(raw)
+        def _on_result(best_t: float) -> None:
             pca_panel.auto_snap_button.setText("Auto")
             pca_panel.auto_snap_button.setEnabled(True)
             self.manager.set_current_threshold(best_t)
@@ -373,7 +381,8 @@ class SlideshowView(QWidget):
             self._sync_slider_to_frame()
             self.load_and_render()
 
-        self.manager.run_auto_snap(on_complete)
+        worker.signals.result.connect(_on_result)
+        QThreadPool.globalInstance().start(worker)
 
     def trigger_auto_snap_all(self) -> None:
         """Find optimal threshold for all frames (async)."""
@@ -385,18 +394,17 @@ class SlideshowView(QWidget):
             precomp_btn.setText(f"0/{n_frames}...")
             precomp_btn.setEnabled(False)
 
-            def _worker() -> None:
-                for idx in range(n_frames):
-                    self.manager.get_offset(idx)
-                    self._result_queue.put(
-                        lambda c=idx + 1: precomp_btn.setText(f"{c}/{n_frames}...")
-                    )
-                self._result_queue.put(
-                    lambda: (precomp_btn.setText("Precompute All"), precomp_btn.setEnabled(True))
-                )
-                self._result_queue.put(self.load_and_render)
+            worker = PrecomputeOffsetsWorker(n_frames, self.manager.get_offset)
+            def _on_progress(current: int, total: int) -> None:
+                precomp_btn.setText(f"{current}/{total}...")
+            def _on_result(offsets: dict) -> None:
+                precomp_btn.setText("Precompute All")
+                precomp_btn.setEnabled(True)
+                self.load_and_render()
 
-            threading.Thread(target=_worker, daemon=True).start()
+            worker.signals.progress.connect(_on_progress)
+            worker.signals.result.connect(_on_result)
+            QThreadPool.globalInstance().start(worker)
             return
 
         auto_all_btn = active_panel.auto_all_button
@@ -405,10 +413,10 @@ class SlideshowView(QWidget):
         auto_all_btn.setEnabled(False)
         auto_snap_btn.setEnabled(False)
 
-        def on_progress(current: int, total: int) -> None:
+        worker = AutoSnapAllWorker(self.manager.file_list, self.manager.get_raw)
+        def _on_progress(current: int, total: int) -> None:
             auto_all_btn.setText(f"{current}/{total}...")
-
-        def on_complete(results: dict) -> None:
+        def _on_result(results: dict) -> None:
             auto_all_btn.setText("Auto All")
             auto_all_btn.setEnabled(True)
             auto_snap_btn.setEnabled(True)
@@ -423,7 +431,9 @@ class SlideshowView(QWidget):
             self._sync_slider_to_frame()
             self.load_and_render()
 
-        self.manager.run_auto_snap_all(on_progress, on_complete)
+        worker.signals.progress.connect(_on_progress)
+        worker.signals.result.connect(_on_result)
+        QThreadPool.globalInstance().start(worker)
 
     def handle_frame_slider_move(self, val: int) -> None:
         """Handle frame timeline slider movement.
@@ -695,75 +705,47 @@ class SlideshowView(QWidget):
             )
 
     def trigger_export(self) -> None:
-        """Compute alignment offsets and launch the background export worker.
-
-        Both the offset computation and the sum generation run off the
-        GUI thread so the interface remains responsive throughout.
-        """
+        """Compute alignment offsets and launch the background export worker."""
         self.stop_autoplay()
         self._set_export_ui_state(False)
         self.export_panel.progress_label.setText("Computing offsets...")
 
-        def _export_worker() -> None:
-            """Background worker: compute offsets then aligned/direct sums."""
-            n_frames = len(self.manager.file_list)
+        n_frames = len(self.manager.file_list)
+        first_file = self.manager.file_list[0]
+        initial_dir = os.path.dirname(first_file)
 
-            def _progress_offsets(idx: int, total: int) -> None:
-                self._result_queue.put(
-                    lambda i=idx, t=total: self.export_panel.progress_label.setText(
-                        f"Computing offsets: {i}/{t}..."
-                    )
-                )
+        offset_worker = PrecomputeOffsetsWorker(n_frames, self.manager.get_offset)
 
-            offsets = self.manager.compute_all_offsets_for_export(_progress_offsets)
+        def _on_offset_progress(idx: int, total: int) -> None:
+            self.export_panel.progress_label.setText(f"Computing offsets: {idx}/{total}...")
 
-            # Now compute the sums (also in this same worker thread)
-            first_file = self.manager.file_list[0]
-            initial_dir = os.path.dirname(first_file)
+        def _on_offset_result(offsets: dict) -> None:
+            ref_raw = self.manager.get_raw(first_file)
+            if ref_raw is None:
+                self._finish_export(False, "Could not load reference frame.")
+                return
 
-            try:
-                from rixs_app.core import generate_direct_sum, generate_aligned_sum
+            sums_worker = ExportSumsWorker(
+                self.manager.file_list, self.manager.get_raw, offsets, ref_raw.shape
+            )
 
-                ref_raw = self.manager.get_raw(first_file)
-                if ref_raw is None:
-                    self._result_queue.put(
-                        lambda: self._finish_export(False, "Could not load reference frame.")
-                    )
-                    return
+            def _on_msg(msg: str) -> None:
+                self.export_panel.progress_label.setText(msg)
 
-                def _progress_direct(current, total):
-                    self._result_queue.put(
-                        lambda c=current, t=total: self.export_panel.progress_label.setText(
-                            f"Computing Direct Sum: {c}/{t}..."
-                        )
-                    )
+            def _on_sums_result(result_tuple) -> None:
+                self._finish_export(True, result_tuple, initial_dir)
 
-                direct_sum = generate_direct_sum(
-                    self.manager.file_list, self.manager.get_raw,
-                    ref_raw.shape, progress_callback=_progress_direct,
-                )
+            def _on_error(err: str) -> None:
+                self._finish_export(False, err)
 
-                def _progress_aligned(current, total):
-                    self._result_queue.put(
-                        lambda c=current, t=total: self.export_panel.progress_label.setText(
-                            f"Computing Aligned Sum: {c}/{t}..."
-                        )
-                    )
+            sums_worker.signals.progress_msg.connect(_on_msg)
+            sums_worker.signals.result.connect(_on_sums_result)
+            sums_worker.signals.error.connect(_on_error)
+            QThreadPool.globalInstance().start(sums_worker)
 
-                aligned_sum = generate_aligned_sum(
-                    self.manager.file_list, self.manager.get_raw, offsets,
-                    ref_raw.shape, progress_callback=_progress_aligned,
-                )
-
-                self._result_queue.put(
-                    lambda: self._finish_export(True, (aligned_sum, direct_sum), initial_dir)
-                )
-            except Exception as e:
-                self._result_queue.put(
-                    lambda err=str(e): self._finish_export(False, err)
-                )
-
-        threading.Thread(target=_export_worker, daemon=True).start()
+        offset_worker.signals.progress.connect(_on_offset_progress)
+        offset_worker.signals.result.connect(_on_offset_result)
+        QThreadPool.globalInstance().start(offset_worker)
 
     def _finish_export(
         self,

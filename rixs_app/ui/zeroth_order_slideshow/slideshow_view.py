@@ -7,10 +7,11 @@ Timer polling uses QTimer instead of ``self.after``.
 
 from __future__ import annotations
 
-import os
-from queue import Queue, Empty
+from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+import os
+
+from PySide6.QtCore import Qt, QTimer, QThreadPool
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFileDialog, QMessageBox,
 )
@@ -21,6 +22,10 @@ from rixs_app.ui.zeroth_order_slideshow.control_panel import ZerothOrderControlP
 from rixs_app.ui.zeroth_order_slideshow.tools_panel import ZerothOrderToolsPanel
 from rixs_app.ui.zeroth_order_slideshow.export_panel import ZerothOrderExportPanel
 from rixs_app.ui.zeroth_order_slideshow.manager import ZerothOrderManager
+from rixs_app.ui.zeroth_order_slideshow.workers import (
+    PrecomputeFramesWorker,
+    ExportDiagnosticWorker,
+)
 
 
 class ZerothOrderSlideshowView(QWidget):
@@ -43,8 +48,7 @@ class ZerothOrderSlideshowView(QWidget):
         """
         super().__init__(parent)
         self.on_back_to_sorting = on_back_to_sorting
-        self._result_queue: Queue = Queue()
-        self.manager = ZerothOrderManager(self._result_queue)
+        self.manager = ZerothOrderManager()
 
         # State
         self.autoplay_speed_ms: int = 600
@@ -58,7 +62,6 @@ class ZerothOrderSlideshowView(QWidget):
         self._slicing_timer.timeout.connect(self.load_and_render)
 
         self._build_ui()
-        self._start_queue_poll()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -84,26 +87,6 @@ class ZerothOrderSlideshowView(QWidget):
 
         self.canvas_panel = ZerothOrderCanvasPanel(self, controller=self)
         outer.addWidget(self.canvas_panel, stretch=1)
-
-    # ------------------------------------------------------------------
-    # Queue polling (replaces tkinter after loop)
-    # ------------------------------------------------------------------
-
-    def _start_queue_poll(self) -> None:
-        """Start a 50 ms QTimer to drain the result queue on the GUI thread."""
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(50)
-        self._poll_timer.timeout.connect(self._poll_queue)
-        self._poll_timer.start()
-
-    def _poll_queue(self) -> None:
-        """Drain all pending callbacks from the worker result queue."""
-        try:
-            while True:
-                callback = self._result_queue.get_nowait()
-                callback()
-        except Empty:
-            pass
 
     # ------------------------------------------------------------------
     # Session management
@@ -201,9 +184,9 @@ class ZerothOrderSlideshowView(QWidget):
         else:
             img_2d = data["raw_img"]
 
-        show_pts = self.tools_panel.show_support_points_var.get()
-        show_extrap = self.tools_panel.show_extrapolation_var.get()
-        show_line = self.tools_panel.show_fitted_line_var.get()
+        show_pts = self.tools_panel.support_points_cb.isChecked()
+        show_extrap = self.tools_panel.extrapolation_cb.isChecked()
+        show_line = self.tools_panel.fitted_line_cb.isChecked()
 
         self.canvas_panel.draw_plots(
             img_2d, data.get("1d_profile"), stage,
@@ -291,24 +274,32 @@ class ZerothOrderSlideshowView(QWidget):
         btn.setEnabled(False)
         self.navbar.peak_focus_button.setEnabled(False)
 
-        def on_progress(current: int, total: int) -> None:
+        worker = PrecomputeFramesWorker(self.manager, len(self.manager.file_list))
+
+        def _on_progress(current: int, total: int) -> None:
             btn.setText(f"{current}/{total}...")
 
-        def on_complete(success=True, err_msg=None) -> None:
+        def _on_result(success: bool) -> None:
             btn.setText("Precompute All")
             btn.setEnabled(True)
             self.navbar.peak_focus_button.setEnabled(True)
-            if not success:
-                QMessageBox.critical(
-                    self, "Precompute Error",
-                    f"An error occurred during precomputation:\n{err_msg}"
-                )
-            else:
-                self.load_and_render()
-                if on_complete_extra is not None:
-                    on_complete_extra()
+            self.load_and_render()
+            if on_complete_extra is not None:
+                on_complete_extra()
 
-        self.manager.run_precompute_worker(on_progress, on_complete)
+        def _on_error(err_msg: str) -> None:
+            btn.setText("Precompute All")
+            btn.setEnabled(True)
+            self.navbar.peak_focus_button.setEnabled(True)
+            QMessageBox.critical(
+                self, "Precompute Error",
+                f"An error occurred during precomputation:\n{err_msg}"
+            )
+
+        worker.signals.progress.connect(_on_progress)
+        worker.signals.result.connect(_on_result)
+        worker.signals.error.connect(_on_error)
+        QThreadPool.globalInstance().start(worker)
 
     def toggle_autoplay(self) -> None:
         """Toggle autoplay between active and paused."""
@@ -482,30 +473,36 @@ class ZerothOrderSlideshowView(QWidget):
 
         self.bottom_bar.export_button.setEnabled(False)
 
-        def on_progress(current: int, total: int) -> None:
+        worker = ExportDiagnosticWorker(
+            self.manager,
+            export_dir,
+            self.manager.slicing_floor,
+            self.manager.slicing_ceiling,
+        )
+
+        def _on_progress(current: int, total: int) -> None:
             self.bottom_bar.status_label.setText(f"Exporting: {current}/{total}...")
 
-        def on_complete(success=True, err_msg=None) -> None:
+        def _on_result(success: bool) -> None:
             self.bottom_bar.export_button.setEnabled(True)
             self.bottom_bar.status_label.setText("")
-            if not success:
-                QMessageBox.critical(
-                    self, "Export Error",
-                    f"An error occurred during export:\n{err_msg}"
-                )
-            else:
-                QMessageBox.information(
-                    self, "Export Complete",
-                    f"Diagnostic multi-plots exported to:\n{export_dir}"
-                )
+            QMessageBox.information(
+                self, "Export Complete",
+                f"Diagnostic multi-plots exported to:\n{export_dir}"
+            )
 
-        self.manager.run_export_worker(
-            export_dir=export_dir,
-            vmin=self.manager.slicing_floor,
-            vmax=self.manager.slicing_ceiling,
-            on_progress=on_progress,
-            on_complete=on_complete
-        )
+        def _on_error(err_msg: str) -> None:
+            self.bottom_bar.export_button.setEnabled(True)
+            self.bottom_bar.status_label.setText("")
+            QMessageBox.critical(
+                self, "Export Error",
+                f"An error occurred during export:\n{err_msg}"
+            )
+
+        worker.signals.progress.connect(_on_progress)
+        worker.signals.result.connect(_on_result)
+        worker.signals.error.connect(_on_error)
+        QThreadPool.globalInstance().start(worker)
 
     def set_energy_dispersion(self, value: float) -> None:
         """Update energy dispersion and re-render.

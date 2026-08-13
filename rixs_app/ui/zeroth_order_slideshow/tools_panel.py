@@ -106,58 +106,15 @@ class ZerothOrderToolsPanel(QFrame):
         layout.addWidget(self.fitted_line_cb)
 
     # ------------------------------------------------------------------
-    # Checkbox value shims (old code accessed .get() on CTkBooleanVar)
-    # ------------------------------------------------------------------
-
-    @property
-    def show_support_points_var(self):
-        """Boolean property for support points visibility."""
-        return _CheckboxShim(self, 'support_points_cb')
-
-    @show_support_points_var.setter
-    def show_support_points_var(self, val):
-        """Setter ignored (backing value stored in checkbox widget)."""
-        pass  # backing value stored in the QCheckBox
-
-    @property
-    def show_extrapolation_var(self):
-        """Boolean property for extrapolation visibility."""
-        return _CheckboxShim(self, 'extrapolation_cb')
-
-    @show_extrapolation_var.setter
-    def show_extrapolation_var(self, val):
-        """Setter ignored (backing value stored in checkbox widget)."""
-        pass
-
-    @property
-    def show_fitted_line_var(self):
-        """Boolean property for fitted line visibility."""
-        return _CheckboxShim(self, 'fitted_line_cb')
-
-    @show_fitted_line_var.setter
-    def show_fitted_line_var(self, val):
-        """Setter ignored (backing value stored in checkbox widget)."""
-        pass
-
-    # ------------------------------------------------------------------
     # Public sync API
     # ------------------------------------------------------------------
 
     def sync_zoom_label(self, val) -> None:
-        """Update the zoom factor display.
-
-        Args:
-            val: Current zoom factor (float or int).
-        """
+        """Update the zoom factor display."""
         self.zoom_label.setText(f"Zoom: {float(val):.1f}\u00d7")
 
     def sync_slicing_inputs(self, floor: float, ceiling: float) -> None:
-        """Synchronise the floor/ceiling entries and range slider.
-
-        Args:
-            floor: Current floor intensity value.
-            ceiling: Current ceiling intensity value.
-        """
+        """Synchronise the floor/ceiling entries and range slider."""
         self.floor_entry.setText(f"{floor:.4f}")
         self.ceiling_entry.setText(f"{ceiling:.4f}")
         self.range_slider.set_values(floor, ceiling)
@@ -175,35 +132,3 @@ class ZerothOrderToolsPanel(QFrame):
         self.controller.handle_ceiling_entry_submit(self.ceiling_entry.text())
 
 
-class _CheckboxShim:
-    """Thin shim to make ``cb.get()`` work like a ``BooleanVar`` from Tkinter.
-
-    The old zeroth-order controller reads
-    ``self.tools_panel.show_support_points_var.get()``.
-    This shim wraps the underlying ``QCheckBox`` so the same call works.
-
-    Args:
-        panel: The parent ZerothOrderToolsPanel.
-        attr: String name of the QCheckBox attribute on the panel.
-    """
-
-    def __init__(self, panel, attr: str):
-        """Initialise the shim.
-
-        Args:
-            panel: Parent ZerothOrderToolsPanel widget.
-            attr: Name of the QCheckBox attribute.
-        """
-        self._panel = panel
-        self._attr = attr
-
-    def get(self) -> bool:
-        """Return the current check state of the underlying QCheckBox.
-
-        Returns:
-            True if checked, False otherwise.
-        """
-        cb = getattr(self._panel, self._attr, None)
-        if cb is None:
-            return False
-        return cb.isChecked()

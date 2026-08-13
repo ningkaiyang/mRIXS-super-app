@@ -518,11 +518,6 @@ QToolTip {{
 # ---------------------------------------------------------------------------
 
 
-def danger_style() -> str:
-    """Return a QSS snippet for a destructive / danger button."""
-    return f"background-color: {PALETTE['accent_red']}; color: white;"
-
-
 def success_style() -> str:
     """Return a QSS snippet for a success / start button."""
     return f"background-color: {PALETTE['accent_green']}; color: white;"
@@ -536,11 +531,6 @@ def accent_style() -> str:
 def neutral_style() -> str:
     """Return a QSS snippet for a neutral / tool button."""
     return "background-color: #444455; color: white;"
-
-
-def active_mode_style() -> str:
-    """Return a QSS snippet for a button that is in an active 'mode on' state."""
-    return f"background-color: {PALETTE['accent_orange']}; color: white;"
 
 
 # ---------------------------------------------------------------------------

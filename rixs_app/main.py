@@ -258,8 +258,7 @@ class RixsApp(QMainWindow):
         event.accept()
 
 
-# Backward-compatibility alias
-MainApplication = RixsApp
+
 
 
 def main() -> None:

@@ -6,7 +6,7 @@ not be treated as validated physics.
 """
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from scipy.optimize import curve_fit
 from scipy.ndimage import gaussian_filter1d
 

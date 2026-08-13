@@ -10,7 +10,8 @@ import scipy.ndimage
 import tifffile
 import tracemalloc
 
-from rixs_app.core.zeroth_order import denoise_image, evaluate_zeroth_order
+from rixs_app.core.preprocessing import denoise_image
+from rixs_app.core.zeroth_order import evaluate_zeroth_order
 
 # =====================================================================
 # FROM test_preprocessing_challenger.py
