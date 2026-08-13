@@ -15,5 +15,9 @@ PySide6>=6.6.0
 pytest==9.0.3
 pytest-qt>=4.4.0
 
+# LLM Agent (Phase 2 — CBORG Co-Pilot)
+openai>=1.40
+python-dotenv>=1.0
+
 # Utilities
 pyshortcuts==1.9.9
