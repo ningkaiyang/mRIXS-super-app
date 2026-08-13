@@ -105,7 +105,8 @@ class RixsApp(QMainWindow):
         if event.type() == QEvent.MouseButtonPress:
             focused = self.focusWidget()
             if isinstance(focused, (QLineEdit, QTextEdit)):
-                if watched is not focused and not focused.isAncestorOf(watched):
+                from PySide6.QtWidgets import QWidget
+                if isinstance(watched, QWidget) and watched is not focused and not focused.isAncestorOf(watched):
                     focused.clearFocus()
 
         elif event.type() == QEvent.KeyPress:

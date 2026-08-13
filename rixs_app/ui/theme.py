@@ -220,6 +220,19 @@ QPushButton#cancel_btn:pressed {{
     background-color: #555566;
 }}
 
+/* Amber / Gold button (Best Focus) */
+QPushButton#amber_btn {{
+    background-color: #d97706;
+    color: white;
+    font-weight: bold;
+}}
+QPushButton#amber_btn:hover {{
+    background-color: #f59e0b;
+}}
+QPushButton#amber_btn:pressed {{
+    background-color: #b45309;
+}}
+
 /* Header title label */
 QLabel#header_title {{
     font-size: 26px;
@@ -289,6 +302,10 @@ QComboBox {{
 
 QComboBox#engine_menu {{
     min-width: 185px;
+}}
+
+QComboBox#stage_menu {{
+    min-width: 210px;
 }}
 
 QComboBox:hover {{
@@ -579,6 +596,13 @@ def set_danger_secondary_btn(btn) -> None:
 def set_success_btn(btn) -> None:
     """Mark *btn* as a green success / launch button."""
     btn.setObjectName("success_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
+
+
+def set_amber_btn(btn) -> None:
+    """Mark *btn* as an amber-gold button (e.g. Best Focus)."""
+    btn.setObjectName("amber_btn")
     btn.style().unpolish(btn)
     btn.style().polish(btn)
 

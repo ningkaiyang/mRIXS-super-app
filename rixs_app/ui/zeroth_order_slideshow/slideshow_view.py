@@ -53,6 +53,10 @@ class ZerothOrderSlideshowView(QWidget):
         self.zoom_mode: bool = False
         self._autoplay_timer: QTimer | None = None
 
+        self._slicing_timer = QTimer(self)
+        self._slicing_timer.setSingleShot(True)
+        self._slicing_timer.timeout.connect(self.load_and_render)
+
         self._build_ui()
         self._start_queue_poll()
 
@@ -283,15 +287,17 @@ class ZerothOrderSlideshowView(QWidget):
         Args:
             on_complete_extra: Optional extra callback once precompute finishes.
         """
-        self.navbar.prev_button.setEnabled(False)
-        self.navbar.next_button.setEnabled(False)
+        btn = self.navbar.precompute_button
+        btn.setEnabled(False)
+        self.navbar.peak_focus_button.setEnabled(False)
 
         def on_progress(current: int, total: int) -> None:
-            pass  # Could update a status bar here
+            btn.setText(f"{current}/{total}...")
 
         def on_complete(success=True, err_msg=None) -> None:
-            self.navbar.prev_button.setEnabled(True)
-            self.navbar.next_button.setEnabled(True)
+            btn.setText("Precompute All")
+            btn.setEnabled(True)
+            self.navbar.peak_focus_button.setEnabled(True)
             if not success:
                 QMessageBox.critical(
                     self, "Precompute Error",
@@ -366,7 +372,7 @@ class ZerothOrderSlideshowView(QWidget):
         self.load_and_render()
 
     def handle_slicing_change(self, floor: float, ceiling: float) -> None:
-        """Handle range slider slicing change (debounced).
+        """Handle range slider slicing change (debounced live updates).
 
         Args:
             floor: New lower slicing bound.
@@ -375,7 +381,17 @@ class ZerothOrderSlideshowView(QWidget):
         self.manager.slicing_floor = floor
         self.manager.slicing_ceiling = ceiling
         self.tools_panel.sync_slicing_inputs(floor, ceiling)
-        QTimer.singleShot(80, self.load_and_render)
+        self._slicing_timer.start(150)
+
+    def handle_slicing_release(self, floor: float, ceiling: float) -> None:
+        """Handle mouse release on range slider (immediate render).
+
+        Args:
+            floor: Final lower slicing bound.
+            ceiling: Final upper slicing bound.
+        """
+        self._slicing_timer.stop()
+        self.load_and_render()
 
     def handle_floor_entry_submit(self, val_str: str) -> None:
         """Handle return-key submission of the floor slicing entry.

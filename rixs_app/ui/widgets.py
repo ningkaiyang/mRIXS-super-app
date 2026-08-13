@@ -24,6 +24,7 @@ class RangeSlider(QWidget):
     """
 
     range_changed = Signal(float, float)
+    slider_released = Signal(float, float)
 
     def __init__(self, parent=None, *, command=None, **kwargs):
         """Initialise the RangeSlider.
@@ -231,10 +232,13 @@ class RangeSlider(QWidget):
             self._command(self.val_left, self.val_right)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        """Deactivate the dragged handle.
+        """Deactivate the dragged handle and emit release signal.
 
         Args:
             event: The QMouseEvent.
         """
+        was_active = self._active_handle is not None
         self._active_handle = None
         self.update()
+        if was_active:
+            self.slider_released.emit(self.val_left, self.val_right)

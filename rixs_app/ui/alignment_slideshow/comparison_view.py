@@ -118,25 +118,67 @@ class ExportComparisonView(QWidget):
         aligned_vmax = _vmax(aligned_sum)
         direct_vmax = _vmax(direct_sum)
 
-        self._figure = Figure(figsize=(10, 5), dpi=100)
+        self._figure = Figure(figsize=(10, 5), dpi=100, facecolor='#14172b')
         ax1 = self._figure.add_subplot(121)
         ax2 = self._figure.add_subplot(122, sharex=ax1, sharey=ax1)
 
+        ax1.set_facecolor('#14172b')
+        ax2.set_facecolor('#14172b')
+
         ax1.imshow(direct_sum, cmap="viridis", vmin=0, vmax=direct_vmax)
-        ax1.set_title("Direct Sum (Unaligned)")
+        ax1.set_title("Direct Sum (Unaligned)", color='white', fontsize=12, fontweight='bold')
         ax1.axis("off")
 
         ax2.imshow(aligned_sum, cmap="viridis", vmin=0, vmax=aligned_vmax)
-        ax2.set_title("Aligned Sum")
+        ax2.set_title("Aligned Sum", color='white', fontsize=12, fontweight='bold')
         ax2.axis("off")
 
         self._figure.tight_layout()
 
         self._mpl_canvas = FigureCanvasQTAgg(self._figure)
+        self._mpl_canvas.setStyleSheet("background-color: #14172b;")
         self._plot_layout.addWidget(self._mpl_canvas)
         self._mpl_canvas.draw()
 
         self._toolbar = NavigationToolbar(self._mpl_canvas, self._toolbar_container)
+        self._toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #1a1f36;
+                border: 1px solid #2d3561;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QToolButton {
+                background-color: #2d3558;
+                border: 1px solid #3f4b78;
+                border-radius: 4px;
+                padding: 4px 6px;
+                margin: 2px;
+            }
+            QToolButton:hover {
+                background-color: #3d4875;
+                border: 1px solid #5667a0;
+            }
+        """)
+
+        # Invert black toolbar icons to crisp white for dark mode visibility
+        from PySide6.QtWidgets import QToolButton
+        from PySide6.QtGui import QIcon, QImage, QPixmap
+        for btn in self._toolbar.findChildren(QToolButton):
+            icon = btn.icon()
+            if not icon.isNull():
+                pix = icon.pixmap(24, 24)
+                img = pix.toImage().convertToFormat(QImage.Format_ARGB32)
+                for y in range(img.height()):
+                    for x in range(img.width()):
+                        c = img.pixelColor(x, y)
+                        if c.alpha() > 0:
+                            c.setRed(255 - c.red())
+                            c.setGreen(255 - c.green())
+                            c.setBlue(255 - c.blue())
+                            img.setPixelColor(x, y, c)
+                btn.setIcon(QIcon(QPixmap.fromImage(img)))
+
         self._toolbar_layout.addWidget(self._toolbar)
 
     # ------------------------------------------------------------------

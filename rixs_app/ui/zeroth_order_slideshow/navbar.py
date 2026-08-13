@@ -9,6 +9,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QPushButton, QComboBox, QLabel,
 )
+from PySide6.QtCore import Qt
 
 from rixs_app.ui.theme import PALETTE, success_style, neutral_style
 
@@ -55,22 +56,23 @@ class ZerothOrderNavBar(QFrame):
 
         # --- Autoplay ---
         self.autoplay_button = QPushButton("\u25ba Play")
-        self.autoplay_button.setFixedWidth(80)
-        self.autoplay_button.setStyleSheet(success_style())
+        self.autoplay_button.setFixedSize(80, 30)
+        from rixs_app.ui.theme import set_play_btn, set_accent_btn, set_amber_btn
+        set_play_btn(self.autoplay_button)
         self.autoplay_button.clicked.connect(self.controller.toggle_autoplay)
         layout.addWidget(self.autoplay_button)
 
         # --- Precompute ---
         self.precompute_button = QPushButton("Precompute All")
-        self.precompute_button.setFixedWidth(130)
-        self.precompute_button.setStyleSheet(neutral_style())
+        self.precompute_button.setFixedSize(130, 30)
+        set_accent_btn(self.precompute_button)
         self.precompute_button.clicked.connect(self.controller.trigger_precompute)
         layout.addWidget(self.precompute_button)
 
         # --- Peak focus ---
         self.peak_focus_button = QPushButton("\u26a1 Best Focus")
-        self.peak_focus_button.setFixedWidth(110)
-        self.peak_focus_button.setStyleSheet(neutral_style())
+        self.peak_focus_button.setFixedSize(125, 30)
+        set_amber_btn(self.peak_focus_button)
         self.peak_focus_button.clicked.connect(self.controller.jump_to_peak_focus)
         layout.addWidget(self.peak_focus_button)
 
@@ -79,17 +81,28 @@ class ZerothOrderNavBar(QFrame):
         # --- Pipeline stage ---
         layout.addWidget(QLabel("Stage:"))
         self.stage_menu = QComboBox()
-        self.stage_menu.addItems([
+        self.stage_menu.setObjectName("stage_menu")
+        stages = [
             "Raw", "Denoised (D)", "Row-Smoothed (Dsm)", "Gradient (G)", "Fitted-Line Strip"
-        ])
+        ]
+        self.stage_menu.addItems(stages)
+        for idx, text in enumerate(stages):
+            self.stage_menu.setItemData(idx, text, Qt.ToolTipRole)
         self.stage_menu.setCurrentText("Raw")
+        self.stage_menu.setMinimumWidth(210)
+        self.stage_menu.view().setMinimumWidth(210)
+        self.stage_menu.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.stage_menu.currentTextChanged.connect(self.controller.change_pipeline_stage)
         layout.addWidget(self.stage_menu)
 
         # --- Colormap ---
         layout.addWidget(QLabel("Colormap:"))
         self.colormap_menu = QComboBox()
-        self.colormap_menu.addItems(["viridis", "inferno", "plasma", "magma", "grayscale"])
+        colormaps = ["viridis", "inferno", "plasma", "magma", "grayscale"]
+        self.colormap_menu.addItems(colormaps)
+        for idx, text in enumerate(colormaps):
+            self.colormap_menu.setItemData(idx, text, Qt.ToolTipRole)
         self.colormap_menu.setCurrentText("viridis")
+        self.colormap_menu.setMinimumWidth(95)
         self.colormap_menu.currentTextChanged.connect(self.controller.change_colormap)
         layout.addWidget(self.colormap_menu)

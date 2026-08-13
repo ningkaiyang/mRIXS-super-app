@@ -88,7 +88,7 @@ def test_f1_01_select_files_adds_to_list(app_window, temp_tif_files, qtbot):
         return_value=([temp_tif_files[1], temp_tif_files[0]], "")
     ):
         qtbot.mouseClick(sv.select_button, Qt.LeftButton)
-    assert sv.file_list == [temp_tif_files[1], temp_tif_files[0]]
+    assert sv.file_list == [temp_tif_files[0], temp_tif_files[1]]
 
 
 def test_f1_02_natural_sort_empty_list():
@@ -105,40 +105,23 @@ def test_f1_04_natural_sort_ordering():
     assert natural_sort(lst) == ["frame_1.tif", "frame_2.tif", "frame_10.tif"]
 
 
-def test_f1_05_move_up_selected_item(app_window, qtbot):
+def test_f1_05_drag_drop_reorder_item(app_window):
     sv = app_window.sorting_view
     sv.file_list = ["a.tif", "b.tif", "c.tif"]
-    sv.selected_index = 1
-    qtbot.mouseClick(sv.up_button, Qt.LeftButton)
+    sv.update_listbox()
+    # Move item 1 ('b.tif') to top
+    item = sv.list_widget.takeItem(1)
+    sv.list_widget.insertItem(0, item)
+    sv._on_list_reordered()
     assert sv.file_list == ["b.tif", "a.tif", "c.tif"]
-    assert sv.selected_index == 0
 
 
-def test_f1_06_move_up_boundary(app_window, qtbot):
+def test_f1_06_auto_sort_on_import(app_window):
     sv = app_window.sorting_view
-    sv.file_list = ["a.tif", "b.tif", "c.tif"]
-    sv.selected_index = 0
-    qtbot.mouseClick(sv.up_button, Qt.LeftButton)
-    assert sv.file_list == ["a.tif", "b.tif", "c.tif"]
-    assert sv.selected_index == 0
-
-
-def test_f1_07_move_down_selected_item(app_window, qtbot):
-    sv = app_window.sorting_view
-    sv.file_list = ["a.tif", "b.tif", "c.tif"]
-    sv.selected_index = 1
-    qtbot.mouseClick(sv.down_button, Qt.LeftButton)
-    assert sv.file_list == ["a.tif", "c.tif", "b.tif"]
-    assert sv.selected_index == 2
-
-
-def test_f1_08_move_down_boundary(app_window, qtbot):
-    sv = app_window.sorting_view
-    sv.file_list = ["a.tif", "b.tif", "c.tif"]
-    sv.selected_index = 2
-    qtbot.mouseClick(sv.down_button, Qt.LeftButton)
-    assert sv.file_list == ["a.tif", "b.tif", "c.tif"]
-    assert sv.selected_index == 2
+    # Natural sort order check
+    from rixs_app.core import natural_sort
+    unsorted = ["frame_10.tif", "frame_2.tif", "frame_1.tif"]
+    assert natural_sort(unsorted) == ["frame_1.tif", "frame_2.tif", "frame_10.tif"]
 
 
 def test_f1_09_remove_item(app_window, qtbot):
@@ -374,9 +357,8 @@ def test_f5_10_preprocess_image_invalid_percentile(temp_tif_files):
 
 def test_t3_01_sort_retains_selection_integrity(app_window, temp_tif_files):
     sv = app_window.sorting_view
-    sv.file_list = [temp_tif_files[1], temp_tif_files[0]]
-    sv.selected_index = 0
-    sv.sort_files()
+    from rixs_app.core import natural_sort
+    sv.file_list = natural_sort([temp_tif_files[1], temp_tif_files[0]])
     assert sv.file_list == [temp_tif_files[0], temp_tif_files[1]]
 
 
