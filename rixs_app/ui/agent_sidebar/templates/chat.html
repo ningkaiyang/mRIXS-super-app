@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { background: #1a1a2e; color: #e8eaf6; font-family: -apple-system, 'Segoe UI', sans-serif; margin: 0; padding: 8px; }
+#chat-container { display: flex; flex-direction: column; gap: 8px; padding-bottom: 20px; }
+.message { padding: 10px 14px; border-radius: 8px; max-width: 85%; word-wrap: break-word; }
+.user { align-self: flex-end; background: #2196f3; }
+.agent { align-self: flex-start; background: #16213e; border: 1px solid #2d3561; width: 100%; box-sizing: border-box; }
+details.tool-card { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 6px 10px; margin-top: 6px; font-size: 0.9em; }
+details.tool-card summary { cursor: pointer; color: #9fa8da; font-weight: bold; }
+details.tool-card pre { background: #0d1117; padding: 8px; border-radius: 4px; overflow-x: auto; margin-top: 6px; }
+.approval-card { border: 1px solid #d97706; background: #1a1a2e; border-radius: 6px; padding: 10px; margin-top: 8px; }
+.approval-card .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+.approval-card button { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+.btn-approve { background: #d97706; color: white; }
+.btn-reject { background: #aa3333; color: white; }
+.error-card { border: 1px solid #aa3333; background: #1a1a2e; color: #ef5350; border-radius: 6px; padding: 10px; margin-top: 8px; }
+pre code { background: #0d1117; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
+pre { background: #0d1117; padding: 8px; border-radius: 4px; overflow-x: auto; }
+</style>
+<script>
+let msgCounter = 0;
+function genId() { return 'msg-' + (msgCounter++); }
+
+function scrollToBottom() {
+    window.scrollTo(0, document.body.scrollHeight);
+}
+
+function parseMarkdown(text) {
+    let html = text.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/\n/g, '<br>');
+    return html;
+}
+
+function appendUserMessage(text) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = 'message user';
+    div.innerText = text;
+    container.appendChild(div);
+    scrollToBottom();
+}
+
+function startAssistantMessage(msgId) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = 'message agent';
+    div.id = msgId;
+    container.appendChild(div);
+    scrollToBottom();
+}
+
+function appendToken(msgId, token) {
+    const div = document.getElementById(msgId);
+    if (div) {
+        div.dataset.rawText = (div.dataset.rawText || '') + token;
+        div.innerHTML = parseMarkdown(div.dataset.rawText);
+        scrollToBottom();
+    }
+}
+
+function finalizeMessage(msgId) {
+    // optional processing hook
+}
+
+function addToolCard(toolName, argsJson, status) {
+    const container = document.getElementById('chat-container');
+    const details = document.createElement('details');
+    details.className = 'tool-card';
+    details.id = 'tool-' + msgCounter;
+    
+    const summary = document.createElement('summary');
+    summary.innerText = `⚙️ ${toolName} (${status})`;
+    
+    const pre = document.createElement('pre');
+    pre.innerText = argsJson;
+    
+    details.appendChild(summary);
+    details.appendChild(pre);
+    container.appendChild(details);
+    msgCounter++;
+    scrollToBottom();
+}
+
+function updateToolCard(toolName, output, status) {
+    const container = document.getElementById('chat-container');
+    const details = document.createElement('details');
+    details.className = 'tool-card';
+    const summary = document.createElement('summary');
+    summary.innerText = `⚙️ ${toolName} result (${status})`;
+    const pre = document.createElement('pre');
+    pre.innerText = output;
+    details.appendChild(summary);
+    details.appendChild(pre);
+    container.appendChild(details);
+    scrollToBottom();
+}
+
+function addApprovalCard(callbackId, toolName, argsJson) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = 'approval-card';
+    div.innerHTML = `
+        <div style="color: #f59e0b; font-weight: bold;">⚠️ Approval Required: ${toolName}</div>
+        <pre>${argsJson}</pre>
+        <div class="btn-row">
+            <button class="btn-approve" onclick="approve('${callbackId}')">Approve</button>
+            <button class="btn-reject" onclick="reject('${callbackId}')">Reject</button>
+        </div>
+    `;
+    container.appendChild(div);
+    scrollToBottom();
+}
+
+function addErrorCard(errorMsg) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = 'error-card';
+    div.innerText = '❌ ' + errorMsg;
+    container.appendChild(div);
+    scrollToBottom();
+}
+
+function addCLILine(line) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.style.fontFamily = 'monospace';
+    div.style.color = '#9fa8da';
+    div.innerText = '> ' + line;
+    container.appendChild(div);
+    scrollToBottom();
+}
+
+function clearAll() {
+    document.getElementById('chat-container').innerHTML = '';
+}
+
+function approve(callbackId) {
+    document.title = JSON.stringify({action: 'approve', callbackId: callbackId});
+}
+
+function reject(callbackId) {
+    const feedback = prompt("Optional feedback for rejection:");
+    document.title = JSON.stringify({action: 'reject', callbackId: callbackId, feedback: feedback || ''});
+}
+</script>
+</head>
+<body>
+    <div id="chat-container"></div>
+</body>
+</html>
