@@ -50,6 +50,8 @@ class GuiAgentBridge(QObject):
     def start_worker(self) -> None:
         """Starts the background worker thread."""
         self._thread.start()
+        # Give the engine a reference to the worker loop for thread-safe signaling
+        self.engine._loop = self._thread.loop
 
     def stop_worker(self) -> None:
         """Stops the background worker thread."""

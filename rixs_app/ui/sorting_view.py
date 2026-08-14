@@ -88,11 +88,14 @@ class SortingView(QWidget):
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(10)
 
-        # Header
-        header = QLabel("mRIXS Super-App Workspace")
-        header.setObjectName("header_title")
-        header.setAlignment(Qt.AlignCenter)
-        outer.addWidget(header)
+        # Header row (title centered, Co-Pilot button docks at right)
+        self._header_row = QHBoxLayout()
+        self._header_row.setContentsMargins(0, 0, 0, 0)
+        header_label = QLabel("mRIXS Super-App Workspace")
+        header_label.setObjectName("header_title")
+        header_label.setAlignment(Qt.AlignCenter)
+        self._header_row.addWidget(header_label, stretch=1)
+        outer.addLayout(self._header_row)
 
         # --- Row 1: Primary Select Files ---
         self.select_button = QPushButton("\U0001f4c1 Select TIFF Files")
@@ -328,3 +331,15 @@ class SortingView(QWidget):
             idx: Item index to select.
         """
         self._select_item(idx)
+
+    # ------------------------------------------------------------------
+    # Co-Pilot button integration
+    # ------------------------------------------------------------------
+
+    def set_copilot_button(self, btn: QPushButton) -> None:
+        """Insert the Co-Pilot toggle button into the header row.
+
+        Args:
+            btn: The Co-Pilot toggle QPushButton to reparent here.
+        """
+        self._header_row.addWidget(btn)

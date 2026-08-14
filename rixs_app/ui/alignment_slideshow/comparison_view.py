@@ -54,6 +54,12 @@ class ExportComparisonView(QWidget):
         outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(6)
 
+        # Top-right slot for Co-Pilot button
+        self._top_row = QHBoxLayout()
+        self._top_row.setContentsMargins(0, 0, 0, 0)
+        self._top_row.addStretch()
+        outer.addLayout(self._top_row)
+
         # Plot area placeholder
         self._plot_container = QFrame()
         self._plot_layout = QVBoxLayout(self._plot_container)
@@ -232,3 +238,15 @@ class ExportComparisonView(QWidget):
                     self, "Export Failed",
                     f"Failed to save file:\n{exc}"
                 )
+
+    # ------------------------------------------------------------------
+    # Co-Pilot button integration
+    # ------------------------------------------------------------------
+
+    def set_copilot_button(self, btn) -> None:
+        """Insert the Co-Pilot toggle button into the top-right slot.
+
+        Args:
+            btn: The Co-Pilot toggle QPushButton to reparent here.
+        """
+        self._top_row.addWidget(btn)

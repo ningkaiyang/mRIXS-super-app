@@ -72,29 +72,9 @@ class RixsApp(QMainWindow):
         self._splitter = QSplitter(Qt.Horizontal, self)
         self.setCentralWidget(self._splitter)
 
-        # Left side: stack of views + toggle button overlay
-        left_container = QWidget()
-        left_layout = QVBoxLayout(left_container)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(0)
-
-        # Toggle button bar at top-right
-        toggle_bar = QHBoxLayout()
-        toggle_bar.setContentsMargins(0, 4, 8, 0)
-        toggle_bar.addStretch()
-        self._sidebar_toggle = QPushButton("🤖 Co-Pilot")
-        self._sidebar_toggle.setFixedHeight(28)
-        self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
-        set_tool_btn(self._sidebar_toggle)
-        self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
-        toggle_bar.addWidget(self._sidebar_toggle)
-        left_layout.addLayout(toggle_bar)
-
-        # Stacked container
+        # Left side: stacked views (no wrapper — Co-Pilot btn lives in each navbar)
         self._stack = QStackedWidget()
-        left_layout.addWidget(self._stack)
-
-        self._splitter.addWidget(left_container)
+        self._splitter.addWidget(self._stack)
 
         # Build views
         self.sorting_view = SortingView(
@@ -117,6 +97,14 @@ class RixsApp(QMainWindow):
         self._stack.insertWidget(_IDX_COMPARISON, self.export_comparison_view)
         self._stack.insertWidget(_IDX_ZEROTH_ORDER, self.zeroth_order_view)
 
+        # Co-Pilot toggle button (reparented into each view's navbar on switch)
+        self._sidebar_toggle = QPushButton("🤖 Co-Pilot")
+        self._sidebar_toggle.setFixedHeight(28)
+        self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
+        set_tool_btn(self._sidebar_toggle)
+        self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
+        self._stack.currentChanged.connect(self._reparent_toggle_btn)
+
         # ------------------------------------------------------------------
         # Agent sidebar (right side, initially collapsed)
         # ------------------------------------------------------------------
@@ -127,7 +115,13 @@ class RixsApp(QMainWindow):
         self._sidebar_visible = False
         self._models_loaded = False
 
+        # Pre-warm Chromium so the sidebar opens instantly on first toggle.
+        # No setVisible(False) — Chromium defers page loading for hidden widgets.
+        from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
+        self._preloaded_chat_view = ChatWebView()
+
         self.show_sorting()
+        self._reparent_toggle_btn(self._stack.currentIndex())  # initial placement
 
         if show_window:
             self._maximize_window()
@@ -170,11 +164,15 @@ class RixsApp(QMainWindow):
         self._bridge = GuiAgentBridge(self._engine, parent=self)
         self._bridge.start_worker()
 
-        # Create sidebar widget
+        # Wire CLI streaming: tool stdout lines → sidebar UI
+        registry.set_cli_line_callback(lambda line: self._bridge.cli_stdout_line.emit(line))
+
+        # Create sidebar widget (reuse pre-warmed ChatWebView)
         self._sidebar = AgentSidebarWidget(
             bridge=self._bridge,
             main_window_ref=self,
             parent=None,
+            chat_view=self._preloaded_chat_view,
         )
         self._sidebar.sidebar_close_requested.connect(self._hide_sidebar)
 
@@ -224,6 +222,18 @@ class RixsApp(QMainWindow):
         self._model_signals.finished.connect(_on_models_loaded)
         loader = _ModelLoader(api_key, self._model_signals)
         QThreadPool.globalInstance().start(loader)
+
+    def _reparent_toggle_btn(self, idx: int) -> None:
+        """Move the Co-Pilot toggle button into the current view's navbar."""
+        btn = self._sidebar_toggle
+        if idx == _IDX_SORTING:
+            self.sorting_view.set_copilot_button(btn)
+        elif idx == _IDX_SLIDESHOW:
+            self.slideshow_view.navbar.set_copilot_button(btn)
+        elif idx == _IDX_COMPARISON:
+            self.export_comparison_view.set_copilot_button(btn)
+        elif idx == _IDX_ZEROTH_ORDER:
+            self.zeroth_order_view.navbar.set_copilot_button(btn)
 
     def _toggle_sidebar(self) -> None:
         """Toggle the agent sidebar visibility."""

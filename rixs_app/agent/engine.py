@@ -42,6 +42,7 @@ class CborgAgentEngine:
         self._pending_approvals: dict[str, asyncio.Event] = {}
         self._pending_results: dict[str, str] = {}
         self._cancel_flag = False
+        self._loop: asyncio.AbstractEventLoop | None = None  # set by bridge before use
 
     def set_model(self, model_id: str) -> None:
         """Updates the language model."""
@@ -61,19 +62,30 @@ class CborgAgentEngine:
         """Cancels any active generation."""
         self._cancel_flag = True
         for event in self._pending_approvals.values():
-            event.set()
+            if self._loop:
+                self._loop.call_soon_threadsafe(event.set)
+            else:
+                event.set()
 
     def approve_tool(self, callback_id: str) -> None:
-        """Approves a pending tool execution."""
+        """Approves a pending tool execution (thread-safe)."""
         if callback_id in self._pending_approvals:
             self._pending_results[callback_id] = "APPROVED"
-            self._pending_approvals[callback_id].set()
+            evt = self._pending_approvals[callback_id]
+            if self._loop:
+                self._loop.call_soon_threadsafe(evt.set)
+            else:
+                evt.set()
 
     def reject_tool(self, callback_id: str, feedback: str) -> None:
-        """Rejects a pending tool execution with feedback."""
+        """Rejects a pending tool execution with feedback (thread-safe)."""
         if callback_id in self._pending_approvals:
             self._pending_results[callback_id] = f"REJECTED: {feedback}"
-            self._pending_approvals[callback_id].set()
+            evt = self._pending_approvals[callback_id]
+            if self._loop:
+                self._loop.call_soon_threadsafe(evt.set)
+            else:
+                evt.set()
 
     async def stream_chat(self, user_message: str, gui_context: str) -> AsyncGenerator[AgentEvent, None]:
         """Streams chat completion responses and handles multi-step tool calls.

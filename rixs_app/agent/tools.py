@@ -53,10 +53,15 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolDef] = {}
         self._gui_context: Any = None
+        self._cli_line_callback: Callable[[str], None] | None = None
 
     def set_gui_context(self, main_window: Any) -> None:
         """Provide a reference to the main window for GUI tools."""
         self._gui_context = main_window
+
+    def set_cli_line_callback(self, callback: Callable[[str], None]) -> None:
+        """Set a callback invoked for each CLI output line (for live UI updates)."""
+        self._cli_line_callback = callback
 
     def tool(
         self, name: str, description: str, *, requires_approval: bool = False
@@ -323,7 +328,7 @@ def _register_tools(registry: ToolRegistry) -> None:
 
     @registry.tool(
         "cli_runner",
-        "Execute a project CLI command (align_cli.py, zeroth_order_cli.py, or denoise_cli.py). Returns stdout/stderr.",
+        "Execute a project CLI command (align_cli.py, zeroth_order_cli.py, or denoise_cli.py). Streams stdout live and returns full output.",
         requires_approval=True,
     )
     async def cli_runner(command: str) -> str:
@@ -340,20 +345,33 @@ def _register_tools(registry: ToolRegistry) -> None:
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,  # merge stderr into stdout
                 cwd=str(project_root),
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
 
-            parts = []
-            if stdout:
-                parts.append(f"STDOUT:\n{stdout.decode('utf-8', errors='replace')}")
-            if stderr:
-                parts.append(f"STDERR:\n{stderr.decode('utf-8', errors='replace')}")
-            parts.append(f"\nExit code: {proc.returncode}")
-            return "\n".join(parts) or "Command completed with no output."
+            lines: list[str] = []
+            cb = registry._cli_line_callback
+
+            async def _read_with_timeout():
+                while True:
+                    line_bytes = await asyncio.wait_for(
+                        proc.stdout.readline(), timeout=300
+                    )
+                    if not line_bytes:
+                        break
+                    line = line_bytes.decode('utf-8', errors='replace').rstrip()
+                    lines.append(line)
+                    if cb:
+                        cb(line)
+
+            await _read_with_timeout()
+            await proc.wait()
+
+            output = "\n".join(lines)
+            result = f"{output}\n\nExit code: {proc.returncode}" if output else f"Command completed with no output.\nExit code: {proc.returncode}"
+            return result
         except asyncio.TimeoutError:
-            return "Error: Command timed out after 300 seconds."
+            return "Error: Command timed out (no output for 300 seconds)."
         except Exception as e:
             return f"Error: {e}"
 

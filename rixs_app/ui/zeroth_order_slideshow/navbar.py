@@ -106,3 +106,16 @@ class ZerothOrderNavBar(QFrame):
         self.colormap_menu.setMinimumWidth(95)
         self.colormap_menu.currentTextChanged.connect(self.controller.change_colormap)
         layout.addWidget(self.colormap_menu)
+
+    # ------------------------------------------------------------------
+    # Co-Pilot button integration
+    # ------------------------------------------------------------------
+
+    def set_copilot_button(self, btn) -> None:
+        """Append the Co-Pilot toggle button to the right end of the navbar.
+
+        Args:
+            btn: The Co-Pilot toggle QPushButton to reparent here.
+        """
+        self.layout().addWidget(btn)
+

@@ -2,27 +2,226 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!-- QWebChannel JS bridge (built-in Qt resource) -->
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <style>
-body { background: #1a1a2e; color: #e8eaf6; font-family: -apple-system, 'Segoe UI', sans-serif; margin: 0; padding: 8px; }
-#chat-container { display: flex; flex-direction: column; gap: 8px; padding-bottom: 20px; }
-.message { padding: 10px 14px; border-radius: 8px; max-width: 85%; word-wrap: break-word; }
-.user { align-self: flex-end; background: #2196f3; }
-.agent { align-self: flex-start; background: #16213e; border: 1px solid #2d3561; width: 100%; box-sizing: border-box; }
-details.tool-card { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 6px 10px; margin-top: 6px; font-size: 0.9em; }
-details.tool-card summary { cursor: pointer; color: #9fa8da; font-weight: bold; }
-details.tool-card pre { background: #0d1117; padding: 8px; border-radius: 4px; overflow-x: auto; margin-top: 6px; }
-.approval-card { border: 1px solid #d97706; background: #1a1a2e; border-radius: 6px; padding: 10px; margin-top: 8px; }
-.approval-card .btn-row { display: flex; gap: 8px; margin-top: 10px; }
-.approval-card button { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
-.btn-approve { background: #d97706; color: white; }
-.btn-reject { background: #aa3333; color: white; }
-.error-card { border: 1px solid #aa3333; background: #1a1a2e; color: #ef5350; border-radius: 6px; padding: 10px; margin-top: 8px; }
-pre code { background: #0d1117; padding: 2px 4px; border-radius: 4px; font-family: monospace; }
-pre { background: #0d1117; padding: 8px; border-radius: 4px; overflow-x: auto; }
+body {
+  background: #1a1a2e;
+  color: #e8eaf6;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+  margin: 0;
+  padding: 8px;
+}
+#chat-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 20px;
+}
+.message {
+  padding: 10px 14px;
+  border-radius: 8px;
+  max-width: 85%;
+  word-wrap: break-word;
+  animation: fadeIn 0.2s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.user {
+  align-self: flex-end;
+  background: #2196f3;
+  color: #fff;
+  border-bottom-right-radius: 3px;
+}
+.agent {
+  align-self: flex-start;
+  background: #16213e;
+  border: 1px solid #2d3561;
+  width: 100%;
+  box-sizing: border-box;
+  border-bottom-left-radius: 3px;
+}
+
+/* ── Tool cards ─────────────────────────────────────── */
+details.tool-card {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 6px;
+  font-size: 0.9em;
+}
+details.tool-card summary {
+  cursor: pointer;
+  color: #9fa8da;
+  font-weight: bold;
+}
+details.tool-card pre {
+  background: #0d1117;
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin-top: 6px;
+}
+
+/* ── Approval cards ─────────────────────────────────── */
+.approval-card {
+  border: 2px solid #d97706;
+  background: #1c1a30;
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 8px;
+}
+.approval-card .title-row {
+  color: #f59e0b;
+  font-weight: bold;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.approval-card pre {
+  background: #0d1117;
+  padding: 8px 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 6px 0;
+  color: #c5cad3;
+  font-size: 12px;
+}
+.approval-card .btn-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.approval-card button {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 13px;
+  transition: background 0.15s, transform 0.1s;
+}
+.approval-card button:hover {
+  transform: translateY(-1px);
+}
+.approval-card button:active {
+  transform: translateY(0);
+}
+.btn-approve {
+  background: #d97706;
+  color: white;
+}
+.btn-approve:hover {
+  background: #f59e0b;
+}
+.btn-reject {
+  background: #aa3333;
+  color: white;
+}
+.btn-reject:hover {
+  background: #cc4444;
+}
+.approval-resolved {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.approval-resolved .btn-row {
+  display: none;
+}
+.approval-resolved .title-row::after {
+  content: " ✓";
+  color: #81c784;
+}
+
+/* ── Error cards ────────────────────────────────────── */
+.error-card {
+  border: 1px solid #aa3333;
+  background: #1a1a2e;
+  color: #ef5350;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 8px;
+}
+
+/* ── Code formatting ────────────────────────────────── */
+code {
+  background: rgba(255,255,255,0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 12px;
+}
+pre {
+  background: #0d1117;
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+pre code {
+  background: none;
+  padding: 0;
+}
+
+/* ── Scrollbar ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2d3561; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #9fa8da; }
+
+/* ── Terminal output panel ──────────────────────────── */
+.terminal-panel {
+  background: #0d1117;
+  border: 1px solid #1e3a5f;
+  border-radius: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.terminal-header {
+  background: #161b22;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #1e3a5f;
+}
+.terminal-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #2fa572;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.terminal-dot.done { animation: none; background: #666; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.terminal-title {
+  color: #8b949e;
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+.terminal-body {
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 </style>
 <script>
+/* ── QWebChannel bridge initialisation ────────────────── */
+var bridge = null;
+new QWebChannel(qt.webChannelTransport, function(channel) {
+    bridge = channel.objects.bridge;
+});
+
 let msgCounter = 0;
-function genId() { return 'msg-' + (msgCounter++); }
 
 function scrollToBottom() {
     window.scrollTo(0, document.body.scrollHeight);
@@ -73,13 +272,13 @@ function addToolCard(toolName, argsJson, status) {
     const details = document.createElement('details');
     details.className = 'tool-card';
     details.id = 'tool-' + msgCounter;
-    
+
     const summary = document.createElement('summary');
-    summary.innerText = `⚙️ ${toolName} (${status})`;
-    
+    summary.innerText = '⚙️ ' + toolName + ' (' + status + ')';
+
     const pre = document.createElement('pre');
     pre.innerText = argsJson;
-    
+
     details.appendChild(summary);
     details.appendChild(pre);
     container.appendChild(details);
@@ -92,7 +291,7 @@ function updateToolCard(toolName, output, status) {
     const details = document.createElement('details');
     details.className = 'tool-card';
     const summary = document.createElement('summary');
-    summary.innerText = `⚙️ ${toolName} result (${status})`;
+    summary.innerText = '⚙️ ' + toolName + ' result (' + status + ')';
     const pre = document.createElement('pre');
     pre.innerText = output;
     details.appendChild(summary);
@@ -105,16 +304,33 @@ function addApprovalCard(callbackId, toolName, argsJson) {
     const container = document.getElementById('chat-container');
     const div = document.createElement('div');
     div.className = 'approval-card';
-    div.innerHTML = `
-        <div style="color: #f59e0b; font-weight: bold;">⚠️ Approval Required: ${toolName}</div>
-        <pre>${argsJson}</pre>
-        <div class="btn-row">
-            <button class="btn-approve" onclick="approve('${callbackId}')">Approve</button>
-            <button class="btn-reject" onclick="reject('${callbackId}')">Reject</button>
-        </div>
-    `;
+    div.id = 'approval-' + callbackId;
+    div.innerHTML =
+        '<div class="title-row">⚠️ Approval Required: ' + toolName + '</div>' +
+        '<pre>' + argsJson + '</pre>' +
+        '<div class="btn-row">' +
+            '<button class="btn-approve" onclick="doApprove(\'' + callbackId + '\')">✓ Approve</button>' +
+            '<button class="btn-reject" onclick="doReject(\'' + callbackId + '\')">✕ Reject</button>' +
+        '</div>';
     container.appendChild(div);
     scrollToBottom();
+}
+
+function doApprove(callbackId) {
+    if (bridge) {
+        bridge.approve(callbackId);
+        var card = document.getElementById('approval-' + callbackId);
+        if (card) card.classList.add('approval-resolved');
+    }
+}
+
+function doReject(callbackId) {
+    var feedback = prompt("Optional feedback for rejection:");
+    if (bridge) {
+        bridge.reject(callbackId, feedback || '');
+        var card = document.getElementById('approval-' + callbackId);
+        if (card) card.classList.add('approval-resolved');
+    }
 }
 
 function addErrorCard(errorMsg) {
@@ -126,27 +342,55 @@ function addErrorCard(errorMsg) {
     scrollToBottom();
 }
 
+var _cliPanel = null;
+var _cliLineCount = 0;
+
 function addCLILine(line) {
     const container = document.getElementById('chat-container');
-    const div = document.createElement('div');
-    div.style.fontFamily = 'monospace';
-    div.style.color = '#9fa8da';
-    div.innerText = '> ' + line;
-    container.appendChild(div);
+
+    // Create terminal panel on first line
+    if (!_cliPanel) {
+        _cliLineCount = 0;
+        const panel = document.createElement('div');
+        panel.className = 'terminal-panel';
+        panel.innerHTML =
+            '<div class="terminal-header">' +
+                '<span class="terminal-dot" id="terminal-dot"></span>' +
+                '<span class="terminal-title" id="terminal-title">Running...</span>' +
+            '</div>' +
+            '<div class="terminal-body" id="terminal-body"></div>';
+        container.appendChild(panel);
+        _cliPanel = panel;
+    }
+
+    _cliLineCount++;
+    var body = _cliPanel.querySelector('#terminal-body');
+    body.textContent += line + '\n';
+
+    // Update line counter
+    var titleEl = _cliPanel.querySelector('#terminal-title');
+    titleEl.textContent = 'Running... (' + _cliLineCount + ' lines)';
+
+    // Auto-scroll terminal body
+    body.scrollTop = body.scrollHeight;
     scrollToBottom();
+}
+
+function finalizeCLI() {
+    if (_cliPanel) {
+        var dot = _cliPanel.querySelector('#terminal-dot');
+        var titleEl = _cliPanel.querySelector('#terminal-title');
+        if (dot) dot.classList.add('done');
+        if (titleEl) titleEl.textContent = 'Completed (' + _cliLineCount + ' lines)';
+        _cliPanel = null;
+        _cliLineCount = 0;
+    }
 }
 
 function clearAll() {
     document.getElementById('chat-container').innerHTML = '';
-}
-
-function approve(callbackId) {
-    document.title = JSON.stringify({action: 'approve', callbackId: callbackId});
-}
-
-function reject(callbackId) {
-    const feedback = prompt("Optional feedback for rejection:");
-    document.title = JSON.stringify({action: 'reject', callbackId: callbackId, feedback: feedback || ''});
+    _cliPanel = null;
+    _cliLineCount = 0;
 }
 </script>
 </head>
