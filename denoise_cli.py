@@ -63,6 +63,9 @@ def print_stats(img: np.ndarray, label: str, mad_threshold: float = 5.0) -> None
 
 def main() -> None:
     """Main CLI entry point."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+
     parser = argparse.ArgumentParser(
         description="Denoise 2D spectroscopic frame TIFF images."
     )

@@ -165,7 +165,7 @@ class CborgAgentEngine:
             for tc in tool_calls_data.values():
                 tool_name = tc['name']
                 args_str = tc['arguments']
-                tool_id = tc['id']
+                tool_id = tc['id'] or uuid.uuid4().hex[:8]
                 
                 try:
                     kwargs_dict = json.loads(args_str)
@@ -177,15 +177,15 @@ class CborgAgentEngine:
                     event = asyncio.Event()
                     self._pending_approvals[callback_id] = event
                     
-                    yield AgentEvent(type='approval_required', content=tool_name, metadata={'callback_id': callback_id, 'args': args_str})
+                    yield AgentEvent(type='approval_required', content=tool_name, metadata={'callback_id': callback_id, 'call_id': tool_id, 'args': args_str})
                     await event.wait()
                     
                     result_feedback = self._pending_results.get(callback_id, "REJECTED: Unknown")
                     
                     if result_feedback == "APPROVED":
-                        yield AgentEvent(type='tool_start', content=tool_name, metadata={'args': args_str})
+                        yield AgentEvent(type='tool_start', content=tool_name, metadata={'call_id': tool_id, 'args': args_str})
                         result = await self.registry.execute(tool_name, kwargs_dict)
-                        yield AgentEvent(type='tool_output', content=tool_name, metadata={'output': result})
+                        yield AgentEvent(type='tool_output', content=tool_name, metadata={'call_id': tool_id, 'output': result})
                     else:
                         result = result_feedback
                     
@@ -193,9 +193,9 @@ class CborgAgentEngine:
                         del self._pending_approvals[callback_id]
                         
                 else:
-                    yield AgentEvent(type='tool_start', content=tool_name, metadata={'args': args_str})
+                    yield AgentEvent(type='tool_start', content=tool_name, metadata={'call_id': tool_id, 'args': args_str})
                     result = await self.registry.execute(tool_name, kwargs_dict)
-                    yield AgentEvent(type='tool_output', content=tool_name, metadata={'output': result})
+                    yield AgentEvent(type='tool_output', content=tool_name, metadata={'call_id': tool_id, 'output': result})
                     
                 self.conversation_history.append({
                     "role": "tool",

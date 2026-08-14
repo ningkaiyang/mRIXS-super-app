@@ -28,8 +28,8 @@ class GuiAgentBridge(QObject):
     """Bridge between async agent engine and Qt main thread."""
     
     token_received = Signal(str)
-    tool_started = Signal(str, str)
-    tool_output_received = Signal(str, str)
+    tool_started = Signal(str, str, str)  # (call_id, tool_name, args_json)
+    tool_output_received = Signal(str, str, str)  # (call_id, tool_name, output)
     approval_requested = Signal(str, str, str)
     error_raised = Signal(str)
     generation_finished = Signal()
@@ -81,11 +81,13 @@ class GuiAgentBridge(QObject):
                 if event.type == 'token':
                     self.token_received.emit(event.content)
                 elif event.type == 'tool_start':
+                    call_id = event.metadata.get('call_id', '') if event.metadata else ''
                     args = event.metadata.get('args', '') if event.metadata else ''
-                    self.tool_started.emit(event.content, args)
+                    self.tool_started.emit(call_id, event.content, args)
                 elif event.type == 'tool_output':
+                    call_id = event.metadata.get('call_id', '') if event.metadata else ''
                     output = event.metadata.get('output', '') if event.metadata else ''
-                    self.tool_output_received.emit(event.content, output)
+                    self.tool_output_received.emit(call_id, event.content, output)
                 elif event.type == 'approval_required':
                     callback_id = event.metadata.get('callback_id', '') if event.metadata else ''
                     args = event.metadata.get('args', '') if event.metadata else ''

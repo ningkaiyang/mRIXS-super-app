@@ -493,15 +493,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point for the headless CLI.
-
-    Parses arguments, discovers directories, and runs
-    :func:`process_directory` on each one.
+    """Entry point for the alignment CLI.
 
     Args:
         argv: Optional argument list (for testing).  Defaults to
             ``sys.argv[1:]``.
     """
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+
     args = _parse_args(argv)
 
     root = os.path.abspath(args.dir)

@@ -22,6 +22,7 @@ class ChatInput(QTextEdit):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAcceptRichText(False)
         self.setMaximumHeight(60)
         self.setPlaceholderText("Ask mRIXS Co-Pilot...")
         self.setStyleSheet(f"""
@@ -37,6 +38,10 @@ class ChatInput(QTextEdit):
                 border: 1px solid {PALETTE['border_focus']};
             }}
         """)
+
+    def insertFromMimeData(self, source):
+        """Strictly paste plain text to prevent rich-text / colored styling injection."""
+        self.insertPlainText(source.text())
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -176,7 +181,13 @@ class AgentSidebarWidget(QWidget):
     def get_minimal_gui_context(self) -> str:
         return "GUI Context: User is viewing mRIXS app."
 
+    def _finalize_active_message(self) -> None:
+        if self._current_msg_id:
+            self.chat_view.finalize_message(self._current_msg_id)
+            self._current_msg_id = None
+
     def _send_text(self, text: str):
+        self._finalize_active_message()
         self.input_field.clear()
         self.chat_view.append_user_message(text)
         gui_context = self.get_minimal_gui_context()
@@ -184,7 +195,10 @@ class AgentSidebarWidget(QWidget):
 
         self.send_btn.setText("Stop ■")
         set_danger_btn(self.send_btn)
-        self.send_btn.clicked.disconnect()
+        try:
+            self.send_btn.clicked.disconnect()
+        except Exception:
+            pass
         self.send_btn.clicked.connect(self.bridge.cancel)
 
     def _send_message(self):
@@ -197,32 +211,35 @@ class AgentSidebarWidget(QWidget):
             self._current_msg_id = self.chat_view.start_assistant_message()
         self.chat_view.append_token(self._current_msg_id, text)
 
-    def _on_tool_started(self, name: str, args: str):
-        self.chat_view.add_tool_card(name, args, 'running')
+    def _on_tool_started(self, call_id: str, name: str, args: str):
+        self._finalize_active_message()
+        self.chat_view.add_tool_card(call_id, name, args, 'running')
 
-    def _on_tool_output(self, name: str, output: str):
-        if name == 'cli_runner':
-            self.chat_view.finalize_cli()
-        self.chat_view.update_tool_card(name, output, 'done')
+    def _on_tool_output(self, call_id: str, name: str, output: str):
+        self._finalize_active_message()
+        self.chat_view.update_tool_card(call_id, name, output, 'done')
 
     def _on_approval_requested(self, callback_id: str, name: str, args: str):
+        self._finalize_active_message()
         self.chat_view.add_approval_card(callback_id, name, args)
 
     def _on_error(self, msg: str):
+        self._finalize_active_message()
         self.chat_view.add_error_card(msg)
         self._on_finished()
 
     def _on_finished(self):
-        if self._current_msg_id:
-            self.chat_view.finalize_message(self._current_msg_id)
-            self._current_msg_id = None
-
+        self._finalize_active_message()
         self.send_btn.setText("Send")
         set_accent_btn(self.send_btn)
-        self.send_btn.clicked.disconnect()
+        try:
+            self.send_btn.clicked.disconnect()
+        except Exception:
+            pass
         self.send_btn.clicked.connect(self._send_message)
 
     def _on_cli_line(self, line: str):
+        self._finalize_active_message()
         self.chat_view.add_cli_line(line)
 
     def _clear_chat(self):

@@ -5,25 +5,32 @@
 <!-- QWebChannel JS bridge (built-in Qt resource) -->
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <style>
+* {
+  box-sizing: border-box;
+}
 body {
   background: #1a1a2e;
   color: #e8eaf6;
-  font-family: -apple-system, 'Segoe UI', sans-serif;
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   margin: 0;
-  padding: 8px;
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 #chat-container {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-bottom: 20px;
+  gap: 10px;
+  padding-bottom: 24px;
 }
+
+/* ── Message bubbles ─────────────────────────────────── */
 .message {
   padding: 10px 14px;
   border-radius: 8px;
-  max-width: 85%;
+  max-width: 90%;
   word-wrap: break-word;
-  animation: fadeIn 0.2s ease-out;
+  animation: fadeIn 0.15s ease-out;
 }
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
@@ -32,82 +39,63 @@ body {
 .user {
   align-self: flex-end;
   background: #2196f3;
-  color: #fff;
-  border-bottom-right-radius: 3px;
+  color: #ffffff;
+  border-bottom-right-radius: 2px;
+  font-weight: 450;
 }
 .agent {
   align-self: flex-start;
   background: #16213e;
   border: 1px solid #2d3561;
   width: 100%;
-  box-sizing: border-box;
-  border-bottom-left-radius: 3px;
-}
-
-/* ── Tool cards ─────────────────────────────────────── */
-details.tool-card {
-  background: #16213e;
-  border: 1px solid #0f3460;
-  border-radius: 6px;
-  padding: 6px 10px;
-  margin-top: 6px;
-  font-size: 0.9em;
-}
-details.tool-card summary {
-  cursor: pointer;
-  color: #9fa8da;
-  font-weight: bold;
-}
-details.tool-card pre {
-  background: #0d1117;
-  padding: 8px;
-  border-radius: 4px;
-  overflow-x: auto;
-  margin-top: 6px;
+  border-bottom-left-radius: 2px;
+  color: #e2e8f0;
 }
 
 /* ── Approval cards ─────────────────────────────────── */
 .approval-card {
-  border: 2px solid #d97706;
-  background: #1c1a30;
+  border: 1.5px solid #d97706;
+  background: #1e1b2e;
   border-radius: 8px;
-  padding: 14px;
-  margin-top: 8px;
+  padding: 12px 14px;
+  animation: fadeIn 0.15s ease-out;
 }
 .approval-card .title-row {
   color: #f59e0b;
-  font-weight: bold;
-  font-size: 14px;
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 8px;
 }
-.approval-card pre {
+.approval-card pre.args-pre {
   background: #0d1117;
+  border: 1px solid #2d3561;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: 5px;
   overflow-x: auto;
   margin: 6px 0;
   color: #c5cad3;
   font-size: 12px;
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 .approval-card .btn-row {
   display: flex;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 10px;
 }
 .approval-card button {
-  padding: 8px 20px;
+  padding: 6px 14px;
   border: none;
-  border-radius: 5px;
+  border-radius: 4px;
   cursor: pointer;
-  font-weight: bold;
-  font-size: 13px;
-  transition: background 0.15s, transform 0.1s;
-}
-.approval-card button:hover {
-  transform: translateY(-1px);
+  font-weight: 600;
+  font-size: 12px;
+  transition: background 0.15s, opacity 0.15s, transform 0.05s;
 }
 .approval-card button:active {
-  transform: translateY(0);
+  transform: scale(0.98);
 }
 .btn-approve {
   background: #d97706;
@@ -123,34 +111,185 @@ details.tool-card pre {
 .btn-reject:hover {
   background: #cc4444;
 }
-.approval-resolved {
-  opacity: 0.6;
-  pointer-events: none;
+
+/* Rejection inline box */
+.reject-box {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.approval-resolved .btn-row {
+.reject-input {
+  background: #0d1117;
+  border: 1px solid #aa3333;
+  border-radius: 4px;
+  color: #fff;
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+.reject-input:focus {
+  border-color: #ef5350;
+}
+.reject-actions {
+  display: flex;
+  gap: 8px;
+}
+.btn-confirm-reject {
+  background: #aa3333;
+  color: white;
+}
+.btn-confirm-reject:hover {
+  background: #cc4444;
+}
+.btn-cancel-reject {
+  background: #2d3561;
+  color: #cbd5e1;
+}
+.btn-cancel-reject:hover {
+  background: #3b467d;
+}
+
+/* Rejected permanent badge */
+.rejection-badge-card {
+  border: 1px solid #aa3333;
+  background: rgba(170, 51, 51, 0.15);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #ef5350;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Tool cards ─────────────────────────────────────── */
+details.tool-card {
+  background: #141b33;
+  border: 1px solid #243056;
+  border-radius: 6px;
+  overflow: hidden;
+  animation: fadeIn 0.15s ease-out;
+  transition: border-color 0.2s;
+}
+details.tool-card[open] {
+  border-color: #3b4b80;
+}
+details.tool-card summary {
+  cursor: pointer;
+  background: #182242;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  font-size: 12px;
+  list-style: none;
+}
+details.tool-card summary::-webkit-details-marker {
   display: none;
 }
-.approval-resolved .title-row::after {
-  content: " ✓";
+.summary-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+.summary-left::before {
+  content: '▶';
+  font-size: 9px;
+  color: #8b9bb4;
+  transition: transform 0.15s ease;
+}
+details.tool-card[open] .summary-left::before {
+  transform: rotate(90deg);
+}
+.tool-icon {
+  font-size: 13px;
+}
+.tool-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+.status-running {
+  background: rgba(33, 150, 243, 0.2);
+  color: #64b5f6;
+  border: 1px solid rgba(33, 150, 243, 0.4);
+  animation: pulse-badge 1.5s infinite ease-in-out;
+}
+.status-done {
+  background: rgba(46, 125, 50, 0.2);
   color: #81c784;
+  border: 1px solid rgba(46, 125, 50, 0.4);
+}
+.status-error {
+  background: rgba(211, 47, 47, 0.2);
+  color: #ef5350;
+  border: 1px solid rgba(211, 47, 47, 0.4);
+}
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.tool-body {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #10162a;
+}
+.tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tool-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8b9bb4;
+}
+pre.tool-pre {
+  background: #090d16;
+  border: 1px solid #1a2238;
+  padding: 7px 9px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0;
+  color: #c9d1d9;
+  font-size: 11.5px;
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+pre.tool-output-pre {
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 /* ── Error cards ────────────────────────────────────── */
 .error-card {
   border: 1px solid #aa3333;
-  background: #1a1a2e;
+  background: rgba(170, 51, 51, 0.15);
   color: #ef5350;
   border-radius: 6px;
-  padding: 10px;
-  margin-top: 8px;
+  padding: 9px 12px;
+  font-size: 12px;
 }
 
 /* ── Code formatting ────────────────────────────────── */
 code {
   background: rgba(255,255,255,0.08);
-  padding: 1px 5px;
+  padding: 1.5px 5px;
   border-radius: 3px;
-  font-family: "SF Mono", "Fira Code", monospace;
+  font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
   font-size: 12px;
 }
 pre {
@@ -165,54 +304,10 @@ pre code {
 }
 
 /* ── Scrollbar ──────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #2d3561; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #9fa8da; }
-
-/* ── Terminal output panel ──────────────────────────── */
-.terminal-panel {
-  background: #0d1117;
-  border: 1px solid #1e3a5f;
-  border-radius: 6px;
-  margin-top: 8px;
-  overflow: hidden;
-}
-.terminal-header {
-  background: #161b22;
-  padding: 6px 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid #1e3a5f;
-}
-.terminal-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: #2fa572;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-.terminal-dot.done { animation: none; background: #666; }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-.terminal-title {
-  color: #8b949e;
-  font-size: 11px;
-  font-family: "SF Mono", "Fira Code", monospace;
-}
-.terminal-body {
-  padding: 8px 10px;
-  max-height: 200px;
-  overflow-y: auto;
-  font-family: "SF Mono", "Fira Code", monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  color: #c9d1d9;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
+::-webkit-scrollbar-thumb:hover { background: #4e5d99; }
 </style>
 <script>
 /* ── QWebChannel bridge initialisation ────────────────── */
@@ -222,20 +317,45 @@ new QWebChannel(qt.webChannelTransport, function(channel) {
 });
 
 let msgCounter = 0;
+let _activeToolCallId = null;
 
 function scrollToBottom() {
-    window.scrollTo(0, document.body.scrollHeight);
+    window.scrollTo({
+        top: document.body.scrollHeight,
+        behavior: 'smooth'
+    });
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
 function parseMarkdown(text) {
-    let html = text.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    if (!text) return '';
+    // Preserve fenced code blocks
+    let html = text.replace(/```([\s\S]*?)```/g, function(match, codeContent) {
+        return '<pre><code>' + escapeHtml(codeContent.trim()) + '</code></pre>';
+    });
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, function(match, inlineCode) {
+        return '<code>' + escapeHtml(inlineCode) + '</code>';
+    });
+    // Bold
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // Italics
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // Line breaks
     html = html.replace(/\n/g, '<br>');
     return html;
 }
 
+/* ── Message API ─────────────────────────────────────── */
 function appendUserMessage(text) {
     const container = document.getElementById('chat-container');
     const div = document.createElement('div');
@@ -264,54 +384,35 @@ function appendToken(msgId, token) {
 }
 
 function finalizeMessage(msgId) {
-    // optional processing hook
+    const div = document.getElementById(msgId);
+    if (div && !div.innerHTML.trim()) {
+        // If empty bubble was created with 0 tokens, cleanly remove it
+        div.remove();
+    }
 }
 
-function addToolCard(toolName, argsJson, status) {
-    const container = document.getElementById('chat-container');
-    const details = document.createElement('details');
-    details.className = 'tool-card';
-    details.id = 'tool-' + msgCounter;
-
-    const summary = document.createElement('summary');
-    summary.innerText = '⚙️ ' + toolName + ' (' + status + ')';
-
-    const pre = document.createElement('pre');
-    pre.innerText = argsJson;
-
-    details.appendChild(summary);
-    details.appendChild(pre);
-    container.appendChild(details);
-    msgCounter++;
-    scrollToBottom();
-}
-
-function updateToolCard(toolName, output, status) {
-    const container = document.getElementById('chat-container');
-    const details = document.createElement('details');
-    details.className = 'tool-card';
-    const summary = document.createElement('summary');
-    summary.innerText = '⚙️ ' + toolName + ' result (' + status + ')';
-    const pre = document.createElement('pre');
-    pre.innerText = output;
-    details.appendChild(summary);
-    details.appendChild(pre);
-    container.appendChild(details);
-    scrollToBottom();
-}
-
+/* ── Approval API ────────────────────────────────────── */
 function addApprovalCard(callbackId, toolName, argsJson) {
     const container = document.getElementById('chat-container');
     const div = document.createElement('div');
     div.className = 'approval-card';
     div.id = 'approval-' + callbackId;
+    
     div.innerHTML =
-        '<div class="title-row">⚠️ Approval Required: ' + toolName + '</div>' +
-        '<pre>' + argsJson + '</pre>' +
-        '<div class="btn-row">' +
+        '<div class="title-row">⚠️ Approval Required: ' + escapeHtml(toolName) + '</div>' +
+        '<pre class="args-pre">' + escapeHtml(argsJson) + '</pre>' +
+        '<div class="btn-row" id="btn-row-' + callbackId + '">' +
             '<button class="btn-approve" onclick="doApprove(\'' + callbackId + '\')">✓ Approve</button>' +
-            '<button class="btn-reject" onclick="doReject(\'' + callbackId + '\')">✕ Reject</button>' +
+            '<button class="btn-reject" onclick="toggleReject(\'' + callbackId + '\')">✕ Reject</button>' +
+        '</div>' +
+        '<div class="reject-box" id="reject-box-' + callbackId + '" style="display:none;">' +
+            '<input type="text" class="reject-input" id="reject-input-' + callbackId + '" placeholder="Reason for rejection (optional)...">' +
+            '<div class="reject-actions">' +
+                '<button class="btn-confirm-reject" onclick="doConfirmReject(\'' + callbackId + '\', \'' + escapeHtml(toolName) + '\')">Confirm Reject</button>' +
+                '<button class="btn-cancel-reject" onclick="toggleReject(\'' + callbackId + '\')">Cancel</button>' +
+            '</div>' +
         '</div>';
+
     container.appendChild(div);
     scrollToBottom();
 }
@@ -319,18 +420,112 @@ function addApprovalCard(callbackId, toolName, argsJson) {
 function doApprove(callbackId) {
     if (bridge) {
         bridge.approve(callbackId);
-        var card = document.getElementById('approval-' + callbackId);
-        if (card) card.classList.add('approval-resolved');
+    }
+    const card = document.getElementById('approval-' + callbackId);
+    if (card) {
+        card.remove(); // Remove completely upon approval
     }
 }
 
-function doReject(callbackId) {
-    var feedback = prompt("Optional feedback for rejection:");
-    if (bridge) {
-        bridge.reject(callbackId, feedback || '');
-        var card = document.getElementById('approval-' + callbackId);
-        if (card) card.classList.add('approval-resolved');
+function toggleReject(callbackId) {
+    const btnRow = document.getElementById('btn-row-' + callbackId);
+    const rejectBox = document.getElementById('reject-box-' + callbackId);
+    if (btnRow && rejectBox) {
+        const isHidden = rejectBox.style.display === 'none';
+        rejectBox.style.display = isHidden ? 'flex' : 'none';
+        btnRow.style.display = isHidden ? 'none' : 'flex';
+        if (isHidden) {
+            const input = document.getElementById('reject-input-' + callbackId);
+            if (input) input.focus();
+        }
     }
+}
+
+function doConfirmReject(callbackId, toolName) {
+    const input = document.getElementById('reject-input-' + callbackId);
+    const reason = input ? input.value.trim() : '';
+    if (bridge) {
+        bridge.reject(callbackId, reason);
+    }
+    const card = document.getElementById('approval-' + callbackId);
+    if (card) {
+        card.className = 'rejection-badge-card';
+        card.innerHTML = '❌ <b>Rejected (' + escapeHtml(toolName) + ')</b>' + (reason ? ': ' + escapeHtml(reason) : ': User declined execution');
+    }
+}
+
+/* ── Tool Card API ───────────────────────────────────── */
+function addToolCard(callId, toolName, argsJson, status) {
+    const container = document.getElementById('chat-container');
+    const details = document.createElement('details');
+    details.className = 'tool-card';
+    details.id = 'tool-card-' + callId;
+    details.open = true; // Open by default while running
+
+    _activeToolCallId = callId;
+
+    details.innerHTML =
+        '<summary>' +
+            '<div class="summary-left">' +
+                '<span class="tool-icon">⚙️</span>' +
+                '<span class="tool-name">' + escapeHtml(toolName) + '</span>' +
+            '</div>' +
+            '<span class="tool-badge status-running" id="tool-badge-' + callId + '">⏳ running...</span>' +
+        '</summary>' +
+        '<div class="tool-body">' +
+            '<div class="tool-section">' +
+                '<div class="tool-section-label">Parameters</div>' +
+                '<pre class="tool-pre tool-input-pre">' + escapeHtml(argsJson) + '</pre>' +
+            '</div>' +
+            '<div class="tool-section">' +
+                '<div class="tool-section-label">Output</div>' +
+                '<pre class="tool-pre tool-output-pre" id="tool-output-' + callId + '"></pre>' +
+            '</div>' +
+        '</div>';
+
+    container.appendChild(details);
+    scrollToBottom();
+}
+
+function addCLILine(line) {
+    if (_activeToolCallId) {
+        const outPre = document.getElementById('tool-output-' + _activeToolCallId);
+        if (outPre) {
+            outPre.textContent += line + '\n';
+            outPre.scrollTop = outPre.scrollHeight;
+            scrollToBottom();
+            return;
+        }
+    }
+}
+
+function updateToolCard(callId, toolName, output, status) {
+    const card = document.getElementById('tool-card-' + callId);
+    if (card) {
+        const badge = document.getElementById('tool-badge-' + callId);
+        if (badge) {
+            if (status === 'error' || (typeof output === 'string' && output.startsWith('Error:'))) {
+                badge.className = 'tool-badge status-error';
+                badge.innerText = '✕ failed';
+            } else {
+                badge.className = 'tool-badge status-done';
+                badge.innerText = '✓ completed';
+            }
+        }
+
+        const outPre = document.getElementById('tool-output-' + callId);
+        if (outPre) {
+            outPre.textContent = output || 'Completed with no output.';
+        }
+
+        // Auto-collapse into a compact summary bar upon completion
+        card.removeAttribute('open');
+    }
+
+    if (_activeToolCallId === callId) {
+        _activeToolCallId = null;
+    }
+    scrollToBottom();
 }
 
 function addErrorCard(errorMsg) {
@@ -342,55 +537,9 @@ function addErrorCard(errorMsg) {
     scrollToBottom();
 }
 
-var _cliPanel = null;
-var _cliLineCount = 0;
-
-function addCLILine(line) {
-    const container = document.getElementById('chat-container');
-
-    // Create terminal panel on first line
-    if (!_cliPanel) {
-        _cliLineCount = 0;
-        const panel = document.createElement('div');
-        panel.className = 'terminal-panel';
-        panel.innerHTML =
-            '<div class="terminal-header">' +
-                '<span class="terminal-dot" id="terminal-dot"></span>' +
-                '<span class="terminal-title" id="terminal-title">Running...</span>' +
-            '</div>' +
-            '<div class="terminal-body" id="terminal-body"></div>';
-        container.appendChild(panel);
-        _cliPanel = panel;
-    }
-
-    _cliLineCount++;
-    var body = _cliPanel.querySelector('#terminal-body');
-    body.textContent += line + '\n';
-
-    // Update line counter
-    var titleEl = _cliPanel.querySelector('#terminal-title');
-    titleEl.textContent = 'Running... (' + _cliLineCount + ' lines)';
-
-    // Auto-scroll terminal body
-    body.scrollTop = body.scrollHeight;
-    scrollToBottom();
-}
-
-function finalizeCLI() {
-    if (_cliPanel) {
-        var dot = _cliPanel.querySelector('#terminal-dot');
-        var titleEl = _cliPanel.querySelector('#terminal-title');
-        if (dot) dot.classList.add('done');
-        if (titleEl) titleEl.textContent = 'Completed (' + _cliLineCount + ' lines)';
-        _cliPanel = null;
-        _cliLineCount = 0;
-    }
-}
-
 function clearAll() {
     document.getElementById('chat-container').innerHTML = '';
-    _cliPanel = null;
-    _cliLineCount = 0;
+    _activeToolCallId = null;
 }
 </script>
 </head>

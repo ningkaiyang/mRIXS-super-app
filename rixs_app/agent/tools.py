@@ -12,7 +12,9 @@ import asyncio
 import inspect
 import json
 import os
+import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, get_type_hints
@@ -87,6 +89,21 @@ class ToolRegistry:
         """Generate OpenAI tool schema from function signature and type hints."""
         sig = inspect.signature(func)
         hints = get_type_hints(func)
+        doc = inspect.getdoc(func) or ""
+
+        # Extract parameter descriptions from docstrings if present (Args: block)
+        param_docs: dict[str, str] = {}
+        if "Args:" in doc:
+            args_section = doc.split("Args:")[1]
+            if "Returns:" in args_section:
+                args_section = args_section.split("Returns:")[0]
+            for line in args_section.splitlines():
+                line = line.strip()
+                if line.startswith("-") or ":" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) == 2:
+                        p_name = parts[0].strip().lstrip("-* ").split("(")[0].strip()
+                        param_docs[p_name] = parts[1].strip()
 
         properties: dict[str, dict] = {}
         required: list[str] = []
@@ -96,7 +113,12 @@ class ToolRegistry:
                 continue
             param_type = hints.get(param_name, str)
             json_type = _PYTHON_TO_JSON_TYPE.get(param_type, "string")
-            properties[param_name] = {"type": json_type}
+            prop_def: dict[str, Any] = {"type": json_type}
+            if param_name in param_docs:
+                prop_def["description"] = param_docs[param_name]
+            if param.default is not inspect.Parameter.empty and param.default is not None:
+                prop_def["default"] = param.default
+            properties[param_name] = prop_def
             if param.default is inspect.Parameter.empty:
                 required.append(param_name)
 
@@ -326,54 +348,271 @@ def _register_tools(registry: ToolRegistry) -> None:
         except Exception as e:
             return f"Error: {e}"
 
-    @registry.tool(
-        "cli_runner",
-        "Execute a project CLI command (align_cli.py, zeroth_order_cli.py, or denoise_cli.py). Streams stdout live and returns full output.",
-        requires_approval=True,
-    )
-    async def cli_runner(command: str) -> str:
-        allowed_prefixes = [
-            "python align_cli.py", "python3 align_cli.py",
-            "python zeroth_order_cli.py", "python3 zeroth_order_cli.py",
-            "python denoise_cli.py", "python3 denoise_cli.py",
-        ]
-        if not any(command.strip().startswith(p) for p in allowed_prefixes):
-            return f"Error: Command must start with a valid CLI prefix."
-
+    async def _run_subprocess_streaming(cmd_args: list[str], timeout: int = 300) -> str:
         project_root = _find_project_root()
         try:
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            env = dict(os.environ)
+            env["PYTHONUNBUFFERED"] = "1"
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_args,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,  # merge stderr into stdout
+                stderr=asyncio.subprocess.PIPE,
                 cwd=str(project_root),
+                env=env,
             )
 
             lines: list[str] = []
             cb = registry._cli_line_callback
 
-            async def _read_with_timeout():
+            async def _read_stdout():
                 while True:
                     line_bytes = await asyncio.wait_for(
-                        proc.stdout.readline(), timeout=300
+                        proc.stdout.readline(), timeout=timeout
                     )
                     if not line_bytes:
                         break
-                    line = line_bytes.decode('utf-8', errors='replace').rstrip()
+                    line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
                     lines.append(line)
                     if cb:
                         cb(line)
 
-            await _read_with_timeout()
+            await _read_stdout()
+            stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=10)
             await proc.wait()
 
-            output = "\n".join(lines)
-            result = f"{output}\n\nExit code: {proc.returncode}" if output else f"Command completed with no output.\nExit code: {proc.returncode}"
-            return result
+            parts: list[str] = []
+            if lines:
+                parts.append("\n".join(lines))
+            if stderr_bytes:
+                err_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                if err_text:
+                    parts.append(f"STDERR:\n{err_text}")
+            parts.append(f"Exit code: {proc.returncode}")
+            return "\n\n".join(parts) if parts else "Command completed with no output."
         except asyncio.TimeoutError:
-            return "Error: Command timed out (no output for 300 seconds)."
+            return f"Error: Command timed out after {timeout} seconds."
         except Exception as e:
             return f"Error: {e}"
+
+    @registry.tool(
+        "run_spatial_alignment",
+        "Run spatial drift alignment on a TIFF sequence directory. Computes drift offsets with ECC/PCA/PhaseCorrelation and saves aligned sums.",
+        requires_approval=True,
+    )
+    async def run_spatial_alignment(
+        directory: str,
+        engine: str = "ECC",
+        recursive: bool = False,
+        save_png: bool = True,
+        save_json: bool = True,
+        ephemeral_cache: bool = True,
+        overwrite: bool = False,
+        threshold: str = "99.9",
+    ) -> str:
+        """Run spatial drift alignment on a TIFF sequence directory.
+
+        Args:
+            directory (str): Root directory containing TIFF images or subdirectories.
+            engine (str): Alignment engine ('ECC', 'PCA', 'PhaseCorrelation', or 'all').
+            recursive (bool): Whether to recurse into subdirectories.
+            save_png (bool): Save comparison PNG (Direct Sum vs Aligned Sum).
+            save_json (bool): Save computed drift offsets to JSON.
+            ephemeral_cache (bool): Clean up temporary tif-cache/ zarr directory after processing.
+            overwrite (bool): Overwrite existing sum output files.
+            threshold (str): PCA percentile threshold ('99.9' or 'auto').
+        """
+        target = Path(directory).expanduser().resolve()
+        if not target.exists():
+            return f"Error: Directory '{directory}' does not exist (resolved to '{target}')."
+
+        project_root = _find_project_root()
+        script = project_root / "align_cli.py"
+
+        cmd = [sys.executable, "-u", str(script), "-d", str(target)]
+        if recursive:
+            cmd.append("-r")
+        if engine:
+            cmd.extend(["-e", engine])
+        if threshold and threshold != "99.9":
+            cmd.extend(["-t", str(threshold)])
+        if save_png:
+            cmd.append("--png")
+        if save_json:
+            cmd.append("--json")
+        if ephemeral_cache:
+            cmd.append("--ephemeral-cache")
+        if overwrite:
+            cmd.append("--overwrite")
+
+        return await _run_subprocess_streaming(cmd)
+
+    @registry.tool(
+        "run_zeroth_order_calibration",
+        "Run mirror pitch calibration and resolving-power analysis across CMOS TIFF scan frames and metadata.",
+        requires_approval=True,
+    )
+    async def run_zeroth_order_calibration(
+        directory: str,
+        scan_log_path: str = "",
+        recursive: bool = False,
+        dispersion: float = 0.0,
+        mono_energy: float = 0.0,
+        export_plots: str = "best",
+        plot_focus_curve: bool = True,
+        output_dir: str = "",
+    ) -> str:
+        """Run mirror pitch calibration on CMOS TIFF scan frames.
+
+        Args:
+            directory (str): Directory containing TIFF scan images.
+            scan_log_path (str): Optional path to .txt scan log (auto-discovered if empty).
+            recursive (bool): Scan subdirectories recursively.
+            dispersion (float): Energy dispersion in meV/px (e.g. 2.5) for resolving power.
+            mono_energy (float): Monochromator energy E_mono in eV (e.g. 850.0).
+            export_plots (str): Diagnostic plot mode ('best', 'all', 'none').
+            plot_focus_curve (bool): Generate focus_curve.png plot.
+            output_dir (str): Custom output directory path.
+        """
+        target = Path(directory).expanduser().resolve()
+        if not target.exists():
+            return f"Error: Directory '{directory}' does not exist (resolved to '{target}')."
+
+        project_root = _find_project_root()
+        script = project_root / "zeroth_order_cli.py"
+
+        cmd = [sys.executable, "-u", str(script), "-d", str(target)]
+        if recursive:
+            cmd.append("-r")
+        if scan_log_path:
+            txt_target = Path(scan_log_path).expanduser().resolve()
+            if txt_target.exists():
+                cmd.extend(["-t", str(txt_target)])
+        if output_dir:
+            out_target = Path(output_dir).expanduser().resolve()
+            cmd.extend(["-o", str(out_target)])
+        if dispersion and dispersion > 0:
+            cmd.extend(["--dispersion", str(dispersion)])
+        if mono_energy and mono_energy > 0:
+            cmd.extend(["--mono-energy", str(mono_energy)])
+        if export_plots in ("best", "all", "none"):
+            cmd.extend(["--export-plots", export_plots])
+        if not plot_focus_curve:
+            cmd.append("--no-focus-curve")
+
+        return await _run_subprocess_streaming(cmd)
+
+    @registry.tool(
+        "run_image_denoising",
+        "Denoise 2D spectroscopic frame TIFF images using Anscombe VST, MAD despiking, and bilateral filtering.",
+        requires_approval=True,
+    )
+    async def run_image_denoising(
+        directory: str = "",
+        input_file: str = "",
+        output_file: str = "",
+        clip: bool = True,
+        despike: bool = True,
+        mad_threshold: float = 5.0,
+        anscombe: bool = True,
+        bilateral: bool = True,
+    ) -> str:
+        """Denoise 2D spectroscopic frame TIFF images.
+
+        Args:
+            directory (str): Target directory containing TIFF images.
+            input_file (str): Single input TIFF file.
+            output_file (str): Single output TIFF file.
+            clip (bool): Apply baseline clipping.
+            despike (bool): Run MAD despiking.
+            mad_threshold (float): Threshold multiplier for despiking (default 5.0).
+            anscombe (bool): Apply Anscombe VST.
+            bilateral (bool): Apply bilateral spatial smoothing filter.
+        """
+        project_root = _find_project_root()
+        script = project_root / "denoise_cli.py"
+
+        cmd = [sys.executable, "-u", str(script)]
+        if directory:
+            target_dir = Path(directory).expanduser().resolve()
+            if not target_dir.exists():
+                return f"Error: Directory '{directory}' does not exist."
+            cmd.extend(["-d", str(target_dir)])
+        elif input_file:
+            in_path = Path(input_file).expanduser().resolve()
+            if not in_path.exists():
+                return f"Error: File '{input_file}' does not exist."
+            cmd.extend(["--input", str(in_path)])
+            if output_file:
+                out_path = Path(output_file).expanduser().resolve()
+                cmd.extend(["--output", str(out_path)])
+        else:
+            return "Error: Either 'directory' or 'input_file' must be specified."
+
+        if clip:
+            cmd.append("--clip")
+        if despike:
+            cmd.append("--despike")
+            if mad_threshold != 5.0:
+                cmd.extend(["--mad-threshold", str(mad_threshold)])
+        if anscombe:
+            cmd.append("--anscombe")
+        if bilateral:
+            cmd.append("--bilateral")
+
+        return await _run_subprocess_streaming(cmd)
+
+    @registry.tool(
+        "cli_runner",
+        "Advanced fallback to execute a project CLI command (align_cli.py, zeroth_order_cli.py, or denoise_cli.py) from a command string. Prefer structured tools (run_spatial_alignment, run_zeroth_order_calibration, run_image_denoising) when possible.",
+        requires_approval=True,
+    )
+    async def cli_runner(command: str) -> str:
+        """Execute a project CLI command from a raw string.
+
+        Args:
+            command (str): Command string (e.g. 'align_cli.py -d ./data -e ECC').
+        """
+        try:
+            tokens = shlex.split(command)
+        except ValueError as e:
+            return f"Error parsing command: {e}"
+
+        if not tokens:
+            return "Error: Empty command string."
+
+        # Find the target script in the tokens
+        allowed_scripts = {"align_cli.py", "zeroth_order_cli.py", "denoise_cli.py"}
+        script_idx = -1
+        script_name = ""
+
+        for idx, tok in enumerate(tokens):
+            tok_name = Path(tok).name
+            if tok_name in allowed_scripts:
+                script_idx = idx
+                script_name = tok_name
+                break
+
+        if script_idx == -1:
+            return (
+                f"Error: Command must target one of the project CLI scripts: {', '.join(sorted(allowed_scripts))}. "
+                "For running spatial alignment, use 'run_spatial_alignment'. "
+                "For arbitrary shell commands, use 'execute_terminal_command' with Full Terminal Access."
+            )
+
+        project_root = _find_project_root()
+        script_path = project_root / script_name
+
+        # Extract arguments and expand ~ (tildes)
+        raw_args = tokens[script_idx + 1:]
+        expanded_args = []
+        for arg in raw_args:
+            if arg.startswith("~"):
+                expanded_args.append(str(Path(arg).expanduser()))
+            else:
+                expanded_args.append(arg)
+
+        full_cmd = [sys.executable, "-u", str(script_path)] + expanded_args
+        return await _run_subprocess_streaming(full_cmd)
 
     @registry.tool(
         "get_active_gui_state",
@@ -466,21 +705,44 @@ def _register_tools(registry: ToolRegistry) -> None:
     )
     async def execute_terminal_command(command: str) -> str:
         try:
+            env = dict(os.environ)
+            env["PYTHONUNBUFFERED"] = "1"
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(_find_project_root()),
+                env=env,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
 
-            parts = []
-            if stdout:
-                parts.append(stdout.decode("utf-8", errors="replace"))
-            if stderr:
-                parts.append(f"STDERR:\n{stderr.decode('utf-8', errors='replace')}")
-            parts.append(f"\nExit code: {proc.returncode}")
-            return "\n".join(parts) or "Command completed with no output."
+            lines: list[str] = []
+            cb = registry._cli_line_callback
+
+            async def _read_stdout():
+                while True:
+                    line_bytes = await asyncio.wait_for(
+                        proc.stdout.readline(), timeout=120
+                    )
+                    if not line_bytes:
+                        break
+                    line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
+                    lines.append(line)
+                    if cb:
+                        cb(line)
+
+            await _read_stdout()
+            stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=10)
+            await proc.wait()
+
+            parts: list[str] = []
+            if lines:
+                parts.append("\n".join(lines))
+            if stderr_bytes:
+                err_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                if err_text:
+                    parts.append(f"STDERR:\n{err_text}")
+            parts.append(f"Exit code: {proc.returncode}")
+            return "\n\n".join(parts) if parts else "Command completed with no output."
         except asyncio.TimeoutError:
             return "Error: Command timed out after 120 seconds."
         except Exception as e:

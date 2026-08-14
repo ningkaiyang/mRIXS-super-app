@@ -111,11 +111,11 @@ class ChatWebView(QWebEngineView):
     def finalize_message(self, msg_id: str) -> None:
         self._run_js(f'finalizeMessage("{msg_id}")')
 
-    def add_tool_card(self, tool_name: str, args_json: str, status: str = 'running') -> None:
-        self._run_js(f'addToolCard({json.dumps(tool_name)}, {json.dumps(args_json)}, {json.dumps(status)})')
+    def add_tool_card(self, call_id: str, tool_name: str, args_json: str, status: str = 'running') -> None:
+        self._run_js(f'addToolCard({json.dumps(call_id)}, {json.dumps(tool_name)}, {json.dumps(args_json)}, {json.dumps(status)})')
 
-    def update_tool_card(self, tool_name: str, output: str, status: str = 'done') -> None:
-        self._run_js(f'updateToolCard({json.dumps(tool_name)}, {json.dumps(output)}, {json.dumps(status)})')
+    def update_tool_card(self, call_id: str, tool_name: str, output: str, status: str = 'done') -> None:
+        self._run_js(f'updateToolCard({json.dumps(call_id)}, {json.dumps(tool_name)}, {json.dumps(output)}, {json.dumps(status)})')
 
     def add_approval_card(self, callback_id: str, tool_name: str, args_json: str) -> None:
         self._run_js(f'addApprovalCard({json.dumps(callback_id)}, {json.dumps(tool_name)}, {json.dumps(args_json)})')

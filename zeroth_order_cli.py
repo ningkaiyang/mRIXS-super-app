@@ -643,6 +643,9 @@ def main() -> None:
     recursive), and runs :func:`_process_directory` on each one.  Exits with
     a non-zero status code when no directories are found or all fail.
     """
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+
     parser = _build_parser()
     args = parser.parse_args()
 
