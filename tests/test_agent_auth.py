@@ -33,7 +33,7 @@ class TestConstants:
         assert CBORG_BASE_URL == "https://api.cborg.lbl.gov/v1"
 
     def test_default_model(self):
-        assert CBORG_DEFAULT_MODEL == "lbl/cborg-deepthought"
+        assert CBORG_DEFAULT_MODEL == "lbl/cborg-coder-max"
 
 
 # ---------------------------------------------------------------------------
@@ -253,13 +253,15 @@ class TestFetchModelList:
                 mock.Mock(return_value=response_mock),
             )
 
-    def test_returns_lbl_models_sorted(self, monkeypatch):
+    def test_returns_curated_lbl_models(self, monkeypatch):
         import json
 
         body = json.dumps(
             {
                 "data": [
-                    {"id": "lbl/gemma-4"},
+                    {"id": "lbl/cborg-chat"},
+                    {"id": "lbl/cborg-coder-compact"},
+                    {"id": "lbl/cborg-coder-compressed"},
                     {"id": "openai/gpt-4"},
                     {"id": "lbl/cborg-deepthought"},
                     {"id": "lbl/cborg-coder"},
@@ -269,16 +271,16 @@ class TestFetchModelList:
         self._mock_urlopen(monkeypatch, body=body)
         models = fetch_model_list("test-key")
         assert models == [
-            "lbl/cborg-coder",
             "lbl/cborg-deepthought",
-            "lbl/gemma-4",
+            "lbl/cborg-coder",
+            "lbl/cborg-chat",
         ]
 
     def test_fallback_on_error(self, monkeypatch):
         self._mock_urlopen(monkeypatch, error=Exception("boom"))
         models = fetch_model_list("test-key")
-        assert "lbl/cborg-deepthought" in models
-        assert len(models) == 4  # hardcoded fallback list
+        assert "lbl/cborg-coder-max" in models
+        assert len(models) == 5  # hardcoded fallback list
 
     def test_fallback_on_empty_lbl_list(self, monkeypatch):
         import json
@@ -286,4 +288,4 @@ class TestFetchModelList:
         body = json.dumps({"data": [{"id": "openai/gpt-4"}]})
         self._mock_urlopen(monkeypatch, body=body)
         models = fetch_model_list("test-key")
-        assert "lbl/cborg-deepthought" in models
+        assert "lbl/cborg-coder-max" in models

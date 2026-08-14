@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 # Default CBORG API endpoint
 CBORG_BASE_URL = "https://api.cborg.lbl.gov/v1"
-CBORG_DEFAULT_MODEL = "lbl/cborg-deepthought"
+CBORG_DEFAULT_MODEL = "lbl/cborg-coder-max"
 
 # Relative path from the project root to the auth directory
 _AUTH_DIR_NAME = "cborg-auth"
@@ -226,11 +226,12 @@ def fetch_model_list(
     base_url: str = CBORG_BASE_URL,
     timeout: float = 15.0,
 ) -> list[str]:
-    """Fetch available LBL model IDs from the CBORG API.
+    """Fetch curated LBL model IDs from the CBORG API.
 
-    Issues ``GET /v1/models`` and filters to models whose ``id`` starts
-    with ``lbl/``.  Returns a sorted list of model IDs, or a hardcoded
-    fallback list if the request fails.
+    Issues ``GET /v1/models`` and filters to curated models whose ``id`` starts
+    with ``lbl/``, excluding redundant middleware variants (-compact, -compressed,
+    -fast, embedding, and safety filter endpoints). Returns curated models in priority
+    order, or a hardcoded fallback list if the request fails.
 
     Args:
         api_key: The CBORG API key.
@@ -238,18 +239,36 @@ def fetch_model_list(
         timeout: Request timeout in seconds.
 
     Returns:
-        Sorted list of LBL model ID strings.
+        Curated list of LBL model ID strings.
     """
     import urllib.request
     import urllib.error
     import json
 
-    _FALLBACK_MODELS = [
+    _CURATED_MODELS = [
+        "lbl/cborg-coder-max",
         "lbl/cborg-deepthought",
-        "lbl/gemma-4",
-        "lbl/gpt-oss-120b",
         "lbl/cborg-coder",
+        "lbl/cborg-chat",
+        "lbl/cborg-mini",
     ]
+
+    _FALLBACK_MODELS = list(_CURATED_MODELS)
+
+    _EXCLUDED_SUBSTRINGS = (
+        "-compact",
+        "-compressed",
+        "-high",
+        "-low",
+        "-medium",
+        "-fast",
+        "-test",
+        "-short",
+        "embed",
+        "privacy-filter",
+        "safeguard",
+        "ocr",
+    )
 
     url = f"{base_url.rstrip('/')}/models"
     headers = {
@@ -262,8 +281,16 @@ def fetch_model_list(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8")
             data = json.loads(body)
-            model_ids = [m.get("id", "") for m in data.get("data", [])]
-            lbl_models = sorted(m for m in model_ids if m.startswith("lbl/"))
-            return lbl_models if lbl_models else _FALLBACK_MODELS
+            model_ids = {m.get("id", "") for m in data.get("data", [])}
+            # Match curated models present in server model list
+            matched = [m for m in _CURATED_MODELS if m in model_ids]
+            if matched:
+                return matched
+            # If none of curated matched, fallback to any clean LBL model
+            clean_lbl = sorted(
+                m for m in model_ids
+                if m.startswith("lbl/") and not any(sub in m for sub in _EXCLUDED_SUBSTRINGS)
+            )
+            return clean_lbl if clean_lbl else _FALLBACK_MODELS
     except Exception:  # noqa: BLE001
         return _FALLBACK_MODELS

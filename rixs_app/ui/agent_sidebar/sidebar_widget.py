@@ -142,6 +142,8 @@ class AgentSidebarWidget(QWidget):
 
         self.model_combo = QComboBox()
         self.model_combo.setFixedHeight(28)
+        self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.model_combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
         self.model_combo.currentTextChanged.connect(self.bridge.set_model)
         toolbar_layout.addWidget(self.model_combo)
 
@@ -177,6 +179,10 @@ class AgentSidebarWidget(QWidget):
     def populate_models(self, model_list: list[str]) -> None:
         self.model_combo.clear()
         self.model_combo.addItems(model_list)
+        if model_list:
+            fm = self.model_combo.fontMetrics()
+            max_w = max((fm.horizontalAdvance(m) for m in model_list), default=180) + 40
+            self.model_combo.view().setMinimumWidth(max(max_w, 200))
 
     def get_minimal_gui_context(self) -> str:
         return "GUI Context: User is viewing mRIXS app."
