@@ -410,4 +410,48 @@ def test_unbuffered_streaming_flags(monkeypatch):
     asyncio.run(_run())
 
 
+def test_sidebar_terminal_access_toggle(qapp, monkeypatch):
+    """Test full terminal access toggle button transitions, styles, warning modal, and bridge updates."""
+    from PySide6.QtWidgets import QMessageBox
+    engine = MagicMock(spec=CborgAgentEngine)
+    bridge = GuiAgentBridge(engine)
+    mock_chat_view = MockChatView()
+    main_win = QWidget()
+    sidebar = AgentSidebarWidget(
+        bridge=bridge,
+        main_window_ref=main_win,
+        chat_view=mock_chat_view,
+    )
 
+    # 1. Initial default state: OFF / danger (red)
+    assert sidebar.terminal_access is False
+    assert sidebar.terminal_btn.text() == "Full Terminal: OFF"
+    assert sidebar.terminal_btn.objectName() == "danger_btn"
+
+    # 2. Cancel the warning dialog -> remains OFF
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: QMessageBox.Cancel)
+    sidebar.terminal_btn.click()
+    assert sidebar.terminal_access is False
+    assert sidebar.terminal_btn.text() == "Full Terminal: OFF"
+    assert sidebar.terminal_btn.objectName() == "danger_btn"
+    engine.set_terminal_access.assert_not_called()
+
+    # 3. Accept the warning dialog -> transitions to ON / play (green)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: QMessageBox.Ok)
+    sidebar.terminal_btn.click()
+    assert sidebar.terminal_access is True
+    assert sidebar.terminal_btn.text() == "Full Terminal: ON"
+    assert sidebar.terminal_btn.objectName() == "play_btn"
+    engine.set_terminal_access.assert_called_with(True)
+
+    # 4. Click again to turn OFF (no modal needed) -> transitions to OFF / danger (red)
+    sidebar.terminal_btn.click()
+    assert sidebar.terminal_access is False
+    assert sidebar.terminal_btn.text() == "Full Terminal: OFF"
+    assert sidebar.terminal_btn.objectName() == "danger_btn"
+    engine.set_terminal_access.assert_called_with(False)
+
+    # 5. Programmatic setter test
+    sidebar.terminal_access = True
+    assert sidebar.terminal_btn.text() == "Full Terminal: ON"
+    assert sidebar.terminal_btn.objectName() == "play_btn"

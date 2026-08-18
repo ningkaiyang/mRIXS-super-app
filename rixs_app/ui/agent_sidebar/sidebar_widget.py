@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QComboBox, QCheckBox, QMessageBox,
+    QTextEdit, QComboBox, QMessageBox,
 )
 
-from rixs_app.ui.theme import PALETTE, set_danger_btn, set_accent_btn, set_danger_secondary_btn
+from rixs_app.ui.theme import (
+    PALETTE, set_play_btn, set_danger_btn, set_accent_btn, set_danger_secondary_btn,
+)
 from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
 
 if TYPE_CHECKING:
@@ -147,9 +149,13 @@ class AgentSidebarWidget(QWidget):
         self.model_combo.currentTextChanged.connect(self.bridge.set_model)
         toolbar_layout.addWidget(self.model_combo)
 
-        self.terminal_cb = QCheckBox("Full Terminal Access")
-        self.terminal_cb.toggled.connect(self._on_terminal_toggled)
-        toolbar_layout.addWidget(self.terminal_cb)
+        self._terminal_access: bool = False
+        self.terminal_btn = QPushButton("Full Terminal: OFF")
+        self.terminal_btn.setFixedHeight(28)
+        self.terminal_btn.setToolTip("Toggle Full Terminal Access (allows AI to execute terminal commands)")
+        set_danger_btn(self.terminal_btn)
+        self.terminal_btn.clicked.connect(self._toggle_terminal_access)
+        toolbar_layout.addWidget(self.terminal_btn)
 
         toolbar_layout.addStretch()
 
@@ -253,8 +259,18 @@ class AgentSidebarWidget(QWidget):
         self.chat_view.clear_all()
         self._current_msg_id = None
 
-    def _on_terminal_toggled(self, checked: bool):
-        if checked:
+    def _update_terminal_btn(self) -> None:
+        """Update button text and color based on full terminal access state."""
+        if self._terminal_access:
+            self.terminal_btn.setText("Full Terminal: ON")
+            set_play_btn(self.terminal_btn)
+        else:
+            self.terminal_btn.setText("Full Terminal: OFF")
+            set_danger_btn(self.terminal_btn)
+
+    def _toggle_terminal_access(self) -> None:
+        """Toggle full terminal access state with confirmation when enabling."""
+        if not self._terminal_access:
             reply = QMessageBox.warning(
                 self,
                 "Warning: Full Terminal Access",
@@ -263,6 +279,23 @@ class AgentSidebarWidget(QWidget):
                 QMessageBox.Ok | QMessageBox.Cancel
             )
             if reply == QMessageBox.Cancel:
-                self.terminal_cb.setChecked(False)
                 return
-        self.bridge.set_terminal_access(checked)
+            self._terminal_access = True
+        else:
+            self._terminal_access = False
+
+        self._update_terminal_btn()
+        self.bridge.set_terminal_access(self._terminal_access)
+
+    @property
+    def terminal_access(self) -> bool:
+        """Current full terminal access state."""
+        return self._terminal_access
+
+    @terminal_access.setter
+    def terminal_access(self, enabled: bool) -> None:
+        """Set terminal access state programmatically."""
+        self._terminal_access = enabled
+        self._update_terminal_btn()
+        self.bridge.set_terminal_access(enabled)
+

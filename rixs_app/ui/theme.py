@@ -12,6 +12,13 @@ Usage::
 
 from __future__ import annotations
 
+from pathlib import Path
+
+_ASSETS_DIR = Path(__file__).parent / "assets"
+_DROPDOWN_ARROW_SVG = (_ASSETS_DIR / "dropdown_arrow.svg").resolve().as_posix()
+_DROPDOWN_ARROW_HOVER_SVG = (_ASSETS_DIR / "dropdown_arrow_hover.svg").resolve().as_posix()
+_DROPDOWN_ARROW_DISABLED_SVG = (_ASSETS_DIR / "dropdown_arrow_disabled.svg").resolve().as_posix()
+
 # ---------------------------------------------------------------------------
 # Color palette
 # ---------------------------------------------------------------------------
@@ -299,7 +306,7 @@ QComboBox {{
     color: #ffffff;
     border: 1px solid #3d4566;
     border-radius: 4px;
-    padding: 3px 8px;
+    padding: 3px 26px 3px 8px;
     min-width: 80px;
 }}
 
@@ -315,22 +322,41 @@ QComboBox:hover {{
     border: 1px solid #54659e;
 }}
 
+QComboBox:focus, QComboBox:on {{
+    border: 1px solid {PALETTE['border_focus']};
+}}
+
 QComboBox::drop-down {{
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: 18px;
+    width: 22px;
     border-left: 1px solid #3d4566;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}}
+
+QComboBox::drop-down:hover {{
+    background-color: rgba(255, 255, 255, 0.06);
 }}
 
 QComboBox::down-arrow {{
-    image: none;
+    image: url({_DROPDOWN_ARROW_SVG});
     width: 10px;
     height: 10px;
+}}
+
+QComboBox::down-arrow:hover, QComboBox::down-arrow:on {{
+    image: url({_DROPDOWN_ARROW_HOVER_SVG});
+}}
+
+QComboBox::down-arrow:disabled {{
+    image: url({_DROPDOWN_ARROW_DISABLED_SVG});
 }}
 
 QComboBox QAbstractItemView {{
     background-color: #1a1f36;
     border: 1px solid #3d4566;
+    border-radius: 4px;
     selection-background-color: #2196f3;
     selection-color: #ffffff;
     color: #ffffff;
@@ -341,6 +367,7 @@ QComboBox QAbstractItemView {{
 QComboBox QAbstractItemView::item {{
     min-height: 24px;
     padding: 4px 8px;
+    border-radius: 3px;
 }}
 
 QComboBox QAbstractItemView::item:hover {{
