@@ -55,6 +55,22 @@ PALETTE = {
     "scroll_hover": "#5060a0",
 }
 
+import sys
+
+# ---------------------------------------------------------------------------
+# Font Stacks (platform-specific physical fonts to avoid QPA alias penalty)
+# ---------------------------------------------------------------------------
+
+if sys.platform == "darwin":
+    FONT_STACK_UI = '"Helvetica Neue", Arial'
+    FONT_STACK_CODE = 'Menlo, Monaco, "Courier New"'
+elif sys.platform == "win32":
+    FONT_STACK_UI = '"Segoe UI", Arial'
+    FONT_STACK_CODE = 'Consolas, "Courier New"'
+else:
+    FONT_STACK_UI = 'Ubuntu, "DejaVu Sans", Arial'
+    FONT_STACK_CODE = '"DejaVu Sans Mono", "Courier New"'
+
 # ---------------------------------------------------------------------------
 # Global application stylesheet (Qt QSS)
 # ---------------------------------------------------------------------------
@@ -64,7 +80,7 @@ DARK_STYLE = f"""
 QWidget {{
     background-color: {PALETTE['bg_base']};
     color: {PALETTE['text']};
-    font-family: "Helvetica Neue", "Arial";
+    font-family: {FONT_STACK_UI};
     font-size: 13px;
 }}
 
@@ -106,9 +122,31 @@ QPushButton:pressed {{
     background-color: {PALETTE['accent_blue']};
 }}
 
+QPushButton:focus {{
+    border: 1.5px solid #4a7fc1;
+    outline: none;
+}}
+
 QPushButton:disabled {{
     background-color: {PALETTE['bg_disabled']};
     color: {PALETTE['text_muted']};
+}}
+
+/* Explicit ID-level disabled overrides for maximum QSS specificity */
+QPushButton#tool_btn:disabled,
+QPushButton#play_btn:disabled,
+QPushButton#active_btn:disabled,
+QPushButton#accent_btn:disabled,
+QPushButton#danger_btn:disabled,
+QPushButton#danger_secondary_btn:disabled,
+QPushButton#success_btn:disabled,
+QPushButton#sort_btn:disabled,
+QPushButton#cancel_btn:disabled,
+QPushButton#amber_btn:disabled {{
+    background-color: #242942;
+    color: #5c6bc0;
+    border: 1px solid #2d3561;
+    opacity: 0.6;
 }}
 
 /* ── Named button variants (hover + pressed states) ────── */
@@ -291,7 +329,8 @@ QLineEdit {{
 }}
 
 QLineEdit:focus {{
-    border: 1px solid {PALETTE['border_focus']};
+    border: 1.5px solid #4a7fc1;
+    background-color: #16213e;
 }}
 
 QLineEdit:disabled {{
@@ -323,7 +362,7 @@ QComboBox:hover {{
 }}
 
 QComboBox:focus, QComboBox:on {{
-    border: 1px solid {PALETTE['border_focus']};
+    border: 1.5px solid #4a7fc1;
 }}
 
 QComboBox::drop-down {{
@@ -479,11 +518,33 @@ QSplitter::handle {{
 }}
 
 QSplitter::handle:horizontal {{
-    width: 3px;
+    background-color: #1f274a;
+    width: 5px;
+    margin: 0px 1px;
+}}
+
+QSplitter::handle:horizontal:hover {{
+    background-color: #3b82f6;
+    border-radius: 2px;
+}}
+
+QSplitter::handle:horizontal:pressed {{
+    background-color: #60a5fa;
 }}
 
 QSplitter::handle:vertical {{
-    height: 3px;
+    background-color: #1f274a;
+    height: 5px;
+    margin: 1px 0px;
+}}
+
+QSplitter::handle:vertical:hover {{
+    background-color: #3b82f6;
+    border-radius: 2px;
+}}
+
+QSplitter::handle:vertical:pressed {{
+    background-color: #60a5fa;
 }}
 
 /* ── Toolbar / nav bar frame ────────────────────────────── */
@@ -507,6 +568,10 @@ QListWidget {{
     border-radius: 5px;
     padding: 4px;
     alternate-background-color: {PALETTE['bg_panel']};
+}}
+
+QListWidget:focus {{
+    border: 1.5px solid #4a7fc1;
 }}
 
 QListWidget::item {{

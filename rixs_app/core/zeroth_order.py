@@ -122,6 +122,7 @@ def run_zeroth_order_pipeline(
         "angle_deg": line_result.get("angle_deg"),
         "detector_config": line_result.get("detector_config"),
         "fwhm_mev": fwhm_mev,
+        "r_squared": eval_result.r_squared if eval_result else None,
     }
 
 

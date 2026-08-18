@@ -22,12 +22,13 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 class _ChatBridge(QObject):
     """QObject exposed to JavaScript via QWebChannel.
 
-    JavaScript calls ``bridge.approve(id)`` or ``bridge.reject(id, fb)``
-    and these slots emit Qt signals back to the Python side.
+    JavaScript calls ``bridge.approve(id)``, ``bridge.reject(id, fb)``, or
+    ``bridge.quick_prompt(text)`` and these slots emit Qt signals back to the Python side.
     """
 
     approval_given = Signal(str)
     approval_rejected = Signal(str, str)
+    quick_prompt_requested = Signal(str)
 
     @Slot(str)
     def approve(self, callback_id: str) -> None:
@@ -39,6 +40,11 @@ class _ChatBridge(QObject):
         """Called from JS when the user clicks Reject."""
         self.approval_rejected.emit(callback_id, feedback)
 
+    @Slot(str)
+    def quick_prompt(self, text: str) -> None:
+        """Called from JS when the user clicks a quick prompt chip."""
+        self.quick_prompt_requested.emit(text)
+
 
 class ChatWebView(QWebEngineView):
     """View component that renders the chat interface via HTML/JS.
@@ -49,6 +55,7 @@ class ChatWebView(QWebEngineView):
 
     approval_given = Signal(str)
     approval_rejected = Signal(str, str)
+    quick_prompt_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,6 +75,7 @@ class ChatWebView(QWebEngineView):
         self._chat_bridge.approval_rejected.connect(
             lambda cid, fb: self.approval_rejected.emit(cid, fb)
         )
+        self._chat_bridge.quick_prompt_requested.connect(self.quick_prompt_requested.emit)
 
         # Track page readiness
         self.loadFinished.connect(self._on_load_finished)

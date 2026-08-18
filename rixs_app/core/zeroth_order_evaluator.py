@@ -40,6 +40,7 @@ class ZerothOrderResult:
     gaussian_background: float | None = None
     fwhm_px: float | None = None
     fwhm_mev: float | None = None
+    r_squared: float | None = None
     prominence: float | None = None
     fit_covariance_finite: bool = False
     n_occupied_bins: int = 0
@@ -215,6 +216,17 @@ class ZerothOrderEvaluator:
 
         score = 1.0 / fwhm if failure is None and fwhm > 0 else None
 
+        # Compute R² fit score
+        if failure is None and np.sum(occupied) > 0:
+            y_obs = intensity_smooth[occupied]
+            y_fit = _gaussian(u_centers[occupied], B_fit, A_fit, u0_fit, sigma_fit)
+            ss_res = np.sum((y_obs - y_fit) ** 2)
+            ss_tot = np.sum((y_obs - np.mean(y_obs)) ** 2)
+            r_squared = float(1.0 - (ss_res / max(ss_tot, 1e-12))) if ss_tot > 0 else 0.0
+            r_squared = max(0.0, min(1.0, r_squared))
+        else:
+            r_squared = None
+
         # Compute fwhm_mev if energy_dispersion is provided
         fwhm_mev = float(fwhm * energy_dispersion) if (failure is None and energy_dispersion > 0) else None
 
@@ -231,6 +243,7 @@ class ZerothOrderEvaluator:
             gaussian_background=float(B_fit),
             fwhm_px=float(fwhm),
             fwhm_mev=fwhm_mev,
+            r_squared=r_squared,
             prominence=float(prominence),
             fit_covariance_finite=cov_finite,
             n_occupied_bins=n_occupied,

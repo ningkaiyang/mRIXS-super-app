@@ -41,22 +41,26 @@ class ZerothOrderNavBar(QFrame):
         # --- Navigation ---
         self.back_button = QPushButton("\u25c4 Back")
         self.back_button.setFixedWidth(80)
+        self.back_button.setFocusPolicy(Qt.NoFocus)
         self.back_button.clicked.connect(self.controller.back_to_sorting)
         layout.addWidget(self.back_button)
 
         self.prev_button = QPushButton("\u25c4 Prev")
         self.prev_button.setFixedWidth(80)
+        self.prev_button.setFocusPolicy(Qt.NoFocus)
         self.prev_button.clicked.connect(self.controller.prev_frame)
         layout.addWidget(self.prev_button)
 
         self.next_button = QPushButton("Next \u25ba")
         self.next_button.setFixedWidth(80)
+        self.next_button.setFocusPolicy(Qt.NoFocus)
         self.next_button.clicked.connect(self.controller.next_frame)
         layout.addWidget(self.next_button)
 
         # --- Autoplay ---
         self.autoplay_button = QPushButton("\u25ba Play")
         self.autoplay_button.setFixedSize(80, 30)
+        self.autoplay_button.setFocusPolicy(Qt.NoFocus)
         from rixs_app.ui.theme import set_play_btn, set_accent_btn, set_amber_btn
         set_play_btn(self.autoplay_button)
         self.autoplay_button.clicked.connect(self.controller.toggle_autoplay)
@@ -65,16 +69,30 @@ class ZerothOrderNavBar(QFrame):
         # --- Precompute ---
         self.precompute_button = QPushButton("Precompute All")
         self.precompute_button.setFixedSize(130, 30)
+        self.precompute_button.setFocusPolicy(Qt.NoFocus)
         set_accent_btn(self.precompute_button)
-        self.precompute_button.clicked.connect(self.controller.trigger_precompute)
+        self.precompute_button.clicked.connect(lambda: self.controller.trigger_precompute())
         layout.addWidget(self.precompute_button)
 
         # --- Peak focus ---
         self.peak_focus_button = QPushButton("\u26a1 Best Focus")
         self.peak_focus_button.setFixedSize(125, 30)
+        self.peak_focus_button.setFocusPolicy(Qt.NoFocus)
         set_amber_btn(self.peak_focus_button)
         self.peak_focus_button.clicked.connect(self.controller.jump_to_peak_focus)
         layout.addWidget(self.peak_focus_button)
+
+        # --- Best Focus Celebration Badge ---
+        self.best_focus_badge = QLabel("★ BEST FOCUS")
+        self.best_focus_badge.setObjectName("badge_best_focus_celebration")
+        self.best_focus_badge.setFixedHeight(30)
+        self.best_focus_badge.setAlignment(Qt.AlignCenter)
+        self.best_focus_badge.setStyleSheet(
+            "background-color: #78350f; color: #fbbf24; border: 1px solid #f59e0b; "
+            "border-radius: 5px; padding: 0 10px; font-size: 11px; font-weight: bold;"
+        )
+        self.best_focus_badge.setVisible(False)
+        layout.addWidget(self.best_focus_badge)
 
         layout.addStretch()
 
@@ -106,6 +124,14 @@ class ZerothOrderNavBar(QFrame):
         self.colormap_menu.setMinimumWidth(95)
         self.colormap_menu.currentTextChanged.connect(self.controller.change_colormap)
         layout.addWidget(self.colormap_menu)
+
+    def set_best_focus_active(self, is_best: bool) -> None:
+        """Show or hide the Best Focus celebration crown badge in the navbar.
+
+        Args:
+            is_best: True if current frame is the optimal focus frame.
+        """
+        self.best_focus_badge.setVisible(bool(is_best))
 
     # ------------------------------------------------------------------
     # Co-Pilot button integration

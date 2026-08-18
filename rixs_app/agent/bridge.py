@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import asyncio
 from typing import Any
 from PySide6.QtCore import QObject, Signal, QThread
@@ -9,19 +10,52 @@ from rixs_app.agent.engine import CborgAgentEngine, AgentEvent
 
 class _AsyncLoopThread(QThread):
     """Worker thread running an asyncio event loop."""
+    _active_threads: set[_AsyncLoopThread] = set()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.loop = asyncio.new_event_loop()
 
     def run(self):
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        _AsyncLoopThread._active_threads.add(self)
+        try:
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_forever()
+        finally:
+            _AsyncLoopThread._active_threads.discard(self)
 
     def stop(self):
+        _AsyncLoopThread._active_threads.discard(self)
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
-        self.wait(3000)
+        if self.isRunning():
+            self.wait(3000)
+        if self.loop and not self.loop.is_closed():
+            try:
+                pending = asyncio.all_tasks(self.loop)
+                for task in pending:
+                    task.cancel()
+                self.loop.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        try:
+            self.stop()
+        except Exception:
+            pass
+
+    @classmethod
+    def stop_all(cls):
+        """Stops all active worker threads cleanly on shutdown."""
+        for th in list(cls._active_threads):
+            try:
+                th.stop()
+            except Exception:
+                pass
+
+
+atexit.register(_AsyncLoopThread.stop_all)
 
 
 class GuiAgentBridge(QObject):
@@ -44,18 +78,27 @@ class GuiAgentBridge(QObject):
         """
         super().__init__(parent)
         self.engine = engine
-        self._thread = _AsyncLoopThread(self)
+        self._thread = _AsyncLoopThread(None)
         self._is_generating = False
 
     def start_worker(self) -> None:
         """Starts the background worker thread."""
-        self._thread.start()
+        if not self._thread.isRunning():
+            if self._thread.loop.is_closed():
+                self._thread.loop = asyncio.new_event_loop()
+            self._thread.start()
         # Give the engine a reference to the worker loop for thread-safe signaling
         self.engine._loop = self._thread.loop
 
     def stop_worker(self) -> None:
         """Stops the background worker thread."""
         self._thread.stop()
+
+    def __del__(self):
+        try:
+            self.stop_worker()
+        except Exception:
+            pass
 
     def is_generating(self) -> bool:
         """Checks if generation is active."""
@@ -72,7 +115,8 @@ class GuiAgentBridge(QObject):
             return
             
         self._is_generating = True
-        asyncio.run_coroutine_threadsafe(self._run_chat(text, gui_context), self._thread.loop)
+        if self._thread.isRunning() and self._thread.loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._run_chat(text, gui_context), self._thread.loop)
 
     async def _run_chat(self, text: str, gui_context: str) -> None:
         """Internal coroutine handling the chat stream on the worker thread."""

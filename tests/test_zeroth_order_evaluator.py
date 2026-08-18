@@ -28,6 +28,7 @@ def test_synthetic_gaussian_line():
 
     assert res.score_valid
     assert res.score is not None
+    assert res.r_squared is not None and res.r_squared > 0.95
     # Check that FWHM is approx 2.355 * sqrt(2.0^2 + 1.5^2) = 5.887
     assert abs(res.fwhm_px - 5.887) < 0.2
     assert abs(res.score - 1.0 / res.fwhm_px) < 1e-5

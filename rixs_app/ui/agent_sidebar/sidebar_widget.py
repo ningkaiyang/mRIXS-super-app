@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from rixs_app.ui.theme import (
     PALETTE, set_play_btn, set_danger_btn, set_accent_btn, set_danger_secondary_btn,
+    set_tool_btn,
 )
 from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
 
@@ -179,6 +180,8 @@ class AgentSidebarWidget(QWidget):
 
         self.chat_view.approval_given.connect(self.bridge.approve_tool)
         self.chat_view.approval_rejected.connect(self.bridge.reject_tool)
+        if hasattr(self.chat_view, "quick_prompt_requested"):
+            self.chat_view.quick_prompt_requested.connect(self._send_text)
 
         self._current_msg_id = None
 

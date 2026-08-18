@@ -111,13 +111,28 @@ class SlideshowView(QWidget):
         self.tools_panel = SlideshowToolsPanel(self, controller=self)
         outer.addWidget(self.tools_panel)
 
-        # 4. Metadata label
+        # 4. Metadata and Drift Stability row
+        meta_container = QFrame()
+        meta_container.setObjectName("metadata_container")
+        meta_layout = QHBoxLayout(meta_container)
+        meta_layout.setContentsMargins(8, 2, 8, 2)
+        meta_layout.setSpacing(10)
+
         self.metadata_label = QLabel(
             "Filename: - | Frame Index: - | Offset: (0.00, 0.00)"
         )
         self.metadata_label.setObjectName("dim_label")
-        self.metadata_label.setContentsMargins(8, 0, 8, 0)
-        outer.addWidget(self.metadata_label)
+        meta_layout.addWidget(self.metadata_label)
+
+        self.drift_pill = QLabel("Stable \u2713")
+        self.drift_pill.setObjectName("drift_pill")
+        self.drift_pill.setAlignment(Qt.AlignCenter)
+        self.drift_pill.setFixedHeight(22)
+        self._set_drift_pill_style("Stable \u2713", "#065f46", "#34d399", "#059669")
+        meta_layout.addWidget(self.drift_pill)
+        meta_layout.addStretch()
+
+        outer.addWidget(meta_container)
 
         # 5. Bottom bar (clamping + export) — fixed height
         bottom_bar = QFrame()
@@ -195,6 +210,7 @@ class SlideshowView(QWidget):
         self.clamping_panel.sync_clamping_inputs(
             self.manager.clamping_floor, self.manager.clamping_ceiling
         )
+        self.navbar.update_navigation_state(self.manager.current_idx, len(self.manager.file_list))
         self.load_and_render()
 
     def get_current_clamping(self) -> tuple[float, float]:
@@ -204,6 +220,31 @@ class SlideshowView(QWidget):
             Tuple of (clamping_floor, clamping_ceiling).
         """
         return self.manager.clamping_floor, self.manager.clamping_ceiling
+
+    # ------------------------------------------------------------------
+    # Drift Stability Pill Helpers
+    # ------------------------------------------------------------------
+
+    def _update_drift_pill(self, drift_px: float) -> None:
+        """Update drift stability badge text and styling according to shift magnitude.
+
+        Args:
+            drift_px: Shift magnitude d = sqrt(dx^2 + dy^2).
+        """
+        if drift_px <= 1.0:
+            self._set_drift_pill_style("Stable \u2713", "#065f46", "#34d399", "#059669")
+        elif drift_px <= 5.0:
+            self._set_drift_pill_style("Moderate Drift", "#78350f", "#fbbf24", "#d97706")
+        else:
+            self._set_drift_pill_style("Severe Drift \u26a0\ufe0f", "#881337", "#f87171", "#e11d48")
+
+    def _set_drift_pill_style(self, text: str, bg: str, fg: str, border: str) -> None:
+        """Apply CSS styling to the drift stability pill."""
+        self.drift_pill.setText(text)
+        self.drift_pill.setStyleSheet(
+            f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
+            f"border-radius: 11px; padding: 2px 10px; font-weight: 600; font-size: 11px;"
+        )
 
     # ------------------------------------------------------------------
     # Rendering
@@ -217,12 +258,17 @@ class SlideshowView(QWidget):
             self.metadata_label.setText(
                 "Filename: - | Frame Index: - | Offset: (0.00, 0.00)"
             )
+            self._update_drift_pill(0.0)
+            self.navbar.update_navigation_state(0, 0)
             return
 
         self.control_panel.sync_timeline_label(
             self.manager.current_idx + 1, len(self.manager.file_list)
         )
         self._sync_slider_to_frame()
+        self.navbar.update_navigation_state(
+            self.manager.current_idx, len(self.manager.file_list)
+        )
 
         img_path = self.manager.file_list[self.manager.current_idx]
         raw = self.manager.get_raw(img_path)
@@ -254,6 +300,9 @@ class SlideshowView(QWidget):
         dx, dy = 0.0, 0.0
         if self.manager.current_idx > 0 and self.manager.ref_raw is not None:
             dx, dy = self.manager.get_offset(self.manager.current_idx)
+
+        d = float(np.sqrt(dx * dx + dy * dy))
+        self._update_drift_pill(d)
 
         self.metadata_label.setText(
             f"Filename: {os.path.basename(img_path)} "
@@ -475,6 +524,18 @@ class SlideshowView(QWidget):
     def _apply_frame_change(self) -> None:
         """Apply debounced frame change."""
         self.load_and_render()
+
+    def first_frame(self) -> None:
+        """Navigate to the first frame (index 0)."""
+        if self.manager.file_list and self.manager.current_idx != 0:
+            self.jump_to_frame(0)
+
+    def last_frame(self) -> None:
+        """Navigate to the last frame (index N-1)."""
+        if self.manager.file_list:
+            n = len(self.manager.file_list)
+            if self.manager.current_idx != n - 1:
+                self.jump_to_frame(n - 1)
 
     def prev_frame(self) -> None:
         """Navigate to the previous frame if available."""
@@ -820,8 +881,10 @@ class SlideshowView(QWidget):
             enabled: True to enable, False to disable.
         """
         for w in [
-            self.navbar.back_button, self.navbar.prev_button,
-            self.navbar.next_button, self.navbar.autoplay_button,
+            self.navbar.back_button, self.navbar.first_button,
+            self.navbar.prev_button, self.navbar.next_button,
+            self.navbar.last_button, self.navbar.autoplay_button,
+            self.navbar.speed_button,
             self.tools_panel.manual_line_button, self.tools_panel.clear_manual_button,
             self.tools_panel.zoom_in_button, self.tools_panel.zoom_out_button,
             self.tools_panel.reset_view_button,
@@ -848,6 +911,11 @@ class SlideshowView(QWidget):
     # ------------------------------------------------------------------
     # Backwards-compat properties (for existing unit tests)
     # ------------------------------------------------------------------
+
+    @property
+    def drift_badge(self):
+        """Alias for drift_pill badge label."""
+        return self.drift_pill
 
     @property
     def canvas(self):
@@ -910,6 +978,11 @@ class SlideshowView(QWidget):
         return self.navbar.back_button
 
     @property
+    def first_button(self):
+        """First button (proxy to navbar)."""
+        return self.navbar.first_button
+
+    @property
     def prev_button(self):
         """Prev button (proxy to navbar)."""
         return self.navbar.prev_button
@@ -920,9 +993,19 @@ class SlideshowView(QWidget):
         return self.navbar.next_button
 
     @property
+    def last_button(self):
+        """Last button (proxy to navbar)."""
+        return self.navbar.last_button
+
+    @property
     def autoplay_button(self):
         """Autoplay button (proxy to navbar)."""
         return self.navbar.autoplay_button
+
+    @property
+    def speed_button(self):
+        """Speed button (proxy to navbar)."""
+        return self.navbar.speed_button
 
     @property
     def colormap_menu(self):

@@ -162,9 +162,11 @@ class ZerothOrderSlideshowView(QWidget):
         self.tools_panel.sync_slicing_inputs(
             self.manager.slicing_floor, self.manager.slicing_ceiling
         )
+        self.tools_panel.sync_dispersion_input(self.manager.energy_dispersion)
         self.manager.pipeline_stage = "Raw"
 
         self.load_and_render()
+        self._clear_text_focus()
 
     # ------------------------------------------------------------------
     # Rendering
@@ -184,26 +186,38 @@ class ZerothOrderSlideshowView(QWidget):
         slider.setValue(idx)
         slider.blockSignals(False)
 
-        # Update read-only metadata summary bar
+        # Update metadata summary KPI cards
         motor_name, motor_val = self.manager.get_motor_info(idx)
 
         data = self.manager.get_frame_pipeline_data(idx)
         if not data:
             self.control_panel.update_metadata(
-                filename, motor_name, motor_val
+                filename, motor_name, motor_val,
+                is_best_focus=False,
+                mono_energy_ev=self.manager.mono_energy_ev,
             )
+            if hasattr(self.navbar, "set_best_focus_active"):
+                self.navbar.set_best_focus_active(False)
             return
+
+        is_best_focus = self.manager.is_best_focus_frame(idx)
 
         er = data.get("evaluator_result")
         fwhm_px = er.fwhm_px if (er is not None and er.fwhm_px is not None) else None
         fwhm_mev = (fwhm_px * self.manager.energy_dispersion) if (fwhm_px is not None and self.manager.energy_dispersion > 0) else None
         score = data.get("score")
+        r_squared = getattr(er, "r_squared", None) if er is not None else data.get("r_squared")
 
         self.control_panel.update_metadata(
             filename, motor_name, motor_val,
             fwhm_px=fwhm_px, fwhm_mev=fwhm_mev,
-            score=score
+            score=score,
+            r_squared=r_squared,
+            is_best_focus=is_best_focus,
+            mono_energy_ev=self.manager.mono_energy_ev,
         )
+        if hasattr(self.navbar, "set_best_focus_active"):
+            self.navbar.set_best_focus_active(is_best_focus)
 
         stage = getattr(self.manager, "pipeline_stage", "Raw")
         if stage == "Raw":
@@ -275,12 +289,24 @@ class ZerothOrderSlideshowView(QWidget):
             slider.blockSignals(False)
             self.load_and_render()
 
+    def _clear_text_focus(self) -> None:
+        """Clear focus from all text inputs and restore focus to slideshow controller."""
+        if hasattr(self, "tools_panel"):
+            if hasattr(self.tools_panel, "floor_entry"):
+                self.tools_panel.floor_entry.clearFocus()
+            if hasattr(self.tools_panel, "ceiling_entry"):
+                self.tools_panel.ceiling_entry.clearFocus()
+            if hasattr(self.tools_panel, "dispersion_entry"):
+                self.tools_panel.dispersion_entry.clearFocus()
+        self.setFocus()
+
     def jump_to_peak_focus(self) -> None:
         """Jump to the frame with the sharpest focus (minimum FWHM)."""
+        self._clear_text_focus()
         total = len(self.manager.file_list)
         if total == 0:
             return
-        if len(self.manager.pipeline_results) >= total:
+        if self.manager.all_frames_cached():
             best_idx = self.manager.get_peak_focus_index()
             self.manager.current_idx = best_idx
             slider = self.control_panel.frame_slider
@@ -288,6 +314,7 @@ class ZerothOrderSlideshowView(QWidget):
             slider.setValue(best_idx)
             slider.blockSignals(False)
             self.load_and_render()
+            self._clear_text_focus()
         else:
             def _after_precompute():
                 best_idx = self.manager.get_peak_focus_index()
@@ -297,17 +324,21 @@ class ZerothOrderSlideshowView(QWidget):
                 slider.setValue(best_idx)
                 slider.blockSignals(False)
                 self.load_and_render()
+                self._clear_text_focus()
             self.trigger_precompute(on_complete_extra=_after_precompute)
 
-    def trigger_precompute(self, on_complete_extra=None) -> None:
+    def trigger_precompute(self, on_complete_extra=None, *args, **kwargs) -> None:
         """Run background precomputation for all frames.
 
         Args:
             on_complete_extra: Optional extra callback once precompute finishes.
         """
+        self._clear_text_focus()
+        extra_callback = on_complete_extra if callable(on_complete_extra) else None
         btn = self.navbar.precompute_button
         btn.setEnabled(False)
         self.navbar.peak_focus_button.setEnabled(False)
+        self._clear_text_focus()
 
         worker = PrecomputeFramesWorker(self.manager, len(self.manager.file_list))
 
@@ -319,8 +350,9 @@ class ZerothOrderSlideshowView(QWidget):
             btn.setEnabled(True)
             self.navbar.peak_focus_button.setEnabled(True)
             self.load_and_render()
-            if on_complete_extra is not None:
-                on_complete_extra()
+            self._clear_text_focus()
+            if extra_callback is not None:
+                extra_callback()
 
         def _on_error(err_msg: str) -> None:
             btn.setText("Precompute All")
@@ -507,6 +539,11 @@ class ZerothOrderSlideshowView(QWidget):
             return
 
         self.bottom_bar.export_button.setEnabled(False)
+        total = len(self.manager.file_list)
+        if hasattr(self.bottom_bar, "progress_bar"):
+            self.bottom_bar.progress_bar.setRange(0, total)
+            self.bottom_bar.progress_bar.setValue(0)
+            self.bottom_bar.progress_bar.setVisible(True)
 
         worker = ExportDiagnosticWorker(
             self.manager,
@@ -516,10 +553,14 @@ class ZerothOrderSlideshowView(QWidget):
         )
 
         def _on_progress(current: int, total: int) -> None:
+            if hasattr(self.bottom_bar, "progress_bar"):
+                self.bottom_bar.progress_bar.setValue(current)
             self.bottom_bar.status_label.setText(f"Exporting: {current}/{total}...")
 
         def _on_result(success: bool) -> None:
             self.bottom_bar.export_button.setEnabled(True)
+            if hasattr(self.bottom_bar, "progress_bar"):
+                self.bottom_bar.progress_bar.setVisible(False)
             self.bottom_bar.status_label.setText("")
             QMessageBox.information(
                 self, "Export Complete",
@@ -528,6 +569,8 @@ class ZerothOrderSlideshowView(QWidget):
 
         def _on_error(err_msg: str) -> None:
             self.bottom_bar.export_button.setEnabled(True)
+            if hasattr(self.bottom_bar, "progress_bar"):
+                self.bottom_bar.progress_bar.setVisible(False)
             self.bottom_bar.status_label.setText("")
             QMessageBox.critical(
                 self, "Export Error",
@@ -545,7 +588,9 @@ class ZerothOrderSlideshowView(QWidget):
         Args:
             value: Energy dispersion in meV/px.
         """
-        self.manager.energy_dispersion = value
+        self.manager.energy_dispersion = max(0.0, float(value))
+        if hasattr(self, "tools_panel") and hasattr(self.tools_panel, "sync_dispersion_input"):
+            self.tools_panel.sync_dispersion_input(self.manager.energy_dispersion)
         self.load_and_render()
 
     def back_to_sorting(self) -> None:
@@ -563,5 +608,13 @@ class ZerothOrderSlideshowView(QWidget):
             self.manager.cancel()
         if hasattr(self, 'canvas_panel') and hasattr(self.canvas_panel, '_teardown_mpl'):
             self.canvas_panel._teardown_mpl()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        """Release focus from any text inputs when clicking on view background."""
+        focused = self.window().focusWidget() if self.window() else self.focusWidget()
+        if focused and isinstance(focused, QLineEdit):
+            focused.clearFocus()
+        self.setFocus()
+        super().mousePressEvent(event)
 
 

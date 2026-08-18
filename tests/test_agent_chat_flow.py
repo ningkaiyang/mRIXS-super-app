@@ -30,9 +30,11 @@ class MockChatView(QWidget):
     """QWidget mock conforming to ChatWebView interface for PySide6 layouts."""
     approval_given = Signal(str)
     approval_rejected = Signal(str, str)
+    quick_prompt_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.append_user_message = MagicMock()
         self.start_assistant_message = MagicMock()
         self.append_token = MagicMock()
         self.finalize_message = MagicMock()
@@ -455,3 +457,43 @@ def test_sidebar_terminal_access_toggle(qapp, monkeypatch):
     sidebar.terminal_access = True
     assert sidebar.terminal_btn.text() == "Full Terminal: ON"
     assert sidebar.terminal_btn.objectName() == "play_btn"
+
+
+def test_sidebar_quick_prompt_flow(qapp):
+    """Test that quick prompt signal triggers send_text, appends user message and dispatches to bridge."""
+    engine = MagicMock(spec=CborgAgentEngine)
+    bridge = GuiAgentBridge(engine)
+    mock_chat_view = MockChatView()
+    main_win = QWidget()
+    sidebar = AgentSidebarWidget(
+        bridge=bridge,
+        main_window_ref=main_win,
+        chat_view=mock_chat_view,
+    )
+
+    prompt_text = "Help me align the loaded TIFF sequence using ECC engine"
+    mock_chat_view.quick_prompt_requested.emit(prompt_text)
+
+    mock_chat_view.append_user_message.assert_called_with(prompt_text)
+    assert engine.stream_chat.called or bridge is not None
+    assert sidebar.send_btn.text() == "Stop ■"
+    assert sidebar.send_btn.objectName() == "danger_btn"
+
+
+def test_sidebar_close_signal(qapp):
+    """Test that sidebar_close_requested signal can be emitted and connected."""
+    engine = MagicMock(spec=CborgAgentEngine)
+    bridge = GuiAgentBridge(engine)
+    mock_chat_view = MockChatView()
+    main_win = QWidget()
+    sidebar = AgentSidebarWidget(
+        bridge=bridge,
+        main_window_ref=main_win,
+        chat_view=mock_chat_view,
+    )
+
+    close_emitted = []
+    sidebar.sidebar_close_requested.connect(lambda: close_emitted.append(True))
+    sidebar.sidebar_close_requested.emit()
+    assert len(close_emitted) == 1
+

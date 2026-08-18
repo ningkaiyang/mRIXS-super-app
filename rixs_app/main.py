@@ -258,6 +258,7 @@ class RixsApp(QMainWindow):
         self._sidebar_visible = True
         self._sidebar_toggle.setText("🤖 ✕")
         self._sidebar_toggle.setToolTip("Close Co-Pilot sidebar")
+        self._sidebar_toggle.setStyleSheet("background-color: #1f6aa5; border: 1.5px solid #38bdf8; color: #ffffff;")
 
     def _hide_sidebar(self) -> None:
         """Collapse the sidebar, caching its current width."""
@@ -270,6 +271,8 @@ class RixsApp(QMainWindow):
         self._sidebar_visible = False
         self._sidebar_toggle.setText("🤖 Co-Pilot")
         self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
+        self._sidebar_toggle.setStyleSheet("")
+        set_tool_btn(self._sidebar_toggle)
 
     def _get_gui_context(self) -> str:
         """Build a compact GUI context string for the agent.
@@ -404,6 +407,15 @@ class RixsApp(QMainWindow):
         else:
             super().keyPressEvent(event)
 
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        """Clear text input focus when clicking on the application background."""
+        focused = self.focusWidget()
+        from PySide6.QtWidgets import QLineEdit
+        if focused and isinstance(focused, QLineEdit):
+            focused.clearFocus()
+            self.setFocus()
+        super().mousePressEvent(event)
+
     # ------------------------------------------------------------------
     # Window management
     # ------------------------------------------------------------------
@@ -444,6 +456,14 @@ class RixsApp(QMainWindow):
                 pass
 
         event.accept()
+
+    def __del__(self) -> None:
+        """Ensure background threads are stopped when the window is destroyed."""
+        if hasattr(self, "_bridge") and self._bridge is not None:
+            try:
+                self._bridge.stop_worker()
+            except Exception:
+                pass
 
 
 

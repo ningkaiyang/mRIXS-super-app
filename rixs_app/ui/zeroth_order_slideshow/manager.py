@@ -80,7 +80,10 @@ class ZerothOrderManager:
         self.autoplay_active = False
         self.txt_metadata = txt_metadata
         self.energy_dispersion = 0.0
-        self.mono_energy_ev = 0.0
+        if txt_metadata and "mono_energy_ev" in txt_metadata and float(txt_metadata["mono_energy_ev"]) > 0:
+            self.mono_energy_ev = float(txt_metadata["mono_energy_ev"])
+        else:
+            self.mono_energy_ev = 850.0
 
         with self.lock:
             self.zarr_manager = manager
@@ -152,6 +155,7 @@ class ZerothOrderManager:
         if current_zarr_manager is None:
             return None
         denoised_img = current_zarr_manager.get_derived_frame(idx, "denoised_img")
+        dsm_img = current_zarr_manager.get_derived_frame(idx, "dsm_img")
         masked_img = current_zarr_manager.get_derived_frame(idx, "masked_img")
         grad_img = current_zarr_manager.get_derived_frame(idx, "grad_img")
         raw_img = current_zarr_manager.get_frame(idx)
@@ -159,14 +163,22 @@ class ZerothOrderManager:
         if raw_img is None:
             return None
 
-        if cached_meta is not None and denoised_img is not None and masked_img is not None:
+        if cached_meta is not None and (denoised_img is not None or "1d_profile" in cached_meta or "evaluator_result" in cached_meta):
             if self.session_id is not current_session:
                 return None
             self._local.file_list = session_file_list
             res = dict(cached_meta)
             res["raw_img"] = raw_img
-            res["denoised_img"] = denoised_img
-            res["masked_img"] = masked_img
+            if denoised_img is not None:
+                res["denoised_img"] = denoised_img
+            elif "denoised_img" not in res:
+                res["denoised_img"] = raw_img
+            if masked_img is not None:
+                res["masked_img"] = masked_img
+            elif "masked_img" not in res:
+                res["masked_img"] = raw_img
+            if dsm_img is not None:
+                res["dsm_img"] = dsm_img
             if grad_img is not None:
                 res["grad_img"] = grad_img
             return res
@@ -184,16 +196,21 @@ class ZerothOrderManager:
         if self.session_id is current_session:
             # Save derived frames to disk cache
             if current_zarr_manager is not None:
-                current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
-                current_zarr_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
-                current_zarr_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
+                if res.get("denoised_img") is not None:
+                    current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
+                if res.get("dsm_img") is not None:
+                    current_zarr_manager.set_derived_frame(idx, "dsm_img", res["dsm_img"])
+                if res.get("masked_img") is not None:
+                    current_zarr_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
+                if res.get("grad_img") is not None:
+                    current_zarr_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
             with self.lock:
                 if self.session_id is current_session:
                     self.centroids[idx] = res["centroid"]
                     self.directions[idx] = res["direction"]
                     self.profiles[idx] = res["1d_profile"]
                     self.scores[idx] = res["score"]
-                    meta = {k: v for k, v in res.items() if k not in ("raw_img", "denoised_img", "masked_img", "grad_img")}
+                    meta = {k: v for k, v in res.items() if k not in ("raw_img", "denoised_img", "dsm_img", "masked_img", "grad_img")}
                     self.pipeline_results[idx] = meta
 
         if self.session_id is not current_session:
@@ -201,6 +218,11 @@ class ZerothOrderManager:
 
         self._local.file_list = session_file_list
         return res
+
+    def all_frames_cached(self) -> bool:
+        """Return True if all frames in file_list have been evaluated and cached in pipeline_results."""
+        total = len(self.file_list)
+        return total > 0 and len(self.pipeline_results) >= total
 
     def get_peak_focus_index(self) -> int:
         """Return the index of the frame with the minimum (best) FWHM."""
@@ -211,6 +233,20 @@ class ZerothOrderManager:
                 best_fwhm = er.fwhm_px
                 best_idx = idx
         return best_idx
+
+    def is_best_focus_frame(self, idx: int) -> bool:
+        """Return whether frame at idx is the optimal focus frame with minimum valid FWHM.
+
+        Only returns True once all frames in the dataset have been evaluated and cached.
+        """
+        if not self.all_frames_cached():
+            return False
+        best_idx = self.get_peak_focus_index()
+        best_meta = self.pipeline_results.get(best_idx, {})
+        er = best_meta.get("evaluator_result")
+        if er is None or not er.score_valid or er.fwhm_px is None:
+            return False
+        return idx == best_idx
 
     def get_motor_info(self, idx: int) -> tuple[str, str]:
         """Return (motor_name, motor_value_str) for frame at idx from parsed txt_metadata."""
