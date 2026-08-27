@@ -36,6 +36,18 @@ from .image_processing import (
 from .preprocessing import denoise_image, prepare_frame, PreprocessingConfig, CropTransform, PreparedFrame
 from .zeroth_order import evaluate_zeroth_order, run_zeroth_order_pipeline
 from .cli_utils import discover_directories, glob_tifs, export_focus_curve, extract_frame_index
+from .photon_clustering import (
+    DarkMaskConfig,
+    ClusterConfig,
+    ReconstructionConfig,
+    Stage1Result,
+    ReconstructionResult,
+    compute_dark_mask,
+    process_single_frame_clusters,
+    process_signal_stack_clusters,
+    reconstruct_photon_event_map,
+    export_intden_histogram,
+)
 
 __all__ = [
     "PCAFitFailure",
@@ -65,4 +77,15 @@ __all__ = [
     "glob_tifs",
     "export_focus_curve",
     "extract_frame_index",
+    "DarkMaskConfig",
+    "ClusterConfig",
+    "ReconstructionConfig",
+    "Stage1Result",
+    "ReconstructionResult",
+    "compute_dark_mask",
+    "process_single_frame_clusters",
+    "process_signal_stack_clusters",
+    "reconstruct_photon_event_map",
+    "export_intden_histogram",
 ]
+

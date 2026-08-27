@@ -4,9 +4,10 @@ pillow==12.2.0
 tifffile==2026.6.1
 matplotlib==3.10.9
 opencv-python==4.13.0.92
-scipy
-scikit-image
-zarr
+scipy==1.17.1
+scikit-image==0.26.0
+zarr==3.2.1
+pandas==3.0.5
 
 # GUI framework (PySide6 replaces customtkinter)
 PySide6>=6.6.0
