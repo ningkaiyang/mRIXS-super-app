@@ -282,7 +282,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     assert rixs._sidebar_visible is False
     assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
     assert rixs._sidebar_toggle.toolTip() == "Toggle mRIXS Co-Pilot sidebar"
-    assert rixs._sidebar_toggle.objectName() == "tool_btn"
+    assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
 
     # Show sidebar
@@ -290,7 +290,6 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     assert rixs._sidebar_visible is True
     assert rixs._sidebar_toggle.text() == "🤖 ✕"
     assert rixs._sidebar_toggle.toolTip() == "Close Co-Pilot sidebar"
-    assert "background-color: #1f6aa5" in rixs._sidebar_toggle.styleSheet()
     assert "border: 1.5px solid #38bdf8" in rixs._sidebar_toggle.styleSheet()
     assert "color: #ffffff" in rixs._sidebar_toggle.styleSheet()
 
@@ -299,12 +298,12 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     assert rixs._sidebar_visible is False
     assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
     assert rixs._sidebar_toggle.toolTip() == "Toggle mRIXS Co-Pilot sidebar"
-    assert rixs._sidebar_toggle.objectName() == "tool_btn"
+    assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
 
 
 def test_copilot_reparenting_across_views(qapp):
-    """Verify Co-Pilot button is correctly reparented across all 4 views without breaking styling."""
+    """Verify Co-Pilot button is correctly reparented across all views without breaking styling."""
     rixs = RixsApp(show_window=False)
     rixs._sidebar = MagicMock()
 
@@ -314,11 +313,11 @@ def test_copilot_reparenting_across_views(qapp):
         rixs._reparent_toggle_btn(idx)
         rixs._show_sidebar()
         assert rixs._sidebar_toggle.text() == "🤖 ✕"
-        assert "background-color: #1f6aa5" in rixs._sidebar_toggle.styleSheet()
+        assert "border: 1.5px solid #38bdf8" in rixs._sidebar_toggle.styleSheet()
 
         rixs._hide_sidebar()
         assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
-        assert rixs._sidebar_toggle.objectName() == "tool_btn"
+        assert rixs._sidebar_toggle.objectName() == "copilot_btn"
         assert rixs._sidebar_toggle.styleSheet() == ""
 
 

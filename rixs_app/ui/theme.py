@@ -78,13 +78,13 @@ else:
 DARK_STYLE = f"""
 /* ── Global base ────────────────────────────────────────── */
 QWidget {{
-    background-color: {PALETTE['bg_base']};
+    background-color: transparent;
     color: {PALETTE['text']};
     font-family: {FONT_STACK_UI};
     font-size: 13px;
 }}
 
-QMainWindow {{
+QMainWindow, QDialog {{
     background-color: {PALETTE['bg_base']};
 }}
 
@@ -92,13 +92,18 @@ QMainWindow {{
 QFrame, QGroupBox {{
     background-color: {PALETTE['bg_panel']};
     border: 1px solid {PALETTE['border']};
-    border-radius: 6px;
+    border-radius: 8px;
+}}
+
+QGroupBox {{
+    margin-top: 8px;
+    padding-top: 14px;
 }}
 
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 0 6px;
+    padding: 0 8px;
     color: {PALETTE['text_dim']};
     font-weight: bold;
 }}
@@ -108,7 +113,7 @@ QPushButton {{
     background-color: {PALETTE['bg_selected']};
     color: {PALETTE['text']};
     border: none;
-    border-radius: 5px;
+    border-radius: 6px;
     padding: 5px 12px;
     font-size: 13px;
     font-weight: 600;
@@ -142,7 +147,8 @@ QPushButton#danger_secondary_btn:disabled,
 QPushButton#success_btn:disabled,
 QPushButton#sort_btn:disabled,
 QPushButton#cancel_btn:disabled,
-QPushButton#amber_btn:disabled {{
+QPushButton#amber_btn:disabled,
+QPushButton#copilot_btn:disabled {{
     background-color: #242942;
     color: #5c6bc0;
     border: 1px solid #2d3561;
@@ -156,6 +162,7 @@ QPushButton#tool_btn {{
     background-color: #2d3558;
     color: #ffffff;
     border: 1px solid #3f4b78;
+    border-radius: 6px;
 }}
 QPushButton#tool_btn:hover {{
     background-color: #3d4875;
@@ -163,6 +170,27 @@ QPushButton#tool_btn:hover {{
 }}
 QPushButton#tool_btn:pressed {{
     background-color: #4a578c;
+}}
+
+/* Co-Pilot navbar toggle button (pill style) */
+QPushButton#copilot_btn {{
+    background-color: #1e293b;
+    color: #38bdf8;
+    border: 1px solid #334155;
+    border-radius: 14px;
+    padding: 4px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+QPushButton#copilot_btn:hover {{
+    background-color: #334155;
+    border-color: #38bdf8;
+    color: #ffffff;
+}}
+QPushButton#copilot_btn:pressed {{
+    background-color: #0284c7;
+    border-color: #38bdf8;
+    color: #ffffff;
 }}
 
 /* Play / start button (green) */
@@ -323,8 +351,8 @@ QLineEdit {{
     background-color: {PALETTE['bg_widget']};
     color: {PALETTE['text']};
     border: 1px solid {PALETTE['border']};
-    border-radius: 4px;
-    padding: 3px 8px;
+    border-radius: 6px;
+    padding: 4px 8px;
     selection-background-color: {PALETTE['accent_blue']};
 }}
 
@@ -338,14 +366,75 @@ QLineEdit:disabled {{
     color: {PALETTE['text_muted']};
 }}
 
+/* ── SpinBoxes ──────────────────────────────────────────── */
+QSpinBox, QDoubleSpinBox {{
+    background-color: #262c4a;
+    color: #ffffff;
+    border: 1px solid #3d4566;
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-height: 20px;
+    selection-background-color: {PALETTE['accent_blue']};
+}}
+
+QSpinBox:focus, QDoubleSpinBox:focus {{
+    border: 1.5px solid #4a7fc1;
+    background-color: #1a1f36;
+}}
+
+QSpinBox:disabled, QDoubleSpinBox:disabled {{
+    background-color: #242942;
+    color: #5c6bc0;
+    border: 1px solid #2d3561;
+}}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 20px;
+    background-color: #2a3356;
+    border-left: 1px solid #3d4566;
+    border-bottom: 1px solid #3d4566;
+    border-top-right-radius: 5px;
+}}
+
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {{
+    background-color: #3b4875;
+}}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    image: url({_DROPDOWN_ARROW_SVG});
+    width: 8px;
+    height: 8px;
+}}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 20px;
+    background-color: #2a3356;
+    border-left: 1px solid #3d4566;
+    border-bottom-right-radius: 5px;
+}}
+
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+    background-color: #3b4875;
+}}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    image: url({_DROPDOWN_ARROW_SVG});
+    width: 8px;
+    height: 8px;
+}}
+
 /* ── ComboBox ───────────────────────────────────────────── */
 QComboBox {{
     combobox-popup: 0;
     background-color: #262c4a;
     color: #ffffff;
     border: 1px solid #3d4566;
-    border-radius: 4px;
-    padding: 3px 26px 3px 8px;
+    border-radius: 6px;
+    padding: 4px 26px 4px 8px;
     min-width: 80px;
 }}
 
@@ -815,6 +904,13 @@ def set_mode_selector(combo) -> None:
     combo.setObjectName("mode_selector")
     combo.style().unpolish(combo)
     combo.style().polish(combo)
+
+
+def set_copilot_btn(btn) -> None:
+    """Mark *btn* as a styled Co-Pilot pill toggle button."""
+    btn.setObjectName("copilot_btn")
+    btn.style().unpolish(btn)
+    btn.style().polish(btn)
 
 
 # Alias used by main.py for the full application stylesheet

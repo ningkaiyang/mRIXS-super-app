@@ -51,7 +51,18 @@ from .photon_clustering import (
     reconstruct_photon_event_map,
     export_intden_histogram,
 )
-from .calibration_store import (
+from .dark_mask_store import (
+    DEFAULT_MASK_DIR,
+    DARK_MASK_DIR,
+    DarkMaskRecord,
+    has_dark_mask,
+    load_dark_mask,
+    save_dark_mask,
+    get_mask_summary,
+    clear_dark_mask,
+    get_dark_mask_dir,
+    get_meta_file_path,
+    # Backward compatibility aliases
     DEFAULT_CALIBRATION_DIR,
     DARK_CAL_DIR,
     CalibrationRecord,
@@ -61,7 +72,6 @@ from .calibration_store import (
     get_calibration_summary,
     clear_calibration,
     get_dark_cal_dir,
-    get_meta_file_path,
 )
 
 __all__ = [

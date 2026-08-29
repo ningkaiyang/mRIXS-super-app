@@ -548,12 +548,20 @@ try:
         def hideEvent(self, event) -> None:  # noqa: N802
             super().hideEvent(event)
 
-        def closeEvent(self, event) -> None:  # noqa: N802
+        def cleanup(self) -> None:
             self._destroyed = True
+            try:
+                if hasattr(self, "figure") and self.figure is not None:
+                    self.figure.clear()
+            except Exception:
+                pass
+
+        def closeEvent(self, event) -> None:  # noqa: N802
+            self.cleanup()
             super().closeEvent(event)
 
         def destroy(self, destroyWindow=True, destroySubWindows=True) -> None:  # noqa: N802
-            self._destroyed = True
+            self.cleanup()
             super().destroy(destroyWindow, destroySubWindows)
 except ImportError:
     SafeFigureCanvasQTAgg = None  # type: ignore

@@ -18,11 +18,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QPushButton,
 )
 
-from rixs_app.ui.theme import FULL_QSS, PALETTE, set_tool_btn
+from rixs_app.ui.theme import FULL_QSS, PALETTE, set_tool_btn, set_copilot_btn
 
 
 from rixs_app.ui.home_launchpad import HomeLaunchpadView
-from rixs_app.ui.dark_calibration.dark_cal_view import DarkCalibrationView
+from rixs_app.ui.dark_masking.dark_mask_view import DarkMaskingView, DarkCalibrationView
 from rixs_app.ui.clustering_slideshow.file_selection_view import ClusteringFileSelectionView
 from rixs_app.ui.clustering_slideshow.studio_view import ClusteringStudioView
 from rixs_app.ui.sorting_view import SortingView
@@ -44,7 +44,7 @@ _IDX_ZEROTH_ORDER = 7
 # View name map for GUI context
 _VIEW_NAMES = {
     _IDX_HOME: "HomeLaunchpadView",
-    _IDX_DARK_CAL: "DarkCalibrationView",
+    _IDX_DARK_CAL: "DarkMaskingView",
     _IDX_CLUSTERING_FILES: "ClusteringFileSelectionView",
     _IDX_CLUSTERING_STUDIO: "ClusteringStudioView",
     _IDX_SORTING: "SortingView",
@@ -97,10 +97,12 @@ class RixsApp(QMainWindow):
         )
         self.home_launchpad_view = self.home_view
 
-        self.dark_cal_view = DarkCalibrationView(
+        self.dark_mask_view = DarkMaskingView(
             on_back=self.show_home,
         )
-        self.dark_calibration_view = self.dark_cal_view
+        self.dark_cal_view = self.dark_mask_view
+        self.dark_calibration_view = self.dark_mask_view
+        self.dark_masking_view = self.dark_mask_view
 
         self.clustering_file_view = ClusteringFileSelectionView(
             on_back=self.show_home,
@@ -145,7 +147,7 @@ class RixsApp(QMainWindow):
         self._sidebar_toggle = QPushButton("🤖 Co-Pilot")
         self._sidebar_toggle.setFixedHeight(28)
         self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
-        set_tool_btn(self._sidebar_toggle)
+        set_copilot_btn(self._sidebar_toggle)
         self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
         self._stack.currentChanged.connect(self._reparent_toggle_btn)
 
@@ -300,17 +302,32 @@ class RixsApp(QMainWindow):
             self._show_sidebar()
 
     def _show_sidebar(self) -> None:
-        """Show the agent sidebar, restoring cached width."""
+        """Show the agent sidebar, restoring cached width without expanding main window."""
         if self._sidebar is None:
             return
+
+        was_maximized = self.isMaximized()
+        geom = self.geometry()
+
         self._sidebar.show()
-        total_width = self._splitter.width()
-        sidebar_w = min(self._sidebar_cached_width, total_width // 3)
-        self._splitter.setSizes([total_width - sidebar_w, sidebar_w])
+
+        total_width = self.centralWidget().width() if self.centralWidget() else self.width()
+        sidebar_w = min(self._sidebar_cached_width, max(280, total_width // 3))
+        left_w = max(300, total_width - sidebar_w)
+        self._splitter.setSizes([left_w, sidebar_w])
+
+        # Ensure window geometry was not altered by Qt layout recalculation
+        if was_maximized and not self.isMaximized():
+            self.showMaximized()
+        elif not was_maximized and self.geometry() != geom:
+            self.setGeometry(geom)
+
         self._sidebar_visible = True
         self._sidebar_toggle.setText("🤖 ✕")
         self._sidebar_toggle.setToolTip("Close Co-Pilot sidebar")
-        self._sidebar_toggle.setStyleSheet("background-color: #1f6aa5; border: 1.5px solid #38bdf8; color: #ffffff;")
+        self._sidebar_toggle.setStyleSheet(
+            "QPushButton#copilot_btn { background-color: #0369a1; border: 1.5px solid #38bdf8; color: #ffffff; border-radius: 14px; padding: 4px 14px; font-weight: 600; }"
+        )
 
     def _hide_sidebar(self) -> None:
         """Collapse the sidebar, caching its current width."""
@@ -324,7 +341,7 @@ class RixsApp(QMainWindow):
         self._sidebar_toggle.setText("🤖 Co-Pilot")
         self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
         self._sidebar_toggle.setStyleSheet("")
-        set_tool_btn(self._sidebar_toggle)
+        set_copilot_btn(self._sidebar_toggle)
 
     def _get_gui_context(self) -> str:
         """Build a compact GUI context string for the agent.
@@ -387,8 +404,10 @@ class RixsApp(QMainWindow):
             self.home_view.refresh_calibration_status()
 
     def show_dark_calibration(self) -> None:
-        """Display the Detector Dark Frame Calibration studio."""
+        """Display the Dark Image & Pixel Masking Studio view."""
         self._stack.setCurrentIndex(_IDX_DARK_CAL)
+
+    show_dark_masking = show_dark_calibration
 
     def show_clustering_files(self) -> None:
         """Display the Single-Photon Clustering file selection view."""

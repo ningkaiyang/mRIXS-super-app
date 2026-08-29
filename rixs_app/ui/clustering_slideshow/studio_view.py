@@ -157,6 +157,7 @@ class ClusteringStudioView(QWidget):
         self._sig_thresh_low_spin.setRange(1.0, 10000.0)
         self._sig_thresh_low_spin.setValue(45.0)
         self._sig_thresh_low_spin.valueChanged.connect(self._on_stage2_param_changed)
+        self._sig_thresh_low_spin.hide()
 
     def _on_stage2_param_changed(self) -> None:
         self.manager.mark_stage2_stale(True)
@@ -237,8 +238,9 @@ class ClusteringStudioView(QWidget):
         self._save_chunks_btn.clicked.connect(self._handle_save_chunks_clicked)
         layout.addWidget(self._save_chunks_btn)
 
-        # Co-Pilot docking container
+        # Co-Pilot docking container (transparent)
         self._copilot_container = QWidget(navbar)
+        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._copilot_container)

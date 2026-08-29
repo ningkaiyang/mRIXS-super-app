@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store, calibration_store
 from rixs_app.core.cli_utils import glob_tifs
 from rixs_app.core.photon_clustering import ClusterConfig, ReconstructionConfig
 from rixs_app.core.utils import natural_sort
@@ -44,16 +44,24 @@ logger = logging.getLogger(__name__)
 
 
 class SignalDropZone(QFrame):
-    """Interactive drag-and-drop dropzone for signal TIFF folders and files."""
+    """Interactive drag-and-drop and click-to-browse dropzone for signal TIFF folders and files."""
 
     def __init__(
         self,
         on_paths_dropped: Callable[[list[str]], None],
+        on_clicked: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_paths_dropped = on_paths_dropped
+        self._on_clicked = on_clicked
         self.setAcceptDrops(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._on_clicked is not None:
+            self._on_clicked()
+        super().mousePressEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
         if event.mimeData().hasUrls():
@@ -176,8 +184,9 @@ class ClusteringFileSelectionView(QWidget):
 
         layout.addStretch(1)
 
-        # Co-Pilot button docking container
+        # Co-Pilot button docking container (transparent)
         self._copilot_container = QWidget(navbar)
+        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._copilot_container)
@@ -213,8 +222,12 @@ class ClusteringFileSelectionView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        # Dropzone Box
-        self._drop_frame = SignalDropZone(self.handle_dropped_paths, col)
+        # Dropzone Box (Clickable)
+        self._drop_frame = SignalDropZone(
+            on_paths_dropped=self.handle_dropped_paths,
+            on_clicked=self._handle_browse_dir,
+            parent=col,
+        )
         theme.set_squircle_card(self._drop_frame)
         self._drop_frame.setMinimumHeight(120)
 
@@ -228,7 +241,7 @@ class ClusteringFileSelectionView(QWidget):
         drop_icon.setAlignment(Qt.AlignCenter)
         drop_layout.addWidget(drop_icon)
 
-        drop_label = QLabel("Drag & Drop Signal TIFF Folder or Files Here", self._drop_frame)
+        drop_label = QLabel("Click to Browse or Drag & Drop Signal TIFF Folder Here", self._drop_frame)
         drop_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
         drop_label.setAlignment(Qt.AlignCenter)
         drop_layout.addWidget(drop_label)
@@ -486,32 +499,37 @@ class ClusteringFileSelectionView(QWidget):
     # ------------------------------------------------------------------
 
     def refresh_calibration_status(self) -> bool:
-        """Check calibration store and update banner styling and launch readiness.
+        """Check calibration/mask store and update banner styling and launch readiness.
 
         Returns:
-            True if valid dark calibration is active; False otherwise.
+            True if valid dark calibration/mask is active; False otherwise.
         """
         is_ok = calibration_store.has_calibration(cal_dir=self.cal_dir)
+        if not is_ok:
+            is_ok = dark_mask_store.has_dark_mask(mask_dir=self.cal_dir)
         self._has_valid_cal = is_ok
         if is_ok:
-            summary = calibration_store.get_calibration_summary(cal_dir=self.cal_dir) or "Calibration Active"
+            summary = calibration_store.get_calibration_summary(cal_dir=self.cal_dir)
+            if not summary:
+                summary = dark_mask_store.get_mask_summary(mask_dir=self.cal_dir)
+            summary = summary or "Dark Mask Active"
             theme.set_cal_status_ok(self._cal_banner)
             self._cal_status_icon.setText("✓")
             self._cal_status_icon.setStyleSheet("font-size: 18px; font-weight: bold; color: #34d399;")
             self._cal_status_text.setText(
-                f"<b>Dark Calibration Verified:</b> {summary}. Ready for single-photon clustering."
+                f"<b>Dark Calibration Verified (Dark Mask Active):</b> {summary}. Ready for single-photon clustering."
             )
             self._cal_status_text.setStyleSheet("color: #34d399;")
-            self._cal_action_btn.setText("⚙ Recalibrate...")
+            self._cal_action_btn.setText("⚙ Recalibrate / Remask...")
         else:
             theme.set_cal_status_missing(self._cal_banner)
             self._cal_status_icon.setText("⚠️")
             self._cal_status_icon.setStyleSheet("font-size: 18px; font-weight: bold; color: #f87171;")
             self._cal_status_text.setText(
-                "<b>No Dark Calibration Found:</b> Detector dark baseline and bad-pixel mask are required."
+                "<b>No Dark Calibration Found (No Dark Mask):</b> Detector dark baseline and bad-pixel mask are required."
             )
             self._cal_status_text.setStyleSheet("color: #f87171;")
-            self._cal_action_btn.setText("🔧 Calibrate Now")
+            self._cal_action_btn.setText("🔧 Calibrate / Mask Now")
 
         self._update_launch_state()
         return is_ok

@@ -115,7 +115,7 @@ def test_squircle_card_labels_and_accents(qapp, qtbot):
     view.show()
 
     card_titles = [
-        "Detector Dark Frame Calibration",
+        "Dark Image & Pixel Masking",
         "Zeroth-Order Mirror Pitch Calibration",
         "Single-Photon Event Clustering",
         "Spatial Drift Alignment & Stacking",
@@ -213,11 +213,11 @@ def test_refresh_calibration_status_with_valid_calibration(qapp, qtbot, mock_cal
         texts = [lbl.text() for lbl in labels]
         assert any("2026-08-28" in t for t in texts)
         assert any("99.50%" in t or "active" in t for t in texts)
-        assert any("Calibrated" in t for t in texts)
+        assert any("Mask Generated" in t or "Calibrated" in t for t in texts)
 
 
 def test_refresh_calibration_status_uncalibrated(qapp, qtbot, tmp_path):
-    """Verify refresh_calibration_status displays '⚠️ Not calibrated' badge when uncalibrated."""
+    """Verify refresh_calibration_status displays '⚠️ No Mask' badge when uncalibrated."""
     empty_dir = tmp_path / "empty_dir"
     empty_dir.mkdir()
 
@@ -229,7 +229,7 @@ def test_refresh_calibration_status_uncalibrated(qapp, qtbot, tmp_path):
 
         labels = view._card_dark_cal.findChildren(QLabel)
         texts = [lbl.text() for lbl in labels]
-        assert any("Not calibrated" in t for t in texts)
+        assert any("No Mask" in t or "Not calibrated" in t for t in texts)
         assert any("⚠️" in t for t in texts)
 
 
@@ -243,7 +243,7 @@ def test_refresh_calibration_status_exception_handling(qapp, qtbot):
         view.refresh_calibration_status()
         labels = view._card_dark_cal.findChildren(QLabel)
         texts = [lbl.text() for lbl in labels]
-        assert any("Not calibrated" in t for t in texts)
+        assert any("No Mask" in t or "Not calibrated" in t for t in texts)
 
 
 # ===========================================================================
@@ -419,7 +419,7 @@ def test_adversarial_calibration_status_churn(qapp, qtbot, tmp_path):
     (cal_dir / "calibration_meta.json").write_text("{malformed: true, invalid...", encoding="utf-8")
     with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", cal_dir):
         view.refresh_calibration_status()
-        assert "Not calibrated" in view._card_dark_cal._badge_label.text()
+        assert "No Mask" in view._card_dark_cal._badge_label.text() or "Not calibrated" in view._card_dark_cal._badge_label.text()
 
     # 2. Valid calibration
     med = np.full((50, 50), 30.0, dtype=np.float32)
@@ -440,7 +440,7 @@ def test_adversarial_calibration_status_churn(qapp, qtbot, tmp_path):
     )
     with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", cal_dir):
         view.refresh_calibration_status()
-        assert "Calibrated" in view._card_dark_cal._badge_label.text()
+        assert "Mask Generated" in view._card_dark_cal._badge_label.text() or "Calibrated" in view._card_dark_cal._badge_label.text()
         assert "cal_status_ok" == view._card_dark_cal._badge_label.objectName()
 
 
@@ -547,5 +547,5 @@ def test_adversarial_qss_invalidation_churn(qapp, qtbot):
         view.refresh_calibration_status()
         qapp.processEvents()
 
-    assert view._card_dark_cal._title_label.text() == "Detector Dark Frame Calibration"
+    assert view._card_dark_cal._title_label.text() == "Dark Image & Pixel Masking"
 

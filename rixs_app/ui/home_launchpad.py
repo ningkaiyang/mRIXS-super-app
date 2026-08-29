@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store, calibration_store
 
 
 class SquircleCard(QFrame):
@@ -119,8 +119,7 @@ class SquircleCard(QFrame):
         self._badge_label.style().unpolish(self._badge_label)
         self._badge_label.style().polish(self._badge_label)
 
-    def mousePressEvent(self, event: QMouseEvent | None = None) -> None:
-        """Handle card click event and invoke registered callback."""
+    def mousePressEvent(self, event: QMouseEvent | None = None) -> None:  # noqa: N802
         if self._callback is not None:
             self._callback()
         if event is not None:
@@ -131,23 +130,30 @@ class SquircleCard(QFrame):
 
 
 class HomeLaunchpadView(QWidget):
-    """Home Launchpad dashboard presenting the 4 core sub-applications in a 2x2 squircle grid."""
+    """Home Launchpad Hub 2x2 grid dashboard.
+
+    Args:
+        parent: Optional parent QWidget.
+        on_dark_calibration: Callback for Card 1 (Dark Image & Pixel Masking).
+        on_zeroth_order: Callback for Card 2 (Zeroth-Order Calibration).
+        on_clustering: Callback for Card 3 (Single-Photon Event Clustering).
+        on_alignment: Callback for Card 4 (Spatial Drift Alignment).
+    """
 
     def __init__(
         self,
         parent: QWidget | None = None,
         on_dark_calibration: Callable[[], None] | None = None,
+        on_zeroth_order: Callable[[], None] | None = None,
         on_clustering: Callable[[], None] | None = None,
         on_alignment: Callable[[], None] | None = None,
-        on_zeroth_order: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("home_launchpad_view")
-
         self.on_dark_calibration = on_dark_calibration
+        self.on_zeroth_order = on_zeroth_order
         self.on_clustering = on_clustering
         self.on_alignment = on_alignment
-        self.on_zeroth_order = on_zeroth_order
 
         self._copilot_btn: QPushButton | None = None
 
@@ -156,13 +162,12 @@ class HomeLaunchpadView(QWidget):
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(32, 24, 32, 24)
-        main_layout.setSpacing(24)
+        main_layout.setContentsMargins(28, 24, 28, 24)
+        main_layout.setSpacing(20)
 
-        # ── Header row ──
+        # ── Header Row ──
         self._header_layout = QHBoxLayout()
         self._header_layout.setContentsMargins(0, 0, 0, 0)
-        self._header_layout.setSpacing(16)
 
         title_col = QVBoxLayout()
         title_col.setSpacing(4)
@@ -181,8 +186,9 @@ class HomeLaunchpadView(QWidget):
 
         self._header_layout.addStretch(1)
 
-        # Docking placeholder container for Co-Pilot button
+        # Docking placeholder container for Co-Pilot button (transparent)
         self._copilot_container = QWidget(self)
+        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         self._header_layout.addWidget(self._copilot_container)
@@ -195,13 +201,13 @@ class HomeLaunchpadView(QWidget):
         self._grid_layout.setContentsMargins(0, 8, 0, 8)
         self._grid_layout.setSpacing(20)
 
-        # 1. Detector Dark Frame Calibration (Amber #fbbf24)
+        # 1. Dark Image & Pixel Masking (Amber #fbbf24)
         self._card_dark_cal = SquircleCard(
-            title="Detector Dark Frame Calibration",
-            subtitle="⚠️ Not calibrated — Run baseline calibration first",
+            title="Dark Image & Pixel Masking",
+            subtitle="⚠️ No Mask Generated — Run dark masking first",
             icon="🛡️",
             accent_color="#fbbf24",
-            badge_text="⚠️ Not calibrated",
+            badge_text="⚠️ No Mask",
             badge_ok=False,
             callback=self._handle_dark_calibration,
             parent=self,
@@ -269,21 +275,26 @@ class HomeLaunchpadView(QWidget):
             self.on_alignment()
 
     def refresh_calibration_status(self) -> None:
-        """Query calibration_store and dynamically update the Dark Cal card subtitle and badge."""
+        """Query dark_mask_store/calibration_store and dynamically update the Dark Mask card subtitle and badge."""
+        summary = None
         try:
             cal_dir = getattr(calibration_store, "DARK_CAL_DIR", None)
-            summary = calibration_store.get_calibration_summary(cal_dir=cal_dir)
+            mask_dir = getattr(dark_mask_store, "DARK_MASK_DIR", None)
+            if cal_dir is not None:
+                summary = calibration_store.get_calibration_summary(cal_dir=cal_dir)
+            elif mask_dir is not None:
+                summary = dark_mask_store.get_mask_summary(mask_dir=mask_dir)
         except Exception:
             summary = None
 
         if summary:
             self._card_dark_cal.set_subtitle(summary)
-            self._card_dark_cal.set_badge("✓ Calibrated", is_ok=True)
+            self._card_dark_cal.set_badge("✓ Mask Generated", is_ok=True)
         else:
             self._card_dark_cal.set_subtitle(
-                "⚠️ Not calibrated — Run baseline calibration first"
+                "⚠️ No Mask Generated — Run dark masking first"
             )
-            self._card_dark_cal.set_badge("⚠️ Not calibrated", is_ok=False)
+            self._card_dark_cal.set_badge("⚠️ No Mask", is_ok=False)
 
     def set_copilot_button(self, btn: QPushButton) -> None:
         """Dock the Co-Pilot toggle button into the header row."""

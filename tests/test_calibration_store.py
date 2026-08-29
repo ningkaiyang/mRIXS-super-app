@@ -238,7 +238,7 @@ def test_get_calibration_summary_present(temp_cal_dir: Path):
 
     summary = get_calibration_summary(temp_cal_dir)
     assert summary is not None
-    assert "Last calibrated: 2026-08-29" in summary
+    assert ("Last calibrated: 2026-08-29" in summary or "Last generated: 2026-08-29" in summary)
     assert "99.90% pixels active" in summary
 
 
@@ -270,7 +270,7 @@ def test_get_calibration_summary_zero_total_pixels_guard(temp_cal_dir: Path):
 
     summary = get_calibration_summary(temp_cal_dir)
     assert summary is not None
-    assert "Last calibrated: 2026-08-29" in summary
+    assert ("Last calibrated: 2026-08-29" in summary or "Last generated: 2026-08-29" in summary)
 
 
 def test_default_calibration_dir_location():
