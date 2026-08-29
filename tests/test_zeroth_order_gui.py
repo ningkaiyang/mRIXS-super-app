@@ -34,7 +34,7 @@ def qapp():
     """Module-scoped QApplication."""
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication(["-platform", "offscreen"])
     yield app
 
 

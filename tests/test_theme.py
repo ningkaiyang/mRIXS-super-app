@@ -59,7 +59,7 @@ def qapp():
     """Ensure QApplication instance exists for GUI tests."""
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication(["-platform", "offscreen"])
     return app
 
 

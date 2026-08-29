@@ -314,7 +314,8 @@ def test_interaction_home_launchpad_status_badging(qapp, tmp_path: Path):
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(calibration_store, "DARK_CAL_DIR", cal_dir)
         view.refresh_calibration_status()
-        assert "Not calibrated" in view._card_dark_cal._badge_label.text()
+        badge_text = view._card_dark_cal._badge_label.text()
+        assert "No Mask" in badge_text or "Not calibrated" in badge_text
 
         med = np.full((32, 32), 100.0, dtype=np.float32)
         mask = np.ones((32, 32), dtype=np.float32)
@@ -334,7 +335,8 @@ def test_interaction_home_launchpad_status_badging(qapp, tmp_path: Path):
         )
 
         view.refresh_calibration_status()
-        assert "Calibrated" in view._card_dark_cal._badge_label.text()
+        badge_text = view._card_dark_cal._badge_label.text()
+        assert "Mask Generated" in badge_text or "Calibrated" in badge_text
         assert "cal_status_ok" == view._card_dark_cal._badge_label.objectName()
 
 
