@@ -56,7 +56,7 @@ def mock_diagnostics():
 
 
 def test_dark_mask_view_dual_axis_and_masked_spans(qapp, qtbot, mock_diagnostics):
-    """Verify histograms have primary log axis, twinx linear axis, and red axvspan masked regions."""
+    """Verify histograms have primary log axis, twinx linear axis, right-aligned secondary labels, and red masked regions."""
     view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
@@ -69,13 +69,26 @@ def test_dark_mask_view_dual_axis_and_masked_spans(qapp, qtbot, mock_diagnostics
     assert view.ax_res is not None
     assert view.ax_res_linear is not None
 
+    # Verify right y-axis label positions and text
+    assert view.ax_std_linear.yaxis.get_label_position() == "right"
+    assert view.ax_std_linear.get_ylabel() == "Linear Count"
+    assert view.ax_res_linear.yaxis.get_label_position() == "right"
+    assert view.ax_res_linear.get_ylabel() == "Linear Count"
+
+    # Verify legend labels are ordered [Log Count, Linear Count, Cut: ...] and do NOT contain Masked Pixels
+    std_legend_texts = [t.get_text() for t in view.ax_std.get_legend().get_texts()]
+    assert std_legend_texts == ["Log Count", "Linear Count", f"Cut: {view._stddev_thresh:.1f}"]
+
+    res_legend_texts = [t.get_text() for t in view.ax_res.get_legend().get_texts()]
+    assert res_legend_texts == ["Log Count", "Linear Count", f"Cut: {view._absdev_thresh:.1f}"]
+
     # Verify cutline and span elements exist
     assert view._std_cutline is not None
     assert view._std_span is not None
     assert view._res_cutline is not None
     assert view._res_span is not None
 
-    # Adjust sliders and verify span update
+    # Adjust sliders and verify span and legend updates
     view._on_stddev_slider_changed(35.0)
     view._on_absdev_slider_changed(50.0)
 
@@ -84,11 +97,17 @@ def test_dark_mask_view_dual_axis_and_masked_spans(qapp, qtbot, mock_diagnostics
     assert "35.0 ADU" in view.stddev_val_label.text()
     assert "50.0 ADU" in view.absdev_val_label.text()
 
+    # Verify legends updated with new cut thresholds
+    std_legend_texts = [t.get_text() for t in view.ax_std.get_legend().get_texts()]
+    assert std_legend_texts == ["Log Count", "Linear Count", "Cut: 35.0"]
+    res_legend_texts = [t.get_text() for t in view.ax_res.get_legend().get_texts()]
+    assert res_legend_texts == ["Log Count", "Linear Count", "Cut: 50.0"]
+
     view.cleanup()
 
 
 def test_dark_mask_view_incremental_kpi_math(qapp, qtbot, mock_diagnostics):
-    """Verify KPI badges display both independent and marginal pixel suppression."""
+    """Verify KPI badges display both independent and extra pixel suppression without using 'marginal'."""
     view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
@@ -97,7 +116,7 @@ def test_dark_mask_view_incremental_kpi_math(qapp, qtbot, mock_diagnostics):
     total_px = 64 * 64  # 4096
 
     # When stddev_thresh=40.0, 100 pixels with stddev=80 are cut (3996 retained)
-    # When absdev_thresh=60.0, 50 pixels with residual=90 are cut (25 already cut by stddev, 25 marginal)
+    # When absdev_thresh=60.0, 50 pixels with residual=90 are cut (25 already cut by stddev, 25 extra masked)
     view._on_stddev_slider_changed(40.0)
     view._on_absdev_slider_changed(60.0)
 
@@ -106,9 +125,17 @@ def test_dark_mask_view_incremental_kpi_math(qapp, qtbot, mock_diagnostics):
     final_text = view.final_mask_kpi_label.text()
 
     assert "3,996 px" in tier1_text
-    assert "97.56% surviving" in tier1_text
+    assert "97.56%" in tier1_text
     assert "25 px" in tier2_text
+    assert "removal" in tier2_text
+    assert "marginal" not in tier2_text.lower()
     assert "3,971 px" in final_text  # 4096 - 100 - 25 = 3971
+
+    # Zero removal case
+    view._on_absdev_slider_changed(150.0)
+    tier2_zero_text = view.tier2_kpi_label.text()
+    assert "+0 removal" in tier2_zero_text
+    assert "marginal" not in tier2_zero_text.lower()
 
     view.cleanup()
 
@@ -154,3 +181,34 @@ def test_dark_mask_view_persistence(qapp, qtbot, mock_diagnostics, tmp_path):
         assert "Saved" in view.save_status_label.text()
 
         view.cleanup()
+
+
+def test_dark_mask_view_clear_and_slider_lifecycle(qapp, qtbot, mock_diagnostics):
+    """Verify clearing diagnostics resets cutlines/spans and prevents orphan legends on slider moves."""
+    view = DarkMaskingView()
+    qtbot.addWidget(view)
+    view.show()
+
+    # Load diagnostics and verify cutlines exist
+    view._on_diagnostics_ready(mock_diagnostics)
+    assert view._std_cutline is not None
+    assert view._res_cutline is not None
+
+    # Clear files/diagnostics
+    view._clear_files()
+    assert view._diagnostics is None
+    assert view._std_cutline is None
+    assert view._res_cutline is None
+    assert view._std_span is None
+    assert view._res_span is None
+    assert view._std_log_patch is None
+    assert view._res_log_patch is None
+
+    # Move sliders on cleared view — should not raise or attach orphan legends
+    view._on_stddev_slider_changed(30.0)
+    view._on_absdev_slider_changed(45.0)
+
+    assert view.ax_std.get_legend() is None
+    assert view.ax_res.get_legend() is None
+
+    view.cleanup()

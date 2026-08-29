@@ -7,7 +7,7 @@ Provides an interactive workstation for:
 3. Dual-axis log/linear Matplotlib diagnostic histograms with interactive vertical cutlines
    and dynamic transparent red shaded regions highlighting masked pixels.
 4. Real-time StdDev (σ) and Excursion Residual (Δ) threshold sliders with instant (<10ms)
-   incremental KPI badges showing exact marginal pixel suppression.
+   incremental KPI badges showing exact incremental pixel removal.
 5. 1-Click dark mask persistence to appdata/dark_masking/ via dark_mask_store.
 6. Navigation navbar with ❮ Back to Home button and Co-Pilot docking.
 """
@@ -124,11 +124,15 @@ class DarkMaskingView(QWidget):
         self._current_worker: DarkDiagnosticsWorker | None = None
         self._copilot_btn: QPushButton | None = None
 
-        # Hist cutline & span objects
+        # Hist cutline, span, and patch objects
         self._std_cutline = None
         self._res_cutline = None
         self._std_span = None
         self._res_span = None
+        self._std_log_patch = None
+        self._std_lin_patch = None
+        self._res_log_patch = None
+        self._res_lin_patch = None
         self._std_max = 100.0
         self._res_max = 150.0
 
@@ -190,8 +194,9 @@ class DarkMaskingView(QWidget):
 
         splitter.addWidget(left_widget)
         splitter.addWidget(right_widget)
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 7)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 8)
+        splitter.setSizes([280, 820])
 
         main_layout.addWidget(splitter, 1)
 
@@ -412,32 +417,34 @@ class DarkMaskingView(QWidget):
         row2.addWidget(self.absdev_val_label)
         sliders_layout.addLayout(row2)
 
-        # KPI Badges Row (Incremental Tiering Contributions)
-        kpi_row = QHBoxLayout()
-        kpi_row.setSpacing(10)
+        # KPI Badges: 2-Row Split (Tier 1 & Tier 2 top, Final Mask bottom)
+        tier_row = QHBoxLayout()
+        tier_row.setSpacing(8)
 
         self.tier1_kpi_label = QLabel("Tier 1 (σ < 40.0): - % surviving", sliders_box)
+        self.tier1_kpi_label.setAlignment(Qt.AlignCenter)
         self.tier1_kpi_label.setStyleSheet(
             "background-color: rgba(56, 189, 248, 0.15); border: 1px solid #38bdf8; "
-            "color: #38bdf8; border-radius: 6px; padding: 4px 8px; font-weight: bold; font-size: 11px;"
+            "color: #38bdf8; border-radius: 6px; padding: 5px 8px; font-weight: bold; font-size: 11px;"
         )
-        kpi_row.addWidget(self.tier1_kpi_label, 1)
+        tier_row.addWidget(self.tier1_kpi_label, 1)
 
         self.tier2_kpi_label = QLabel("Tier 2 (Δ < 60.0): - % surviving", sliders_box)
+        self.tier2_kpi_label.setAlignment(Qt.AlignCenter)
         self.tier2_kpi_label.setStyleSheet(
             "background-color: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; "
-            "color: #f59e0b; border-radius: 6px; padding: 4px 8px; font-weight: bold; font-size: 11px;"
+            "color: #f59e0b; border-radius: 6px; padding: 5px 8px; font-weight: bold; font-size: 11px;"
         )
-        kpi_row.addWidget(self.tier2_kpi_label, 1)
+        tier_row.addWidget(self.tier2_kpi_label, 1)
+        sliders_layout.addLayout(tier_row)
 
         self.final_mask_kpi_label = QLabel("Final Mask: - % active", sliders_box)
+        self.final_mask_kpi_label.setAlignment(Qt.AlignCenter)
         self.final_mask_kpi_label.setStyleSheet(
             "background-color: rgba(5, 150, 105, 0.15); border: 1px solid #059669; "
-            "color: #34d399; border-radius: 6px; padding: 4px 8px; font-weight: bold; font-size: 11px;"
+            "color: #34d399; border-radius: 6px; padding: 5px 8px; font-weight: bold; font-size: 11px;"
         )
-        kpi_row.addWidget(self.final_mask_kpi_label, 1)
-
-        sliders_layout.addLayout(kpi_row)
+        sliders_layout.addWidget(self.final_mask_kpi_label)
         layout.addWidget(sliders_box)
 
         # Bottom Action Bar: Save Status & Save Button
@@ -466,8 +473,14 @@ class DarkMaskingView(QWidget):
         self.ax_res = self.figure.add_subplot(122)
         self.ax_std_linear = None
         self.ax_res_linear = None
+        self._std_cutline = None
+        self._res_cutline = None
         self._std_span = None
         self._res_span = None
+        self._std_log_patch = None
+        self._std_lin_patch = None
+        self._res_log_patch = None
+        self._res_lin_patch = None
 
         self.ax_std.set_facecolor("#14172b")
         self.ax_std.set_title("Pixel Noise StdDev (σ)", color="#e8eaf6", fontsize=11, fontweight="bold", pad=8)
@@ -539,6 +552,10 @@ class DarkMaskingView(QWidget):
         self.save_btn.setEnabled(False)
         self.save_status_label.setText("")
         self._diagnostics = None
+        self._std_log_patch = None
+        self._std_lin_patch = None
+        self._res_log_patch = None
+        self._res_lin_patch = None
         self._init_empty_axes()
         self.canvas.draw_idle()
         self.tier1_kpi_label.setText("Tier 1 (σ < 40.0): - % surviving")
@@ -636,8 +653,56 @@ class DarkMaskingView(QWidget):
     # Histogram Rendering & Cutlines
     # ------------------------------------------------------------------
 
+    def _update_std_legend(self) -> None:
+        """Update StdDev histogram legend with strictly ordered items: Log Count, Linear Count, Cut."""
+        if self.ax_std is None or self._std_cutline is None:
+            return
+        handles = []
+        labels = []
+        if self._std_log_patch is not None:
+            handles.append(self._std_log_patch)
+            labels.append("Log Count")
+        if self._std_lin_patch is not None:
+            handles.append(self._std_lin_patch)
+            labels.append("Linear Count")
+        handles.append(self._std_cutline)
+        labels.append(f"Cut: {self._stddev_thresh:.1f}")
+        self.ax_std.legend(
+            handles,
+            labels,
+            facecolor="#16213e",
+            edgecolor="#2d3561",
+            labelcolor="#e8eaf6",
+            fontsize=8,
+            loc="upper right",
+        )
+
+    def _update_res_legend(self) -> None:
+        """Update Residual histogram legend with strictly ordered items: Log Count, Linear Count, Cut."""
+        if self.ax_res is None or self._res_cutline is None:
+            return
+        handles = []
+        labels = []
+        if self._res_log_patch is not None:
+            handles.append(self._res_log_patch)
+            labels.append("Log Count")
+        if self._res_lin_patch is not None:
+            handles.append(self._res_lin_patch)
+            labels.append("Linear Count")
+        handles.append(self._res_cutline)
+        labels.append(f"Cut: {self._absdev_thresh:.1f}")
+        self.ax_res.legend(
+            handles,
+            labels,
+            facecolor="#16213e",
+            edgecolor="#2d3561",
+            labelcolor="#e8eaf6",
+            fontsize=8,
+            loc="upper right",
+        )
+
     def _render_histograms(self) -> None:
-        """Draw dual-axis log-scale and transparent linear histograms with dynamic masked spans."""
+        """Draw dual-axis log-scale and prominent linear histograms with dynamic masked spans."""
         if self._diagnostics is None:
             return
 
@@ -648,6 +713,15 @@ class DarkMaskingView(QWidget):
         res_finite = res_data[np.isfinite(res_data)]
 
         self.figure.clf()
+        self._std_cutline = None
+        self._res_cutline = None
+        self._std_span = None
+        self._res_span = None
+        self._std_log_patch = None
+        self._std_lin_patch = None
+        self._res_log_patch = None
+        self._res_lin_patch = None
+
         self.ax_std = self.figure.add_subplot(121)
         self.ax_res = self.figure.add_subplot(122)
         self.ax_std_linear = self.ax_std.twinx()
@@ -658,40 +732,57 @@ class DarkMaskingView(QWidget):
         self.ax_std.set_title("Pixel Noise StdDev (σ)", color="#e8eaf6", fontsize=11, fontweight="bold", pad=8)
         self.ax_std.set_xlabel("Standard Deviation σ (ADU)", color="#9fa8da", fontsize=10)
         self.ax_std.set_ylabel("Log Count", color="#38bdf8", fontsize=10)
-        self.ax_std_linear.set_ylabel("Linear Count", color="#9fa8da", fontsize=9, alpha=0.7)
         self.ax_std.tick_params(colors="#38bdf8", labelsize=9)
-        self.ax_std_linear.tick_params(colors="#9fa8da", labelsize=8)
         for spine in self.ax_std.spines.values():
             spine.set_color("#2d3561")
+        self.ax_std.grid(True, linestyle=":", color="#2d3561", alpha=0.6)
+
+        self.ax_std_linear.set_ylabel("Linear Count", color="#818cf8", fontsize=9)
+        self.ax_std_linear.tick_params(colors="#818cf8", labelsize=8)
+        self.ax_std_linear.yaxis.tick_right()
+        self.ax_std_linear.yaxis.set_label_position("right")
+        self.ax_std_linear.yaxis.get_offset_text().set_color("#818cf8")
+        self.ax_std_linear.yaxis.get_offset_text().set_fontsize(8)
         for spine in self.ax_std_linear.spines.values():
             spine.set_color("#2d3561")
-        self.ax_std.grid(True, linestyle=":", color="#2d3561", alpha=0.6)
 
         std_max = 100.0
         if len(std_finite) > 0:
             std_max = max(100.0, float(np.percentile(std_finite, 99.9)))
             # Primary axis: Log scale
-            self.ax_std.hist(
+            _, _, patches_std_log = self.ax_std.hist(
                 std_finite,
                 bins=60,
                 range=(0, std_max),
-                color="#38bdf8",
-                edgecolor="#0284c7",
-                alpha=0.75,
+                color="#0284c7",
+                edgecolor="#1e293b",
+                alpha=0.65,
                 log=True,
                 label="Log Count",
             )
-            # Secondary axis: Linear scale overlay
+            self._std_log_patch = patches_std_log[0] if len(patches_std_log) > 0 else None
+
+            # Secondary axis: Linear scale (Stepfilled + Step outline for high legibility)
             self.ax_std_linear.hist(
                 std_finite,
                 bins=60,
                 range=(0, std_max),
-                color="#38bdf8",
-                edgecolor="none",
+                histtype="stepfilled",
+                color="#818cf8",
                 alpha=0.25,
+                log=False,
+            )
+            _, _, patches_std_lin = self.ax_std_linear.hist(
+                std_finite,
+                bins=60,
+                range=(0, std_max),
+                histtype="step",
+                color="#818cf8",
+                linewidth=2.0,
                 log=False,
                 label="Linear Count",
             )
+            self._std_lin_patch = patches_std_lin[0] if len(patches_std_lin) > 0 else None
             self.stddev_slider.setMaximum(max(200, int(std_max * 1.2)))
 
         self._std_max = std_max
@@ -709,51 +800,65 @@ class DarkMaskingView(QWidget):
             std_max,
             color="#ef4444",
             alpha=0.22,
-            label="Masked Pixels",
         )
-        self.ax_std.legend(facecolor="#16213e", edgecolor="#2d3561", labelcolor="#e8eaf6", fontsize=8, loc="upper right")
+        self._update_std_legend()
 
         # --- Subplot 2: Residual ---
-        self.ax_res.clear()
-        self.ax_res_linear.clear()
         self.ax_res.set_facecolor("#14172b")
         self.ax_res.set_title("93rd-Percentile Residual (Δ)", color="#e8eaf6", fontsize=11, fontweight="bold", pad=8)
         self.ax_res.set_xlabel("Excursion Residual Δ (ADU)", color="#9fa8da", fontsize=10)
         self.ax_res.set_ylabel("Log Count", color="#f59e0b", fontsize=10)
-        self.ax_res_linear.set_ylabel("Linear Count", color="#9fa8da", fontsize=9, alpha=0.7)
         self.ax_res.tick_params(colors="#f59e0b", labelsize=9)
-        self.ax_res_linear.tick_params(colors="#9fa8da", labelsize=8)
         for spine in self.ax_res.spines.values():
             spine.set_color("#2d3561")
+        self.ax_res.grid(True, linestyle=":", color="#2d3561", alpha=0.6)
+
+        self.ax_res_linear.set_ylabel("Linear Count", color="#fb923c", fontsize=9)
+        self.ax_res_linear.tick_params(colors="#fb923c", labelsize=8)
+        self.ax_res_linear.yaxis.tick_right()
+        self.ax_res_linear.yaxis.set_label_position("right")
+        self.ax_res_linear.yaxis.get_offset_text().set_color("#fb923c")
+        self.ax_res_linear.yaxis.get_offset_text().set_fontsize(8)
         for spine in self.ax_res_linear.spines.values():
             spine.set_color("#2d3561")
-        self.ax_res.grid(True, linestyle=":", color="#2d3561", alpha=0.6)
 
         res_max = 150.0
         if len(res_finite) > 0:
             res_max = max(150.0, float(np.percentile(res_finite, 99.9)))
             # Primary axis: Log scale
-            self.ax_res.hist(
+            _, _, patches_res_log = self.ax_res.hist(
                 res_finite,
                 bins=60,
                 range=(0, res_max),
-                color="#f59e0b",
-                edgecolor="#d97706",
-                alpha=0.75,
+                color="#d97706",
+                edgecolor="#1e293b",
+                alpha=0.65,
                 log=True,
                 label="Log Count",
             )
-            # Secondary axis: Linear scale overlay
+            self._res_log_patch = patches_res_log[0] if len(patches_res_log) > 0 else None
+
+            # Secondary axis: Linear scale overlay (Stepfilled + Step outline)
             self.ax_res_linear.hist(
                 res_finite,
                 bins=60,
                 range=(0, res_max),
-                color="#f59e0b",
-                edgecolor="none",
+                histtype="stepfilled",
+                color="#fb923c",
                 alpha=0.25,
+                log=False,
+            )
+            _, _, patches_res_lin = self.ax_res_linear.hist(
+                res_finite,
+                bins=60,
+                range=(0, res_max),
+                histtype="step",
+                color="#fb923c",
+                linewidth=2.0,
                 log=False,
                 label="Linear Count",
             )
+            self._res_lin_patch = patches_res_lin[0] if len(patches_res_lin) > 0 else None
             self.absdev_slider.setMaximum(max(300, int(res_max * 1.2)))
 
         self._res_max = res_max
@@ -771,9 +876,8 @@ class DarkMaskingView(QWidget):
             res_max,
             color="#ef4444",
             alpha=0.22,
-            label="Masked Pixels",
         )
-        self.ax_res.legend(facecolor="#16213e", edgecolor="#2d3561", labelcolor="#e8eaf6", fontsize=8, loc="upper right")
+        self._update_res_legend()
 
         self.figure.tight_layout(pad=2.0)
         self.canvas.draw_idle()
@@ -800,7 +904,7 @@ class DarkMaskingView(QWidget):
         if self._std_cutline is not None:
             self._std_cutline.set_xdata([self._stddev_thresh, self._stddev_thresh])
             self._std_cutline.set_label(f"Cut: {self._stddev_thresh:.1f}")
-            if self._std_span is not None:
+            if self._std_span is not None and getattr(self._std_span, "axes", None) is not None:
                 self._std_span.remove()
                 std_max = getattr(self, "_std_max", max(200.0, self._stddev_thresh * 1.5))
                 self._std_span = self.ax_std.axvspan(
@@ -808,9 +912,8 @@ class DarkMaskingView(QWidget):
                     std_max,
                     color="#ef4444",
                     alpha=0.22,
-                    label="Masked Pixels",
                 )
-            self.ax_std.legend(facecolor="#16213e", edgecolor="#2d3561", labelcolor="#e8eaf6", fontsize=8, loc="upper right")
+            self._update_std_legend()
             self.canvas.draw_idle()
 
         self._update_kpis_and_cutlines()
@@ -827,7 +930,7 @@ class DarkMaskingView(QWidget):
         if self._res_cutline is not None:
             self._res_cutline.set_xdata([self._absdev_thresh, self._absdev_thresh])
             self._res_cutline.set_label(f"Cut: {self._absdev_thresh:.1f}")
-            if self._res_span is not None:
+            if self._res_span is not None and getattr(self._res_span, "axes", None) is not None:
                 self._res_span.remove()
                 res_max = getattr(self, "_res_max", max(300.0, self._absdev_thresh * 1.5))
                 self._res_span = self.ax_res.axvspan(
@@ -835,9 +938,8 @@ class DarkMaskingView(QWidget):
                     res_max,
                     color="#ef4444",
                     alpha=0.22,
-                    label="Masked Pixels",
                 )
-            self.ax_res.legend(facecolor="#16213e", edgecolor="#2d3561", labelcolor="#e8eaf6", fontsize=8, loc="upper right")
+            self._update_res_legend()
             self.canvas.draw_idle()
 
         self._update_kpis_and_cutlines()
@@ -875,11 +977,11 @@ class DarkMaskingView(QWidget):
         )
         if removed_by_tail_marginal > 0:
             self.tier2_kpi_label.setText(
-                f"Tier 2 (Δ < {self._absdev_thresh:.1f}): {pct_tail:.2f}% surviving (+{pct_tail_marginal:.2f}% marginal, {removed_by_tail_marginal:,} px)"
+                f"Tier 2 (Δ < {self._absdev_thresh:.1f}): {pct_tail:.2f}% surviving (+{pct_tail_marginal:.2f}% removal, {removed_by_tail_marginal:,} px)"
             )
         else:
             self.tier2_kpi_label.setText(
-                f"Tier 2 (Δ < {self._absdev_thresh:.1f}): {pct_tail:.2f}% surviving (+0 px marginal)"
+                f"Tier 2 (Δ < {self._absdev_thresh:.1f}): {pct_tail:.2f}% surviving (+0 removal)"
             )
         self.final_mask_kpi_label.setText(
             f"Final Mask: {pct_final:.2f}% active ({surv_final:,} px)"
