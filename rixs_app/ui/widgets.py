@@ -1,4 +1,4 @@
-"""Shared custom PySide6 widgets for the mRIXS Super-App.
+"""Shared custom PySide6 widgets for the RIXS Super-App.
 
 Contains the RangeSlider — a dual-handle intensity clamping slider widget
 with hardware-accelerated integer QPainter rendering, live floating callouts,

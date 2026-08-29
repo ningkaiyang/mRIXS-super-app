@@ -1,4 +1,4 @@
-"""Detector Dark Frame Calibration Studio package for mRIXS Super-App."""
+"""Detector Dark Frame Calibration Studio package for RIXS Super-App."""
 
 from __future__ import annotations
 

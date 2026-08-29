@@ -1,4 +1,4 @@
-"""Tool registry and implementations for the mRIXS Co-Pilot agent.
+"""Tool registry and implementations for the RIXS Co-Pilot agent.
 
 Provides a decorator-based tool registration system that auto-generates
 OpenAI-compatible JSON schemas from Python function signatures, and

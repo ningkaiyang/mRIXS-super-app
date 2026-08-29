@@ -170,7 +170,7 @@ class DragDropListWidget(QListWidget):
 
 
 class SortingView(QWidget):
-    """Main sorting/workspace view for the mRIXS Super-App.
+    """Main sorting/workspace view for the RIXS Super-App.
 
     Provides file selection, automatic natural sorting, drag-and-drop reorder,
     file removal, and buttons to launch the alignment slideshow or
@@ -244,7 +244,7 @@ class SortingView(QWidget):
         self._back_btn.clicked.connect(self._handle_back_clicked)
         self._header_row.addWidget(self._back_btn)
 
-        header_label = QLabel("mRIXS Super-App Workspace")
+        header_label = QLabel("RIXS Super-App Workspace")
         header_label.setObjectName("header_title")
         header_label.setAlignment(Qt.AlignCenter)
         self._header_row.addWidget(header_label, stretch=1)
@@ -491,7 +491,7 @@ class SortingView(QWidget):
     def show_help(self) -> None:
         """Open the help/guide dialog."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("mRIXS Super-App — Guide + Credits")
+        dlg.setWindowTitle("RIXS Super-App — Guide + Credits")
         dlg.resize(660, 580)
 
         dlg_layout = QVBoxLayout(dlg)
@@ -527,7 +527,7 @@ class SortingView(QWidget):
              "• Use viridis colormap for best visibility of faint features\n"
              "• Drag files in the list to change frame alignment sequence"),
             ("Credits",
-             "mRIXS Super-App developed at Lawrence Berkeley National Laboratory.\n"
+             "RIXS Super-App developed at Lawrence Berkeley National Laboratory.\n"
              "App Credits:\n"
              "• Nickolas Yang — Computing Student Assistant"),
         ]

@@ -2,7 +2,7 @@
 
 Replaces the CustomTkinter ``RixsApp`` with a ``QMainWindow``.
 Views are managed via a ``QStackedWidget`` for zero-cost hidden frames.
-The LLM Agent Sidebar ("mRIXS Co-Pilot") is integrated as a collapsible
+The LLM Agent Sidebar ("RIXS Co-Pilot") is integrated as a collapsible
 right pane via ``QSplitter``.
 """
 
@@ -55,10 +55,10 @@ _VIEW_NAMES = {
 
 
 class RixsApp(QMainWindow):
-    """Main application window for the mRIXS Super-App.
+    """Main application window for the RIXS Super-App.
 
     Manages navigation between the 8 primary views and hosts the
-    collapsible LLM Agent Sidebar (mRIXS Co-Pilot).
+    collapsible LLM Agent Sidebar (RIXS Co-Pilot).
 
     Args:
         show_window: Whether to show the window after construction. Set
@@ -72,7 +72,7 @@ class RixsApp(QMainWindow):
             show_window: Whether to call show() at the end of __init__.
         """
         super().__init__()
-        self.setWindowTitle("mRIXS Super-App — Advanced X-ray Spectroscopy Suite")
+        self.setWindowTitle("RIXS Super-App — Advanced X-ray Spectroscopy Suite")
         self.resize(1200, 800)
 
         # Apply global dark theme
@@ -146,7 +146,7 @@ class RixsApp(QMainWindow):
         # Co-Pilot toggle button (reparented into each view's navbar on switch)
         self._sidebar_toggle = QPushButton("🤖 Co-Pilot")
         self._sidebar_toggle.setFixedHeight(28)
-        self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
+        self._sidebar_toggle.setToolTip("Toggle RIXS Co-Pilot sidebar")
         set_copilot_btn(self._sidebar_toggle)
         self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
         self._stack.currentChanged.connect(self._reparent_toggle_btn)
@@ -339,7 +339,7 @@ class RixsApp(QMainWindow):
         self._sidebar.hide()
         self._sidebar_visible = False
         self._sidebar_toggle.setText("🤖 Co-Pilot")
-        self._sidebar_toggle.setToolTip("Toggle mRIXS Co-Pilot sidebar")
+        self._sidebar_toggle.setToolTip("Toggle RIXS Co-Pilot sidebar")
         self._sidebar_toggle.setStyleSheet("")
         set_copilot_btn(self._sidebar_toggle)
 

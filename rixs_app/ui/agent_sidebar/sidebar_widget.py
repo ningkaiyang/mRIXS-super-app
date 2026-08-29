@@ -1,4 +1,4 @@
-"""Sidebar widget for the mRIXS Co-Pilot agent."""
+"""Sidebar widget for the RIXS Co-Pilot agent."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -27,7 +27,7 @@ class ChatInput(QTextEdit):
         super().__init__(parent)
         self.setAcceptRichText(False)
         self.setMaximumHeight(60)
-        self.setPlaceholderText("Ask mRIXS Co-Pilot...")
+        self.setPlaceholderText("Ask RIXS Co-Pilot...")
         self.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {PALETTE['bg_widget']};
@@ -104,7 +104,7 @@ class AgentSidebarWidget(QWidget):
         """)
         header_frame.setLayout(header_layout)
 
-        title = QLabel("🤖 mRIXS Co-Pilot")
+        title = QLabel("🤖 RIXS Co-Pilot")
         title.setStyleSheet("font-weight: bold; font-size: 13px;")
         header_layout.addWidget(title)
 
@@ -194,7 +194,7 @@ class AgentSidebarWidget(QWidget):
             self.model_combo.view().setMinimumWidth(max(max_w, 200))
 
     def get_minimal_gui_context(self) -> str:
-        return "GUI Context: User is viewing mRIXS app."
+        return "GUI Context: User is viewing RIXS app."
 
     def _finalize_active_message(self) -> None:
         if self._current_msg_id:

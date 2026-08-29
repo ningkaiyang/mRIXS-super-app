@@ -1,4 +1,4 @@
-"""Home Launchpad Hub view for mRIXS Super-App.
+"""Home Launchpad Hub view for RIXS Super-App.
 
 Provides an iOS-inspired 2x2 squircle grid dashboard directing users to:
 1. Detector Dark Frame Calibration (Amber #fbbf24)
@@ -172,7 +172,7 @@ class HomeLaunchpadView(QWidget):
         title_col = QVBoxLayout()
         title_col.setSpacing(4)
 
-        app_title = QLabel("mRIXS Super-App", self)
+        app_title = QLabel("RIXS Super-App", self)
         app_title.setObjectName("header_title")
 
         app_subtitle = QLabel(

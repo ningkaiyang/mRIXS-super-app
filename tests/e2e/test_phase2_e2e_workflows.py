@@ -1,4 +1,4 @@
-"""End-to-End Workflow Test Suite for Phase 2 (mRIXS Super-App).
+"""End-to-End Workflow Test Suite for Phase 2 (RIXS Super-App).
 
 Simulates complete multi-step beamline workflows and cross-subsystem interactions:
 1. Complete Beamline Dark Calibration & Single-Photon Clustering Run

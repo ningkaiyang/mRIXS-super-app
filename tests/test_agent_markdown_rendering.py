@@ -1,4 +1,4 @@
-"""Tests for offline Markdown and KaTeX rendering in mRIXS Co-Pilot chat interface."""
+"""Tests for offline Markdown and KaTeX rendering in RIXS Co-Pilot chat interface."""
 
 from pathlib import Path
 import subprocess

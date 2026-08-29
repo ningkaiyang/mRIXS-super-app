@@ -1,6 +1,6 @@
-# mRIXS Super-App
+# RIXS Super-App
 
-A comprehensive desktop application and headless CLI tool suite designed for LBNL map-RIXS beamlines (e.g., QERLIN). Originally an alignment GUI, this project is evolving into a unified platform to parse and handle all detector data, featuring offline alignment, zeroth-order line calibration (FWHM, resolving power R, mirror pitch focus curves), and automated batch export diagnostics.
+A comprehensive desktop application and headless CLI tool suite designed for LBNL RIXS beamlines (e.g., QERLIN). Originally an alignment GUI, this project is evolving into a unified platform to parse and handle all detector data, featuring offline alignment, zeroth-order line calibration (FWHM, resolving power R, mirror pitch focus curves), and automated batch export diagnostics.
 
 ## Setup Instructions
 
@@ -45,7 +45,7 @@ To create a simple, double-clickable Desktop shortcut for lab computers:
   python3 create_shortcut.py --terminal
   ```
 
-This automatically generates a Desktop shortcut with the custom mRIXS icon pointing to `run.py` and the project working directory.
+This automatically generates a Desktop shortcut with the custom RIXS icon pointing to `run.py` and the project working directory.
 
 ## Key Features
 

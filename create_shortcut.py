@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-create_shortcut.py — Automated Desktop Shortcut Creator for mRIXS Super-App.
+create_shortcut.py — Automated Desktop Shortcut Creator for RIXS Super-App.
 
 Uses `pyshortcuts` to create a cross-platform Desktop shortcut (Windows .lnk, 
 macOS .app bundle, Linux .desktop) that launches `run.py` directly without 
@@ -15,7 +15,7 @@ NOTE FOR MACOS VS WINDOWS:
 Usage:
     python3 create_shortcut.py --terminal            # Recommended on macOS
     python create_shortcut.py                         # Standard usage on Windows
-    python3 create_shortcut.py --icon rixs_app/assets/icon.png --name "mRIXS Super-App"
+    python3 create_shortcut.py --icon rixs_app/assets/icon.png --name "RIXS Super-App"
 """
 
 import sys
@@ -74,7 +74,7 @@ def fix_mac_app_icon(app_path, icon_png_path):
             import re
             content = re.sub(
                 r"<key>CFBundleIconFile</key>\s*<string>[^<]*</string>",
-                f"<key>CFBundleIconFile</key>\n    <string>{os.path.basename(icns_path if os.path.exists(icns_path) else 'mRIXS_Super-App.icns')}</string>",
+                f"<key>CFBundleIconFile</key>\n    <string>{os.path.basename(icns_path if os.path.exists(icns_path) else 'RIXS_Super-App.icns')}</string>",
                 content
             )
 
@@ -99,10 +99,10 @@ def main():
     default_icon = primary_icon if os.path.exists(primary_icon) else fallback_icon
 
     parser = argparse.ArgumentParser(
-        description="Create Desktop shortcut for mRIXS Super-App using pyshortcuts.",
+        description="Create Desktop shortcut for RIXS Super-App using pyshortcuts.",
         epilog="Note for macOS: Use --terminal flag to avoid macOS Gatekeeper Automator crashes. Windows does not need this flag."
     )
-    parser.add_argument("--name", type=str, default="mRIXS Super-App", help="Shortcut display name")
+    parser.add_argument("--name", type=str, default="RIXS Super-App", help="Shortcut display name")
     parser.add_argument("--script", type=str, default=default_script, help="Path to run.py entry point")
     parser.add_argument("--icon", type=str, default=default_icon if os.path.exists(default_icon) else None, help="Path to custom icon (.png, .ico, .icns)")
     parser.add_argument("--terminal", action="store_true", help="Launch app inside a terminal window (Recommended on macOS to bypass Gatekeeper crashes)")
@@ -146,7 +146,7 @@ def main():
             fix_mac_app_icon(app_path, icon_path)
 
         print("\n✅ Success! Desktop shortcut successfully created!")
-        print("   Lab staff can now double-click the shortcut on their Desktop to launch the mRIXS Super-App.")
+        print("   Lab staff can now double-click the shortcut on their Desktop to launch the RIXS Super-App.")
     
     except Exception as e:
         print(f"\n❌ Error creating shortcut: {e}")

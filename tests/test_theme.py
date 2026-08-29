@@ -281,7 +281,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     # Initial state
     assert rixs._sidebar_visible is False
     assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
-    assert rixs._sidebar_toggle.toolTip() == "Toggle mRIXS Co-Pilot sidebar"
+    assert rixs._sidebar_toggle.toolTip() == "Toggle RIXS Co-Pilot sidebar"
     assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
 
@@ -297,7 +297,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     rixs._hide_sidebar()
     assert rixs._sidebar_visible is False
     assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
-    assert rixs._sidebar_toggle.toolTip() == "Toggle mRIXS Co-Pilot sidebar"
+    assert rixs._sidebar_toggle.toolTip() == "Toggle RIXS Co-Pilot sidebar"
     assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
 

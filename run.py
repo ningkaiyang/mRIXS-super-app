@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point for the mRIXS Super-App (PySide6 build)."""
+"""Entry point for the RIXS Super-App (PySide6 build)."""
 
 import signal
 import sys

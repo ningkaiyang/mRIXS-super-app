@@ -44,7 +44,7 @@ class CBORGSetupWizard(QDialog):
         layout.addWidget(title_label)
         
         inst_label = QLabel(
-            "The mRIXS Co-Pilot uses LBNL's CBORG API for AI-powered assistance.\n"
+            "The RIXS Co-Pilot uses LBNL's CBORG API for AI-powered assistance.\n"
             "You need a CBORG API key to use this feature."
         )
         inst_label.setWordWrap(True)

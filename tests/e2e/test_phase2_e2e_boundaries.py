@@ -1,4 +1,4 @@
-"""End-to-End Boundary, Limits, and Error Recovery Test Suite for Phase 2 (mRIXS Super-App).
+"""End-to-End Boundary, Limits, and Error Recovery Test Suite for Phase 2 (RIXS Super-App).
 
 Covers edge cases, limit values, and adversarial condition handling across:
 1. Calibration Store Edge & Corrupted Cases

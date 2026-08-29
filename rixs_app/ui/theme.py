@@ -1,4 +1,4 @@
-"""Centralized dark theme definitions for the mRIXS Super-App PySide6 GUI.
+"""Centralized dark theme definitions for the RIXS Super-App PySide6 GUI.
 
 All color constants, stylesheet strings, and helper factories live here so that
 every widget can be styled consistently without scattering magic hex values

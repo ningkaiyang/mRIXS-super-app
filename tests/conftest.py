@@ -1,4 +1,4 @@
-"""Global pytest configuration and session fixtures for mRIXS Super-App test suite.
+"""Global pytest configuration and session fixtures for RIXS Super-App test suite.
 
 Configures Qt to run strictly in offscreen/headless mode to prevent UI windows from popping up
 or stealing focus during test execution on macOS / Linux / Windows.

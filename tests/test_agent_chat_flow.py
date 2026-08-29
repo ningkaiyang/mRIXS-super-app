@@ -1,4 +1,4 @@
-"""Unit and integration tests for mRIXS Co-Pilot agent chat flow,
+"""Unit and integration tests for RIXS Co-Pilot agent chat flow,
 message lifecycle, in-place tool card streaming, and approval handling.
 """
 
