@@ -255,3 +255,74 @@ def test_external_drag_drop_event(tmp_path, sorting_widget):
     lw.dropEvent(drop_event)
     assert drop_event.isAccepted()
     assert len(sorting_widget.file_list) == 2
+
+
+def test_find_matching_scan_txt_numeric_scan_id_parent_dir(tmp_path):
+    """find_matching_scan_txt discovers sibling .txt in parent directory using \\d{4,} numeric scan ID."""
+    parent_dir = tmp_path / "beamline_data"
+    parent_dir.mkdir(parents=True, exist_ok=True)
+
+    scan_txt = parent_dir / "004202_Fe_L3_scan.txt"
+    scan_txt.write_text("Scan log metadata...")
+
+    data_dir = parent_dir / "004202_Fe_L3_scan"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    frame1 = data_dir / "frame_001.tif"
+    frame1.write_bytes(b"dummy")
+
+    discovered = find_matching_scan_txt([str(frame1)])
+    assert discovered is not None
+    assert os.path.abspath(discovered) == str(scan_txt.resolve())
+
+
+def test_find_matching_scan_txt_multiple_parent_matches_sorted(tmp_path):
+    """Multiple matching .txt files in parent dir return the first lexicographically sorted file."""
+    parent = tmp_path / "parent_multi"
+    parent.mkdir()
+    txt_b = parent / "004202_scan_b.txt"
+    txt_a = parent / "004202_scan_a.txt"
+    txt_b.write_text("b")
+    txt_a.write_text("a")
+
+    data = parent / "004202_data"
+    data.mkdir()
+    frame = data / "f_01.tif"
+    frame.write_bytes(b"data")
+
+    discovered = find_matching_scan_txt([str(frame)])
+    assert discovered is not None
+    assert os.path.basename(discovered) == "004202_scan_a.txt"
+
+
+def test_find_matching_scan_txt_empty_and_invalid():
+    """Empty list or non-existent paths return None without error."""
+    assert find_matching_scan_txt([]) is None
+    assert find_matching_scan_txt(["/non/existent/path/004202_scan/f.tif"]) is None
+
+
+def test_sorting_view_back_to_home_button(qapp, qtbot):
+    """SortingView provides ❮ Back to Home button that invokes on_back callback."""
+    mock_back = MagicMock()
+    view = SortingView(on_back=mock_back)
+    qtbot.addWidget(view)
+    view.show()
+
+    assert hasattr(view, "_back_btn")
+    assert view._back_btn.text() == "❮ Back to Home"
+    view._back_btn.click()
+    assert mock_back.call_count == 1
+
+
+def test_sorting_view_copilot_docking(qapp, qtbot):
+    """SortingView docks Co-Pilot toggle button into header."""
+    from PySide6.QtWidgets import QPushButton
+
+    view = SortingView()
+    qtbot.addWidget(view)
+    view.show()
+
+    btn = QPushButton("🤖 Co-Pilot")
+    view.set_copilot_button(btn)
+    assert view.isAncestorOf(btn)
+    assert btn.parent() == view
+

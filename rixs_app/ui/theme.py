@@ -606,6 +606,82 @@ QToolTip {{
     padding: 4px 6px;
     border-radius: 4px;
 }}
+
+/* ── Squircle Cards & Launchpad ─────────────────────────── */
+QFrame#squircle_card {{
+    background-color: {PALETTE['bg_panel']};
+    border: 1px solid {PALETTE['border']};
+    border-radius: 12px;
+    min-width: 280px;
+    min-height: 160px;
+}}
+
+QFrame#squircle_card:hover {{
+    background-color: #1c2b52;
+    border: 1px solid {PALETTE['border_focus']};
+}}
+
+QLabel#squircle_card_title {{
+    font-size: 16px;
+    font-weight: bold;
+    color: #ffffff;
+}}
+
+QLabel#squircle_card_subtitle {{
+    font-size: 12px;
+    color: {PALETTE['text_dim']};
+}}
+
+QLabel#squircle_card_icon {{
+    font-size: 26px;
+}}
+
+QLabel#squircle_card_badge {{
+    font-size: 11px;
+    font-weight: bold;
+    border-radius: 4px;
+    padding: 2px 6px;
+}}
+
+/* ── Dark Calibration Status Banners & Badges ────────────── */
+QFrame#cal_status_ok, QLabel#cal_status_ok {{
+    background-color: rgba(5, 150, 105, 0.15);
+    border: 1px solid #059669;
+    color: #34d399;
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-weight: bold;
+}}
+
+QFrame#cal_status_missing, QLabel#cal_status_missing {{
+    background-color: rgba(225, 29, 72, 0.15);
+    border: 1px solid #e11d48;
+    color: #f87171;
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-weight: bold;
+}}
+
+/* ── Stale Warning Banner ────────────────────────────────── */
+QLabel#stale_warning, QFrame#stale_warning {{
+    background-color: rgba(217, 119, 6, 0.15);
+    border: 1px solid #d97706;
+    color: #fbbf24;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-weight: bold;
+}}
+
+/* ── Mode selector combobox ─────────────────────────────── */
+QComboBox#mode_selector {{
+    min-width: 160px;
+    background-color: #262c4a;
+    color: #ffffff;
+    border: 1px solid #3d4566;
+    border-radius: 6px;
+    padding: 4px 28px 4px 10px;
+    font-weight: bold;
+}}
 """
 
 # ---------------------------------------------------------------------------
@@ -706,5 +782,41 @@ def set_cancel_btn(btn) -> None:
     btn.style().polish(btn)
 
 
+def set_squircle_card(frame) -> None:
+    """Mark *frame* as a squircle card."""
+    frame.setObjectName("squircle_card")
+    frame.style().unpolish(frame)
+    frame.style().polish(frame)
+
+
+def set_cal_status_ok(widget) -> None:
+    """Mark *widget* with green verified dark calibration status styling."""
+    widget.setObjectName("cal_status_ok")
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+def set_cal_status_missing(widget) -> None:
+    """Mark *widget* with red uncalibrated status styling."""
+    widget.setObjectName("cal_status_missing")
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+def set_stale_warning(widget) -> None:
+    """Mark *widget* with amber stale warning styling."""
+    widget.setObjectName("stale_warning")
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+def set_mode_selector(combo) -> None:
+    """Mark *combo* as a styled mode selector dropdown."""
+    combo.setObjectName("mode_selector")
+    combo.style().unpolish(combo)
+    combo.style().polish(combo)
+
+
 # Alias used by main.py for the full application stylesheet
 FULL_QSS = DARK_STYLE
+

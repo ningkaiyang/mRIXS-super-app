@@ -12,20 +12,83 @@ Zero UI dependencies. Fully thread-safe and vectorized.
 
 from __future__ import annotations
 
+import ctypes
 import logging
+import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
 import cv2
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tifffile
 
 logger = logging.getLogger(__name__)
+
+_C_LIB = None
+
+
+def _get_c_lib() -> ctypes.CDLL | None:
+    global _C_LIB
+    if _C_LIB is not None:
+        return _C_LIB
+
+    so_path = Path(__file__).parent / "_dark_thresh.so"
+    c_path = Path(__file__).parent / "_dark_thresh.c"
+
+    if not so_path.exists() and c_path.exists():
+        for compiler in ("clang", "gcc"):
+            try:
+                subprocess.run(
+                    [compiler, "-O3", "-shared", "-fPIC", str(c_path), "-o", str(so_path)],
+                    capture_output=True,
+                    check=True,
+                )
+                break
+            except Exception:
+                continue
+
+    if so_path.exists():
+        try:
+            lib = ctypes.CDLL(str(so_path))
+            lib.compute_masks_fast.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_float,
+                ctypes.c_float,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_int),
+            ]
+            if hasattr(lib, "compute_dark_stats_int16_c"):
+                lib.compute_dark_stats_int16_c.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_float,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                ]
+            if hasattr(lib, "compute_dark_stats_float_c"):
+                lib.compute_dark_stats_float_c.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_float,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                ]
+            _C_LIB = lib
+            return _C_LIB
+        except Exception:
+            pass
+    return None
 
 
 # ============================================================================
@@ -61,6 +124,22 @@ class ReconstructionConfig:
 
 
 @dataclass(frozen=True)
+class DarkDiagnostics:
+    """Diagnostic products computed from a raw dark frame stack.
+
+    Attributes:
+        med_dark: 2D float32 median dark image (H, W).
+        per_pixel_stddev: 2D float32 per-pixel standard deviation (H, W).
+        pct93_residual: 2D float32 93rd-percentile absolute residual (H, W).
+        dark_frame_count: Total number of dark frames processed.
+    """
+    med_dark: np.ndarray              # 2D float32 median dark image (H, W)
+    per_pixel_stddev: np.ndarray      # 2D float32 per-pixel standard deviation (H, W)
+    pct93_residual: np.ndarray        # 2D float32 93rd-percentile absolute residual (H, W)
+    dark_frame_count: int             # Total number of dark frames processed
+
+
+@dataclass(frozen=True)
 class Stage1Result:
     """Results from Stage 1 dark frame analysis."""
     med_dark: np.ndarray              # 2D float32 median dark image (H, W)
@@ -84,14 +163,230 @@ class ReconstructionResult:
     rejected_bounds: int
     acceptance_pct: float
 
+    @property
+    def photons_accepted(self) -> int:
+        """Alias for accepted_events."""
+        return self.accepted_events
+
+    @property
+    def photons_rejected(self) -> int:
+        """Total rejected events."""
+        return self.rejected_noise + self.rejected_pileup + self.rejected_shape + self.rejected_bounds
+
 
 # ============================================================================
 # Stage 1: Dark Baseline & Noise Mask Generation
 # ============================================================================
 
+def compute_dark_diagnostics(
+    dark_paths: Sequence[Path | str],
+    tail_pct: float = 0.9333,
+    progress_callback: Callable[[int, int], None] | None = None,
+    max_frames: int = 0,
+) -> DarkDiagnostics:
+    """Compute temporal median dark frame, per-pixel stddev, and 93rd-percentile absolute residuals.
+
+    Args:
+        dark_paths: List of filepaths to raw dark TIFF frames.
+        tail_pct: Percentile ratio for residual evaluation (default 0.9333 for 93.33rd percentile).
+        progress_callback: Optional callback receiving (current_frame, total_frames).
+        max_frames: Max dark frames to process (0 = all).
+
+    Returns:
+        DarkDiagnostics containing med_dark, per_pixel_stddev, pct93_residual, and frame count.
+
+    Raises:
+        ValueError: If dark_paths is empty or frames have mismatched dimensions.
+    """
+    if not dark_paths:
+        raise ValueError("No dark frame paths provided to compute_dark_diagnostics.")
+
+    paths = [Path(p) for p in dark_paths]
+    if max_frames > 0:
+        paths = paths[:max_frames]
+
+    n_dark = len(paths)
+    if n_dark == 0:
+        raise ValueError("No valid dark frame paths found.")
+
+    first_frame = tifffile.imread(paths[0])
+    h, w = first_frame.shape
+    raw_dtype = first_frame.dtype if np.issubdtype(first_frame.dtype, np.number) else np.float32
+
+    # Ingest dark frames in native dtype to minimize memory footprint
+    dark_stack = np.empty((n_dark, h, w), dtype=raw_dtype)
+    for i, path in enumerate(paths):
+        frame = tifffile.imread(path)
+        if frame.shape != (h, w):
+            raise ValueError(
+                f"Dark frame shape mismatch: expected {(h, w)}, got {frame.shape} for {path}"
+            )
+        dark_stack[i] = frame
+        if progress_callback:
+            progress_callback(i + 1, n_dark)
+
+    med_dark = np.empty((h, w), dtype=np.float32)
+    per_pixel_stddev = np.empty((h, w), dtype=np.float32)
+    pct93_residual = np.empty((h, w), dtype=np.float32)
+
+    if n_dark == 1:
+        med_dark[:, :] = dark_stack[0].astype(np.float32)
+        per_pixel_stddev[:, :] = 0.0
+        pct93_residual[:, :] = 0.0
+    else:
+        q_ratio = float(tail_pct if tail_pct <= 1.0 else tail_pct / 100.0)
+        c_lib = _get_c_lib()
+        has_c_int16 = c_lib is not None and hasattr(c_lib, "compute_dark_stats_int16_c") and dark_stack.dtype == np.int16
+        has_c_float = c_lib is not None and hasattr(c_lib, "compute_dark_stats_float_c") and dark_stack.dtype == np.float32
+
+        chunk_size = 128
+        chunk_ranges = [(r, min(r + chunk_size, h)) for r in range(0, h, chunk_size)]
+
+        if has_c_int16 or has_c_float:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _process_c_chunk(cr: tuple[int, int]) -> None:
+                r_start, r_end = cr
+                num_rows = r_end - r_start
+                c_slice = np.ascontiguousarray(dark_stack[:, r_start:r_end, :])
+                c_med = np.empty(num_rows * w, dtype=np.float32)
+                c_std = np.empty(num_rows * w, dtype=np.float32)
+                c_pct = np.empty(num_rows * w, dtype=np.float32)
+                if has_c_int16:
+                    c_lib.compute_dark_stats_int16_c(
+                        c_slice.ctypes.data_as(ctypes.c_void_p),
+                        n_dark,
+                        num_rows * w,
+                        ctypes.c_float(q_ratio),
+                        c_med.ctypes.data_as(ctypes.c_void_p),
+                        c_std.ctypes.data_as(ctypes.c_void_p),
+                        c_pct.ctypes.data_as(ctypes.c_void_p),
+                    )
+                else:
+                    c_lib.compute_dark_stats_float_c(
+                        c_slice.ctypes.data_as(ctypes.c_void_p),
+                        n_dark,
+                        num_rows * w,
+                        ctypes.c_float(q_ratio),
+                        c_med.ctypes.data_as(ctypes.c_void_p),
+                        c_std.ctypes.data_as(ctypes.c_void_p),
+                        c_pct.ctypes.data_as(ctypes.c_void_p),
+                    )
+                med_dark[r_start:r_end, :] = c_med.reshape((num_rows, w))
+                per_pixel_stddev[r_start:r_end, :] = c_std.reshape((num_rows, w))
+                pct93_residual[r_start:r_end, :] = c_pct.reshape((num_rows, w))
+
+            with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 4)) as executor:
+                list(executor.map(_process_c_chunk, chunk_ranges))
+        else:
+            q = q_ratio * 100.0
+            for r_start, r_end in chunk_ranges:
+                c_stack = dark_stack[:, r_start:r_end, :].astype(np.float32)
+                c_med = np.median(c_stack, axis=0).astype(np.float32)
+                med_dark[r_start:r_end, :] = c_med
+                per_pixel_stddev[r_start:r_end, :] = np.std(c_stack, axis=0).astype(np.float32)
+                c_res = np.abs(c_stack - c_med[np.newaxis, :, :])
+                pct93_residual[r_start:r_end, :] = np.percentile(c_res, q=q, axis=0).astype(np.float32)
+
+    return DarkDiagnostics(
+        med_dark=med_dark,
+        per_pixel_stddev=per_pixel_stddev,
+        pct93_residual=pct93_residual,
+        dark_frame_count=n_dark,
+    )
+
+
+def apply_dark_thresholds(
+    diagnostics: DarkDiagnostics,
+    stddev_thresh: float = 40.0,
+    absdev_thresh: float = 60.0,
+    tail_ratio: float = 0.9333,
+) -> Stage1Result:
+    """Apply variance and excursion thresholds to precomputed dark diagnostics in <10ms.
+
+    Args:
+        diagnostics: Precomputed DarkDiagnostics.
+        stddev_thresh: Upper threshold for per-pixel standard deviation (ADU).
+        absdev_thresh: Upper threshold for 93rd-percentile absolute residual (ADU).
+        tail_ratio: Tail threshold ratio (for metadata/config parity).
+
+    Returns:
+        Stage1Result containing final binary mask and diagnostic metrics.
+    """
+    c_lib = _get_c_lib()
+    s_arr = diagnostics.per_pixel_stddev
+    r_arr = diagnostics.pct93_residual
+
+    if (
+        c_lib is not None
+        and s_arr.flags.c_contiguous
+        and r_arr.flags.c_contiguous
+        and s_arr.dtype == np.float32
+        and r_arr.dtype == np.float32
+        and s_arr.shape == r_arr.shape
+    ):
+        h, w = s_arr.shape
+        final_mask = np.empty((h, w), dtype=np.float32)
+        stddev_mask = np.empty((h, w), dtype=np.float32)
+        tail_mask = np.empty((h, w), dtype=np.float32)
+        surviving = ctypes.c_int(0)
+        c_lib.compute_masks_fast(
+            s_arr.ctypes.data,
+            r_arr.ctypes.data,
+            ctypes.c_float(stddev_thresh),
+            ctypes.c_float(absdev_thresh),
+            final_mask.ctypes.data,
+            stddev_mask.ctypes.data,
+            tail_mask.ctypes.data,
+            int(h * w),
+            ctypes.byref(surviving),
+        )
+        total_pixels = int(final_mask.size)
+        surviving_pixels = int(surviving.value)
+        suppression_pct = (1.0 - (surviving_pixels / total_pixels)) * 100.0 if total_pixels > 0 else 0.0
+        return Stage1Result(
+            med_dark=diagnostics.med_dark,
+            final_mask=final_mask,
+            stddev_mask=stddev_mask,
+            tail_mask=tail_mask,
+            total_pixels=total_pixels,
+            surviving_pixels=surviving_pixels,
+            suppression_pct=suppression_pct,
+        )
+
+    # Pure NumPy fallback
+    m_std = (diagnostics.per_pixel_stddev < stddev_thresh) & np.isfinite(diagnostics.per_pixel_stddev)
+    m_tail = (diagnostics.pct93_residual < absdev_thresh) & np.isfinite(diagnostics.pct93_residual)
+    m_final = m_std & m_tail
+
+    stddev_mask = m_std.astype(np.float32)
+    tail_mask = m_tail.astype(np.float32)
+    final_mask = m_final.astype(np.float32)
+
+    total_pixels = int(final_mask.size)
+    surviving_pixels = int(np.count_nonzero(m_final))
+    suppression_pct = (1.0 - (surviving_pixels / total_pixels)) * 100.0 if total_pixels > 0 else 0.0
+
+    return Stage1Result(
+        med_dark=diagnostics.med_dark,
+        final_mask=final_mask,
+        stddev_mask=stddev_mask,
+        tail_mask=tail_mask,
+        total_pixels=total_pixels,
+        surviving_pixels=surviving_pixels,
+        suppression_pct=suppression_pct,
+    )
+
+
 def compute_dark_mask(
     dark_paths: Sequence[Path | str],
-    config: DarkMaskConfig = DarkMaskConfig(),
+    config: DarkMaskConfig | None = None,
+    *,
+    stddev_thresh: float | None = None,
+    absdev_thresh: float | None = None,
+    tail_ratio: float | None = None,
+    tail_thresh_ratio: float | None = None,
+    max_frames: int | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> Stage1Result:
     """Compute temporal median dark frame and 2-tier bad/noisy pixel rejection mask.
@@ -101,68 +396,38 @@ def compute_dark_mask(
 
     Args:
         dark_paths: List of filepaths to raw dark TIFF frames.
-        config: DarkMaskConfig containing threshold values.
+        config: Optional DarkMaskConfig containing threshold values.
+        stddev_thresh: Optional direct override for stddev threshold.
+        absdev_thresh: Optional direct override for absdev threshold.
+        tail_ratio: Optional direct override for tail ratio cutoff.
+        tail_thresh_ratio: Optional alias for tail_ratio.
+        max_frames: Optional max frames override.
         progress_callback: Optional callback receiving (current_frame, total_frames).
 
     Returns:
         Stage1Result containing med_dark, final_mask, and diagnostic metrics.
     """
-    if not dark_paths:
-        raise ValueError("No dark frame paths provided to compute_dark_mask.")
+    cfg = config or DarkMaskConfig()
+    s_thresh = stddev_thresh if stddev_thresh is not None else cfg.stddev_thresh
+    a_thresh = absdev_thresh if absdev_thresh is not None else cfg.absdev_thresh
+    t_ratio = (
+        tail_ratio
+        if tail_ratio is not None
+        else (tail_thresh_ratio if tail_thresh_ratio is not None else cfg.tail_thresh_ratio)
+    )
+    m_frames = max_frames if max_frames is not None else cfg.max_frames
 
-    paths = [Path(p) for p in dark_paths]
-    if config.max_frames > 0:
-        paths = paths[:config.max_frames]
-
-    n_dark = len(paths)
-    if n_dark == 0:
-        raise ValueError("No valid dark frame paths found.")
-
-    # Read first frame to determine dimensions
-    first_frame = tifffile.imread(paths[0]).astype(np.float32)
-    h, w = first_frame.shape
-
-    # For memory efficiency, read frames in chunks or full stack if small
-    dark_stack = np.empty((n_dark, h, w), dtype=np.float32)
-    for i, path in enumerate(paths):
-        dark_stack[i] = tifffile.imread(path).astype(np.float32)
-        if progress_callback:
-            progress_callback(i + 1, n_dark)
-
-    # 1. Temporal Median Dark Baseline
-    med_dark = np.median(dark_stack, axis=0).astype(np.float32)
-
-    # 2. Median-Subtracted Residuals
-    med_sub_dark = dark_stack - med_dark[np.newaxis, :, :]
-
-    # 3. Mask #1: Per-pixel Standard Deviation
-    stddev = np.std(med_sub_dark, axis=0)
-    stddev_mask = (stddev < config.stddev_thresh).astype(np.float32)
-
-    # 4. Mask #2: Tail Count Stability Mask
-    # Mask the residuals by Mask #1
-    masked_res = med_sub_dark * stddev_mask[np.newaxis, :, :]
-    score_stack = (np.abs(masked_res) < config.absdev_thresh).astype(np.float32)
-    sum_scores = np.sum(score_stack, axis=0)
-
-    tail_thresh = config.tail_thresh_ratio * n_dark
-    tail_mask = (sum_scores > tail_thresh).astype(np.float32)
-
-    # 5. Composite Final Binary Mask
-    final_mask = (stddev_mask * tail_mask).astype(np.float32)
-
-    total_pixels = h * w
-    surviving_pixels = int(np.sum(final_mask))
-    suppression_pct = (1.0 - (surviving_pixels / total_pixels)) * 100.0
-
-    return Stage1Result(
-        med_dark=med_dark,
-        final_mask=final_mask,
-        stddev_mask=stddev_mask,
-        tail_mask=tail_mask,
-        total_pixels=total_pixels,
-        surviving_pixels=surviving_pixels,
-        suppression_pct=suppression_pct,
+    diagnostics = compute_dark_diagnostics(
+        dark_paths=dark_paths,
+        tail_pct=t_ratio,
+        progress_callback=progress_callback,
+        max_frames=m_frames,
+    )
+    return apply_dark_thresholds(
+        diagnostics=diagnostics,
+        stddev_thresh=s_thresh,
+        absdev_thresh=a_thresh,
+        tail_ratio=t_ratio,
     )
 
 
@@ -442,7 +707,12 @@ def export_intden_histogram(
     out_path = Path(output_png)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(10, 5), facecolor="#14172b")
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(10, 5), facecolor="#14172b")
+    _canvas = FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
     ax.set_facecolor("#16213e")
 
     int_den_values = df_clusters["IntDen"].to_numpy() if not df_clusters.empty else np.array([])
@@ -475,6 +745,6 @@ def export_intden_histogram(
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=dpi, facecolor=fig.get_facecolor())
-    plt.close(fig)
+    fig.clear()
 
     return out_path

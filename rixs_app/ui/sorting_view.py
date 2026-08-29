@@ -8,6 +8,7 @@ naturally on selection and support native drag-and-drop item reordering.
 from __future__ import annotations
 
 import os
+import re
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -28,15 +29,49 @@ from rixs_app.ui.theme import (
 def find_matching_scan_txt(file_list: list[str]) -> str | None:
     """Automatically discover scan log (.txt) file across dataset directories.
 
+    Extracts numeric scan ID (regex \\d{4,}) from the immediate directory name,
+    and searches the parent directory for matching .txt files.
+    Falls back to searching for .txt files within the dataset directory itself.
+
     Args:
         file_list: List of image file paths.
 
     Returns:
-        Absolute path to the first .txt scan log found, or None.
+        Absolute path to the matching .txt scan log found, or None.
     """
-    seen_dirs = dict.fromkeys(os.path.dirname(f) for f in file_list if f)
+    if not file_list:
+        return None
+
+    seen_dirs = dict.fromkeys(
+        os.path.abspath(os.path.dirname(f) if os.path.isfile(f) or not os.path.isdir(f) else f)
+        for f in file_list
+        if f and isinstance(f, str)
+    )
+
     for directory in seen_dirs:
-        if directory and os.path.isdir(directory):
+        if not directory or not os.path.exists(directory):
+            continue
+
+        # Strategy 1: Check folder name for numeric scan ID (e.g. \d{4,}) and look in parent directory
+        folder_name = os.path.basename(directory)
+        match = re.search(r"(\d{4,})", folder_name)
+        if match:
+            scan_id = match.group(1)
+            parent_dir = os.path.dirname(directory)
+            if parent_dir and os.path.isdir(parent_dir):
+                try:
+                    matched_txts = [
+                        os.path.join(parent_dir, f)
+                        for f in sorted(os.listdir(parent_dir))
+                        if f.lower().endswith(".txt") and scan_id in f
+                    ]
+                    if matched_txts:
+                        return matched_txts[0]
+                except OSError:
+                    pass
+
+        # Strategy 2: Look inside the directory itself
+        if os.path.isdir(directory):
             try:
                 txt_files = [
                     os.path.join(directory, f)
@@ -46,7 +81,8 @@ def find_matching_scan_txt(file_list: list[str]) -> str | None:
                 if txt_files:
                     return txt_files[0]
             except OSError:
-                continue
+                pass
+
     return None
 
 
@@ -152,6 +188,7 @@ class SortingView(QWidget):
         self,
         parent=None,
         *,
+        on_back=None,
         on_start_slideshow=None,
         on_zeroth_order=None,
     ):
@@ -159,10 +196,12 @@ class SortingView(QWidget):
 
         Args:
             parent: Parent QWidget.
+            on_back: Callback for returning to Home Launchpad.
             on_start_slideshow: Callback for launching alignment slideshow.
             on_zeroth_order: Callback for launching zeroth-order calibration.
         """
         super().__init__(parent)
+        self.on_back = on_back
         self.on_start_slideshow = on_start_slideshow
         self.on_zeroth_order = on_zeroth_order
         self.file_list: list[str] = []
@@ -193,9 +232,18 @@ class SortingView(QWidget):
         outer.setContentsMargins(20, 20, 20, 20)
         outer.setSpacing(10)
 
-        # Header row (title centered, Co-Pilot button docks at right)
+        # Header row (Back button on left, title centered, Co-Pilot button docks at right)
         self._header_row = QHBoxLayout()
         self._header_row.setContentsMargins(0, 0, 0, 0)
+        self._header_row.setSpacing(12)
+
+        self._back_btn = QPushButton("❮ Back to Home", self)
+        self._back_button = self._back_btn
+        set_tool_btn(self._back_btn)
+        self._back_btn.setCursor(Qt.PointingHandCursor)
+        self._back_btn.clicked.connect(self._handle_back_clicked)
+        self._header_row.addWidget(self._back_btn)
+
         header_label = QLabel("mRIXS Super-App Workspace")
         header_label.setObjectName("header_title")
         header_label.setAlignment(Qt.AlignCenter)
@@ -502,6 +550,11 @@ class SortingView(QWidget):
 
         dlg.exec()
 
+    def _handle_back_clicked(self) -> None:
+        """Handle ❮ Back to Home button press."""
+        if self.on_back is not None:
+            self.on_back()
+
     # ------------------------------------------------------------------
     # Compatibility shim (tests call this to refresh the displayed list)
     # ------------------------------------------------------------------
@@ -525,3 +578,5 @@ class SortingView(QWidget):
             btn: The Co-Pilot toggle QPushButton to reparent here.
         """
         self._header_row.addWidget(btn)
+        btn.setParent(self)
+        btn.show()

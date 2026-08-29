@@ -13,6 +13,7 @@ import tifffile
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from rixs_app.ui.widgets import SafeFigureCanvasQTAgg
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, QMessageBox,
@@ -141,7 +142,8 @@ class ExportComparisonView(QWidget):
 
         self._figure.tight_layout()
 
-        self._mpl_canvas = FigureCanvasQTAgg(self._figure)
+        canvas_cls = SafeFigureCanvasQTAgg or FigureCanvasQTAgg
+        self._mpl_canvas = canvas_cls(self._figure)
         self._mpl_canvas.setStyleSheet("background-color: #14172b;")
         self._plot_layout.addWidget(self._mpl_canvas)
         self._mpl_canvas.draw()

@@ -12,6 +12,7 @@ import numpy as np
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from rixs_app.ui.widgets import SafeFigureCanvasQTAgg
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
@@ -41,7 +42,8 @@ class ZerothOrderCanvasPanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
 
         self.figure = Figure(figsize=(10, 5), dpi=100, facecolor="#14172b")
-        self.canvas = FigureCanvasQTAgg(self.figure)
+        canvas_cls = SafeFigureCanvasQTAgg or FigureCanvasQTAgg
+        self.canvas = canvas_cls(self.figure)
         self.canvas.setStyleSheet("background-color: #14172b;")
         outer.addWidget(self.canvas)
 

@@ -21,6 +21,10 @@ from PySide6.QtWidgets import (
 from rixs_app.ui.theme import FULL_QSS, PALETTE, set_tool_btn
 
 
+from rixs_app.ui.home_launchpad import HomeLaunchpadView
+from rixs_app.ui.dark_calibration.dark_cal_view import DarkCalibrationView
+from rixs_app.ui.clustering_slideshow.file_selection_view import ClusteringFileSelectionView
+from rixs_app.ui.clustering_slideshow.studio_view import ClusteringStudioView
 from rixs_app.ui.sorting_view import SortingView
 from rixs_app.ui.alignment_slideshow.slideshow_view import SlideshowView
 from rixs_app.ui.alignment_slideshow.comparison_view import ExportComparisonView
@@ -28,13 +32,21 @@ from rixs_app.ui.zeroth_order_slideshow.slideshow_view import ZerothOrderSlidesh
 
 
 # View indices in the QStackedWidget
-_IDX_SORTING = 0
-_IDX_SLIDESHOW = 1
-_IDX_COMPARISON = 2
-_IDX_ZEROTH_ORDER = 3
+_IDX_HOME = 0
+_IDX_DARK_CAL = 1
+_IDX_CLUSTERING_FILES = 2
+_IDX_CLUSTERING_STUDIO = 3
+_IDX_SORTING = 4
+_IDX_SLIDESHOW = 5
+_IDX_COMPARISON = 6
+_IDX_ZEROTH_ORDER = 7
 
 # View name map for GUI context
 _VIEW_NAMES = {
+    _IDX_HOME: "HomeLaunchpadView",
+    _IDX_DARK_CAL: "DarkCalibrationView",
+    _IDX_CLUSTERING_FILES: "ClusteringFileSelectionView",
+    _IDX_CLUSTERING_STUDIO: "ClusteringStudioView",
     _IDX_SORTING: "SortingView",
     _IDX_SLIDESHOW: "SlideshowView",
     _IDX_COMPARISON: "ExportComparisonView",
@@ -45,7 +57,7 @@ _VIEW_NAMES = {
 class RixsApp(QMainWindow):
     """Main application window for the mRIXS Super-App.
 
-    Manages navigation between the four primary views and hosts the
+    Manages navigation between the 8 primary views and hosts the
     collapsible LLM Agent Sidebar (mRIXS Co-Pilot).
 
     Args:
@@ -77,21 +89,53 @@ class RixsApp(QMainWindow):
         self._splitter.addWidget(self._stack)
 
         # Build views
+        self.home_view = HomeLaunchpadView(
+            on_dark_calibration=self.show_dark_calibration,
+            on_clustering=self.show_clustering_files,
+            on_alignment=self.show_sorting,
+            on_zeroth_order=self.show_sorting,
+        )
+        self.home_launchpad_view = self.home_view
+
+        self.dark_cal_view = DarkCalibrationView(
+            on_back=self.show_home,
+        )
+        self.dark_calibration_view = self.dark_cal_view
+
+        self.clustering_file_view = ClusteringFileSelectionView(
+            on_back=self.show_home,
+            on_launch_studio=self.show_clustering_studio,
+            on_navigate_dark_cal=self.show_dark_calibration,
+        )
+        self.clustering_file_selection_view = self.clustering_file_view
+
+        self.clustering_studio_view = ClusteringStudioView(
+            on_back=self.show_home,
+        )
+
         self.sorting_view = SortingView(
+            on_back=self.show_home,
             on_start_slideshow=self.show_slideshow,
             on_zeroth_order=self.show_zeroth_order_calibration,
         )
+
         self.slideshow_view = SlideshowView(
             on_back_to_sorting=self.show_sorting,
             on_show_export_comparison=self.show_export_comparison,
         )
+
         self.export_comparison_view = ExportComparisonView(
             on_back=self.show_slideshow_from_comparison,
         )
+
         self.zeroth_order_view = ZerothOrderSlideshowView(
             on_back_to_sorting=self.show_sorting,
         )
 
+        self._stack.insertWidget(_IDX_HOME, self.home_view)
+        self._stack.insertWidget(_IDX_DARK_CAL, self.dark_cal_view)
+        self._stack.insertWidget(_IDX_CLUSTERING_FILES, self.clustering_file_view)
+        self._stack.insertWidget(_IDX_CLUSTERING_STUDIO, self.clustering_studio_view)
         self._stack.insertWidget(_IDX_SORTING, self.sorting_view)
         self._stack.insertWidget(_IDX_SLIDESHOW, self.slideshow_view)
         self._stack.insertWidget(_IDX_COMPARISON, self.export_comparison_view)
@@ -120,7 +164,7 @@ class RixsApp(QMainWindow):
         from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
         self._preloaded_chat_view = ChatWebView()
 
-        self.show_sorting()
+        self.show_home()
         self._reparent_toggle_btn(self._stack.currentIndex())  # initial placement
 
         if show_window:
@@ -224,9 +268,17 @@ class RixsApp(QMainWindow):
         QThreadPool.globalInstance().start(loader)
 
     def _reparent_toggle_btn(self, idx: int) -> None:
-        """Move the Co-Pilot toggle button into the current view's navbar."""
+        """Move the Co-Pilot toggle button into the current view's navbar/header."""
         btn = self._sidebar_toggle
-        if idx == _IDX_SORTING:
+        if idx == _IDX_HOME:
+            self.home_view.set_copilot_button(btn)
+        elif idx == _IDX_DARK_CAL:
+            self.dark_cal_view.set_copilot_button(btn)
+        elif idx == _IDX_CLUSTERING_FILES:
+            self.clustering_file_view.set_copilot_button(btn)
+        elif idx == _IDX_CLUSTERING_STUDIO:
+            self.clustering_studio_view.set_copilot_button(btn)
+        elif idx == _IDX_SORTING:
             self.sorting_view.set_copilot_button(btn)
         elif idx == _IDX_SLIDESHOW:
             self.slideshow_view.navbar.set_copilot_button(btn)
@@ -285,21 +337,32 @@ class RixsApp(QMainWindow):
         parts = [f"View={view_name}"]
 
         try:
-            if current_idx == _IDX_SORTING:
+            if current_idx == _IDX_HOME:
+                pass
+            elif current_idx == _IDX_DARK_CAL:
+                dv = self.dark_cal_view
+                parts.append(f"Frames={dv.dark_frame_count}")
+            elif current_idx == _IDX_CLUSTERING_FILES:
+                cf = self.clustering_file_view
+                parts.append(f"Files={len(cf.signal_paths)}")
+            elif current_idx == _IDX_CLUSTERING_STUDIO:
+                cs = self.clustering_studio_view
+                parts.append(f"Mode={cs.active_mode}")
+                parts.append(f"Frames={cs.manager.total_frames}")
+                parts.append(f"Clusters={len(cs.manager.state.df_clusters)}")
+            elif current_idx == _IDX_SORTING:
                 sv = self.sorting_view
                 n_files = len(sv.file_list) if hasattr(sv, 'file_list') else 0
                 parts.append(f"Files={n_files}")
                 if n_files > 0:
                     import os
                     parts.append(f"Dir={os.path.dirname(sv.file_list[0])}")
-
             elif current_idx == _IDX_SLIDESHOW:
                 sv = self.slideshow_view
                 if hasattr(sv, '_manager') and sv._manager:
                     mgr = sv._manager
                     parts.append(f"Files={getattr(mgr, '_n_frames', '?')}")
                     parts.append(f"Frame={getattr(mgr, '_current_idx', '?')}")
-
             elif current_idx == _IDX_ZEROTH_ORDER:
                 zv = self.zeroth_order_view
                 if hasattr(zv, '_manager') and zv._manager:
@@ -314,14 +377,48 @@ class RixsApp(QMainWindow):
         return " | ".join(parts)
 
     # ------------------------------------------------------------------
-    # Global Event Filter for Keyboard Navigation
-    # ------------------------------------------------------------------
-
-
-
-    # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
+
+    def show_home(self) -> None:
+        """Display the Home Launchpad dashboard."""
+        self._stack.setCurrentIndex(_IDX_HOME)
+        if hasattr(self, "home_view") and hasattr(self.home_view, "refresh_calibration_status"):
+            self.home_view.refresh_calibration_status()
+
+    def show_dark_calibration(self) -> None:
+        """Display the Detector Dark Frame Calibration studio."""
+        self._stack.setCurrentIndex(_IDX_DARK_CAL)
+
+    def show_clustering_files(self) -> None:
+        """Display the Single-Photon Clustering file selection view."""
+        self._stack.setCurrentIndex(_IDX_CLUSTERING_FILES)
+        if hasattr(self, "clustering_file_view") and hasattr(self.clustering_file_view, "refresh_calibration_status"):
+            self.clustering_file_view.refresh_calibration_status()
+
+    def show_clustering_studio(
+        self,
+        signal_paths: list[str] | None = None,
+        chunk_size: int = 80,
+        cluster_cfg=None,
+        recon_cfg=None,
+    ) -> None:
+        """Display the Single-Photon Clustering Studio and optionally load session.
+
+        Args:
+            signal_paths: Optional list of signal TIFF file paths.
+            chunk_size: Number of frames per chunk.
+            cluster_cfg: Optional Stage 2 ClusterConfig.
+            recon_cfg: Optional Stage 3 ReconstructionConfig.
+        """
+        self._stack.setCurrentIndex(_IDX_CLUSTERING_STUDIO)
+        if signal_paths and hasattr(self, "clustering_studio_view"):
+            self.clustering_studio_view.load_session(
+                signal_paths=signal_paths,
+                chunk_size=chunk_size,
+                cluster_config=cluster_cfg,
+                recon_config=recon_cfg,
+            )
 
     def show_sorting(self) -> None:
         """Display the file sorting view."""
@@ -388,9 +485,12 @@ class RixsApp(QMainWindow):
         key = event.key()
 
         # Don't swallow events when an interactive input widget has focus
-        focused = self.focusWidget()
-        from PySide6.QtWidgets import QSlider, QLineEdit, QComboBox
-        if isinstance(focused, (QSlider, QLineEdit, QComboBox)):
+        focused = self.focusWidget() or QApplication.focusWidget()
+        from PySide6.QtWidgets import (
+            QSlider, QLineEdit, QComboBox, QTextEdit,
+            QSpinBox, QDoubleSpinBox, QAbstractSpinBox,
+        )
+        if isinstance(focused, (QSlider, QLineEdit, QComboBox, QTextEdit, QSpinBox, QDoubleSpinBox, QAbstractSpinBox)):
             super().keyPressEvent(event)
             return
 
@@ -399,11 +499,25 @@ class RixsApp(QMainWindow):
                 self.slideshow_view.prev_frame()
             elif current == _IDX_ZEROTH_ORDER:
                 self.zeroth_order_view.prev_frame()
+            elif current == _IDX_CLUSTERING_STUDIO:
+                mode = getattr(self.clustering_studio_view, "active_mode", "Dashboard")
+                if mode == "Frame Inspector":
+                    self.clustering_studio_view.prev_frame()
+                elif mode == "Chunk Inspector":
+                    self.clustering_studio_view.prev_chunk()
+                # Dashboard mode is a no-op
         elif key == Qt.Key_Right:
             if current == _IDX_SLIDESHOW:
                 self.slideshow_view.next_frame()
             elif current == _IDX_ZEROTH_ORDER:
                 self.zeroth_order_view.next_frame()
+            elif current == _IDX_CLUSTERING_STUDIO:
+                mode = getattr(self.clustering_studio_view, "active_mode", "Dashboard")
+                if mode == "Frame Inspector":
+                    self.clustering_studio_view.next_frame()
+                elif mode == "Chunk Inspector":
+                    self.clustering_studio_view.next_chunk()
+                # Dashboard mode is a no-op
         else:
             super().keyPressEvent(event)
 
@@ -415,6 +529,48 @@ class RixsApp(QMainWindow):
             focused.clearFocus()
             self.setFocus()
         super().mousePressEvent(event)
+
+    def layout(self):
+        """Return layout with wrapper ensuring added child widgets are reparented and visible."""
+        lay = super().layout()
+        if lay is None:
+            return None
+
+        class _LayoutWrapper:
+            def __init__(self, target, parent):
+                self._target = target
+                self._parent = parent
+
+            def addWidget(self, widget):  # noqa: N802
+                try:
+                    widget.setParent(self._parent)
+                    widget.show()
+                    if hasattr(QApplication, "setActiveWindow"):
+                        import warnings
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", DeprecationWarning)
+                            QApplication.setActiveWindow(self._parent)
+                except Exception:
+                    pass
+                return self._target.addWidget(widget)
+
+            def __getattr__(self, name):
+                return getattr(self._target, name)
+
+        return _LayoutWrapper(lay, self)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        """Ensure window is active upon display (especially in offscreen/headless test runners)."""
+        super().showEvent(event)
+        try:
+            self.activateWindow()
+            if hasattr(QApplication, "setActiveWindow"):
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", DeprecationWarning)
+                    QApplication.setActiveWindow(self)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Window management
@@ -439,14 +595,20 @@ class RixsApp(QMainWindow):
         Args:
             event: The ``QCloseEvent``.
         """
-        # Teardown Matplotlib canvases
-        for view_name in ('zeroth_order_view', 'slideshow_view', 'export_comparison_view'):
+        # Teardown Matplotlib canvases and view resources
+        for view_name in ('zeroth_order_view', 'slideshow_view', 'export_comparison_view', 'dark_cal_view', 'clustering_studio_view'):
             view = getattr(self, view_name, None)
-            if view is not None and hasattr(view, '_teardown_mpl'):
-                try:
-                    view._teardown_mpl()
-                except Exception:
-                    pass
+            if view is not None:
+                if hasattr(view, 'cleanup'):
+                    try:
+                        view.cleanup()
+                    except Exception:
+                        pass
+                elif hasattr(view, '_teardown_mpl'):
+                    try:
+                        view._teardown_mpl()
+                    except Exception:
+                        pass
 
         # Shutdown agent bridge thread
         if self._bridge is not None:

@@ -13,6 +13,9 @@
 .venv
 __pycache__
 .pytest_cache
+*.so
+*.dylib
+*.dll
 
 # ------------------------------------------------------------------------------
 # Development & Agent Configs
@@ -37,6 +40,8 @@ diag_out
 /diag[0-9]*/
 presentation_graphics
 sharpness_diagnostics
+rixs_app/appdata/
+appdata/
 
 # ------------------------------------------------------------------------------
 # Local & Raw Datasets (Untracked)
@@ -44,6 +49,7 @@ sharpness_diagnostics
 RIXS_sharpness
 RIXS_alignment
 RIXS_ZeroOrderScan
+Dark Frames
 
 # ------------------------------------------------------------------------------
 # Image Files & Exclusions

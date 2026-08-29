@@ -486,3 +486,74 @@ class RangeSlider(QWidget):
             self._hover_target = None
             self.unsetCursor()
             self.update()
+
+
+try:
+    import shiboken6
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
+    class SafeFigureCanvasQTAgg(FigureCanvasQTAgg):
+        """FigureCanvasQTAgg subclass guarding against deferred draw_idle and paint on deleted C++ Qt objects."""
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._destroyed = False
+            self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+
+        def draw_idle(self) -> None:
+            try:
+                if getattr(self, "_destroyed", False) or not shiboken6.isValid(self):
+                    return
+                if not self.isVisible() or self.isHidden() or self.height() <= 0 or self.width() <= 0:
+                    return
+                super().draw_idle()
+            except Exception:
+                pass
+
+        def draw(self) -> None:
+            try:
+                if getattr(self, "_destroyed", False) or not shiboken6.isValid(self):
+                    return
+                if self.height() <= 0 or self.width() <= 0 or not self.isVisible() or self.isHidden():
+                    return
+                super().draw()
+            except Exception:
+                pass
+
+        def paintEvent(self, event) -> None:  # noqa: N802
+            try:
+                if getattr(self, "_destroyed", False) or not shiboken6.isValid(self):
+                    return
+                if not self.isVisible() or self.width() <= 0 or self.height() <= 0:
+                    return
+                super().paintEvent(event)
+            except Exception:
+                pass
+
+        def resizeEvent(self, event) -> None:  # noqa: N802
+            try:
+                if getattr(self, "_destroyed", False) or not shiboken6.isValid(self):
+                    return
+                if self.width() <= 0 or self.height() <= 0:
+                    return
+                super().resizeEvent(event)
+            except Exception:
+                pass
+
+        def showEvent(self, event) -> None:  # noqa: N802
+            self._destroyed = False
+            super().showEvent(event)
+            self.draw_idle()
+
+        def hideEvent(self, event) -> None:  # noqa: N802
+            super().hideEvent(event)
+
+        def closeEvent(self, event) -> None:  # noqa: N802
+            self._destroyed = True
+            super().closeEvent(event)
+
+        def destroy(self, destroyWindow=True, destroySubWindows=True) -> None:  # noqa: N802
+            self._destroyed = True
+            super().destroy(destroyWindow, destroySubWindows)
+except ImportError:
+    SafeFigureCanvasQTAgg = None  # type: ignore

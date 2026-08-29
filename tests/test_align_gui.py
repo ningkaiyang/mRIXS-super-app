@@ -154,7 +154,7 @@ def test_f1_11_start_slideshow_disabled_if_empty(app_window, qtbot):
 
 def test_f2_01_transition_to_slideshow_displays_first_frame(app_window, temp_tif_files, qtbot):
     app_window.show_slideshow(temp_tif_files)
-    assert app_window._stack.currentIndex() == 1
+    assert app_window._stack.currentWidget() is app_window.slideshow_view
     assert app_window.slideshow_view.current_idx == 0
 
 

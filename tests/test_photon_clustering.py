@@ -271,3 +271,64 @@ def test_export_intden_histogram(temp_dir: Path):
 
     assert out_png.exists()
     assert out_png.stat().st_size > 1000
+
+
+def test_edge_case_zero_clusters_reconstruction():
+    """Verify reconstruction handling when 0 clusters are detected across the session."""
+    df_empty = pd.DataFrame(columns=[
+        "ClusterNum", "Slice", "Area", "Mean", "StdDev", "Min", "Max", "XM", "YM", "Circ.", "IntDen"
+    ])
+    recon = reconstruct_photon_event_map(
+        df_clusters=df_empty,
+        image_shape=(100, 100),
+        config=ReconstructionConfig(),
+    )
+    assert recon.total_clusters == 0
+    assert recon.accepted_events == 0
+    assert recon.acceptance_pct == 0.0
+    assert recon.event_map.shape == (100, 100)
+    assert np.all(recon.event_map == 0.0)
+
+
+def test_edge_case_out_of_bounds_and_nan_cluster_coordinates():
+    """Verify coordinates outside the image frame (negative or >= dimension) are safely rejected."""
+    df_abnormal = pd.DataFrame([
+        {"ClusterNum": 0, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0, "Min": 0.0, "Max": 100.0, "XM": 10.0, "YM": 10.0, "Circ.": 0.8, "IntDen": 200.0},
+        {"ClusterNum": 1, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0, "Min": 0.0, "Max": 100.0, "XM": -5.0, "YM": 10.0, "Circ.": 0.8, "IntDen": 200.0},
+        {"ClusterNum": 2, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0, "Min": 0.0, "Max": 100.0, "XM": 100.0, "YM": 105.0, "Circ.": 0.8, "IntDen": 200.0},
+    ])
+
+    recon = reconstruct_photon_event_map(
+        df_clusters=df_abnormal,
+        image_shape=(100, 100),
+        config=ReconstructionConfig(intden_low=100.0, intden_high=300.0),
+    )
+
+    assert recon.total_clusters == 3
+    assert recon.accepted_events == 1
+    assert recon.rejected_bounds == 2
+    assert recon.event_map[10, 10] == 1.0
+
+
+def test_super_resolution_2x_and_4x_reconstruction():
+    """Verify super-resolution reconstruction scaling at 2x and 4x."""
+    df = pd.DataFrame([
+        {"ClusterNum": 0, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0, "Min": 0.0, "Max": 100.0, "XM": 10.25, "YM": 12.75, "Circ.": 0.9, "IntDen": 200.0}
+    ])
+
+    recon_2x = reconstruct_photon_event_map(
+        df_clusters=df,
+        image_shape=(50, 50),
+        config=ReconstructionConfig(intden_low=100.0, intden_high=300.0, subpixel_factor=2),
+    )
+    assert recon_2x.event_map.shape == (100, 100)
+    assert recon_2x.event_map[25, 20] == 1.0
+
+    recon_4x = reconstruct_photon_event_map(
+        df_clusters=df,
+        image_shape=(50, 50),
+        config=ReconstructionConfig(intden_low=100.0, intden_high=300.0, subpixel_factor=4),
+    )
+    assert recon_4x.event_map.shape == (200, 200)
+    assert recon_4x.event_map[51, 41] == 1.0
+

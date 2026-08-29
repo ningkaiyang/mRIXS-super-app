@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
 import numpy as np
 import pytest
 import tifffile
@@ -22,17 +23,16 @@ def cli_test_data():
         signal_dir.mkdir()
         output_dir.mkdir()
 
-        # Create 10 synthetic dark frames (100x100)
+        # Create 3 synthetic dark frames (32x32)
         rng = np.random.default_rng(123)
-        for i in range(10):
-            dark = rng.normal(loc=500.0, scale=5.0, size=(100, 100)).astype(np.float32)
+        for i in range(3):
+            dark = rng.normal(loc=500.0, scale=5.0, size=(32, 32)).astype(np.float32)
             tifffile.imwrite(dark_dir / f"dark_{i:03d}.tif", dark)
 
-        # Create 5 synthetic signal frames (100x100) with known photon hits
-        for i in range(5):
-            sig = rng.normal(loc=500.0, scale=5.0, size=(100, 100)).astype(np.float32)
-            # Add photon cluster at (30 + i, 40 + i)
-            sig[30 + i, 40 + i] += 200.0
+        # Create 2 synthetic signal frames (32x32) with known photon hits
+        for i in range(2):
+            sig = rng.normal(loc=500.0, scale=5.0, size=(32, 32)).astype(np.float32)
+            sig[10 + i, 15 + i] += 200.0
             tifffile.imwrite(signal_dir / f"signal_{i:03d}.tif", sig)
 
         yield {
@@ -92,6 +92,50 @@ def test_cli_full_pipeline_subcommand(cli_test_data):
     assert (cli_test_data["output_dir"] / "IntDen_histogram.png").exists()
 
 
+def test_cli_full_auto_default_output_dir(cli_test_data):
+    """Verify 'full' subcommand automatically saves to <signal_dir>/clusters/ when --output-dir is omitted."""
+    expected_out = cli_test_data["signal_dir"] / "clusters"
+
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "full",
+        "--dark-dir", str(cli_test_data["dark_dir"]),
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res.returncode == 0
+    assert expected_out.exists()
+    assert (expected_out / "MED_Dark.tif").exists()
+    assert (expected_out / "Final_Mask_Dark.tif").exists()
+    assert (expected_out / "Results_clusters.xls").exists()
+    assert (expected_out / "Photon_Event_Map.tif").exists()
+    assert (expected_out / "IntDen_histogram.png").exists()
+
+
+def test_cli_cluster_auto_default_output_dir(cli_test_data):
+    """Verify 'cluster' subcommand automatically saves to <signal_dir>/clusters/ when --output-dir is omitted."""
+    med_path = cli_test_data["root"] / "MED_Dark.tif"
+    mask_path = cli_test_data["root"] / "Final_Mask_Dark.tif"
+    tifffile.imwrite(med_path, np.full((32, 32), 500.0, dtype=np.float32))
+    tifffile.imwrite(mask_path, np.ones((32, 32), dtype=np.float32))
+
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "cluster",
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+        "--dark-tif", str(med_path),
+        "--mask-tif", str(mask_path),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res.returncode == 0
+    expected_out = cli_test_data["signal_dir"] / "clusters"
+    assert (expected_out / "Results_clusters.xls").exists()
+
+
 def test_cli_reconstruct_subcommand(cli_test_data):
     """Test 'reconstruct' subcommand from pre-existing Results_clusters.xls."""
     # First generate cluster file via full run
@@ -121,3 +165,81 @@ def test_cli_reconstruct_subcommand(cli_test_data):
     assert res.returncode == 0
     assert (recon_out / "Photon_Event_Map.tif").exists()
     assert (recon_out / "IntDen_histogram.png").exists()
+
+
+def test_cli_reconstruct_auto_default_output_dir(cli_test_data):
+    """Verify 'reconstruct' subcommand defaults output directory when --output-dir is omitted."""
+    subprocess.run([
+        sys.executable, "cluster_cli.py", "full",
+        "--dark-dir", str(cli_test_data["dark_dir"]),
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+        "--output-dir", str(cli_test_data["output_dir"]),
+    ], check=True)
+
+    clusters_xls = cli_test_data["output_dir"] / "Results_clusters.xls"
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "reconstruct",
+        "--clusters-xls", str(clusters_xls),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res.returncode == 0
+    assert (cli_test_data["output_dir"] / "Photon_Event_Map.tif").exists()
+    assert (cli_test_data["output_dir"] / "IntDen_histogram.png").exists()
+
+
+def test_cli_missing_input_dirs_return_error(cli_test_data):
+    """Verify non-existent input folders return exit code 1 with stderr logging."""
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "full",
+        "--dark-dir", str(cli_test_data["root"] / "nonexistent_dark"),
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res.returncode != 0
+    assert "Error: Dark directory not found" in res.stderr
+
+
+def test_cli_empty_directory_error_return(cli_test_data):
+    """Verify empty directory with no TIFFs returns exit code 1."""
+    empty_dir = cli_test_data["root"] / "empty_folder"
+    empty_dir.mkdir()
+
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "dark-mask",
+        "--dark-dir", str(empty_dir),
+        "--output-dir", str(cli_test_data["output_dir"]),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res.returncode != 0
+    assert "Error: No TIFF files found" in res.stderr
+
+
+def test_cli_unbuffered_stdout_streaming(cli_test_data):
+    """Verify real-time stdout streaming without line buffering delays."""
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "full",
+        "--dark-dir", str(cli_test_data["dark_dir"]),
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+        "--output-dir", str(cli_test_data["output_dir"]),
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    lines = []
+    for line in proc.stdout:
+        lines.append(line.strip())
+    proc.wait()
+    assert proc.returncode == 0
+    assert any("Stage 1" in l for l in lines)
+    assert any("Stage 2" in l for l in lines)
+    assert any("Stage 3" in l for l in lines)

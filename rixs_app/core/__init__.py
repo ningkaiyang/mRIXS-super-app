@@ -37,16 +37,31 @@ from .preprocessing import denoise_image, prepare_frame, PreprocessingConfig, Cr
 from .zeroth_order import evaluate_zeroth_order, run_zeroth_order_pipeline
 from .cli_utils import discover_directories, glob_tifs, export_focus_curve, extract_frame_index
 from .photon_clustering import (
+    DarkDiagnostics,
     DarkMaskConfig,
     ClusterConfig,
     ReconstructionConfig,
     Stage1Result,
     ReconstructionResult,
+    compute_dark_diagnostics,
+    apply_dark_thresholds,
     compute_dark_mask,
     process_single_frame_clusters,
     process_signal_stack_clusters,
     reconstruct_photon_event_map,
     export_intden_histogram,
+)
+from .calibration_store import (
+    DEFAULT_CALIBRATION_DIR,
+    DARK_CAL_DIR,
+    CalibrationRecord,
+    has_calibration,
+    load_calibration,
+    save_calibration,
+    get_calibration_summary,
+    clear_calibration,
+    get_dark_cal_dir,
+    get_meta_file_path,
 )
 
 __all__ = [
@@ -77,15 +92,28 @@ __all__ = [
     "glob_tifs",
     "export_focus_curve",
     "extract_frame_index",
+    "DarkDiagnostics",
     "DarkMaskConfig",
     "ClusterConfig",
     "ReconstructionConfig",
     "Stage1Result",
     "ReconstructionResult",
+    "compute_dark_diagnostics",
+    "apply_dark_thresholds",
     "compute_dark_mask",
     "process_single_frame_clusters",
     "process_signal_stack_clusters",
     "reconstruct_photon_event_map",
     "export_intden_histogram",
+    "DEFAULT_CALIBRATION_DIR",
+    "DARK_CAL_DIR",
+    "CalibrationRecord",
+    "has_calibration",
+    "load_calibration",
+    "save_calibration",
+    "get_calibration_summary",
+    "clear_calibration",
+    "get_dark_cal_dir",
+    "get_meta_file_path",
 ]
 
