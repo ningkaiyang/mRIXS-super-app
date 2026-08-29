@@ -116,10 +116,48 @@ def test_dark_diagnostics_worker_success(qapp, synthetic_dark_frames):
     assert diag.per_pixel_stddev.shape == (48, 48)
     assert diag.pct93_residual.shape == (48, 48)
 
-    assert len(progress_updates) == len(synthetic_dark_frames)
-    assert progress_updates[-1] == (len(synthetic_dark_frames), len(synthetic_dark_frames))
-    assert len(progress_messages) > 0
+    assert len(progress_updates) >= len(synthetic_dark_frames)
+    assert progress_updates[-1][1] == 100
+    assert any("[1/3]" in msg for msg in progress_messages)
+    assert any("[2/3]" in msg for msg in progress_messages)
     assert len(finished_called) == 1
+
+
+def test_dark_cal_view_generate_button_and_progress_flow(qapp, qtbot, synthetic_dark_frames):
+    """Verify DarkCalibrationView updates generate button text and progress labels across stages."""
+    view = DarkCalibrationView()
+    qtbot.addWidget(view)
+    view.show()
+
+    view._on_files_dropped(synthetic_dark_frames)
+    assert view.generate_btn.text() == "▶ Generate Histograms"
+    assert view.generate_btn.isEnabled()
+
+    # Trigger generation
+    view._on_generate_clicked()
+    assert view.generate_btn.text() == "⏳ Processing Histograms..."
+    assert not view.generate_btn.isEnabled()
+    assert view.progress_bar.isVisible()
+    assert "[1/3]" in view.progress_msg_label.text()
+
+    # Worker progress updates
+    view._on_worker_progress(50, 100)
+    assert view.progress_bar.value() == 50
+    view._on_worker_msg("[2/3] Computing noise statistics (chunk 1/1)...")
+    assert "[2/3]" in view.progress_msg_label.text()
+
+    # Diagnostics ready (Stage 3 executed)
+    diag = compute_dark_diagnostics(synthetic_dark_frames)
+    view._on_diagnostics_ready(diag)
+    assert view.progress_bar.value() == 100
+    assert view.generate_btn.text() == "▶ Generate Histograms"
+    assert view.generate_btn.isEnabled()
+    assert not view.progress_bar.isVisible()
+    assert not view.progress_msg_label.isVisible()
+
+    # Worker finished signal is safe no-op
+    view._on_worker_finished()
+    assert view._current_worker is None
 
 
 def test_dark_diagnostics_worker_empty_paths(qapp):

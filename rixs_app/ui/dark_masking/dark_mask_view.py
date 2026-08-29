@@ -21,9 +21,10 @@ from typing import Callable, Sequence
 
 import numpy as np
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -548,6 +549,7 @@ class DarkMaskingView(QWidget):
         self.file_list_widget.clear()
         self.frame_count_label.setText("Dark Frames: 0")
         self.source_dir_label.setText("Source: None")
+        self.generate_btn.setText("▶ Generate Histograms")
         self.generate_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self.save_status_label.setText("")
@@ -577,6 +579,7 @@ class DarkMaskingView(QWidget):
             self.dark_frame_count = 0
             self.file_list_widget.clear()
             self.frame_count_label.setText("Dark Frames: 0")
+            self.generate_btn.setText("▶ Generate Histograms")
             self.generate_btn.setEnabled(False)
             return
 
@@ -593,6 +596,7 @@ class DarkMaskingView(QWidget):
         self.frame_count_label.setText(f"Dark Frames: {self.dark_frame_count}")
         source_dir = str(Path(self.dark_paths[0]).parent)
         self.source_dir_label.setText(f"Source: {source_dir}")
+        self.generate_btn.setText("▶ Generate Histograms")
         self.generate_btn.setEnabled(self.dark_frame_count > 0)
         self.save_status_label.setText("")
 
@@ -605,11 +609,13 @@ class DarkMaskingView(QWidget):
         if not self.dark_paths:
             return
 
+        self.generate_btn.setText("⏳ Processing Histograms...")
         self.generate_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_bar.show()
-        self.progress_msg_label.setText("Starting analysis...")
+        self.progress_msg_label.setStyleSheet("font-size: 11px; color: #38bdf8;")
+        self.progress_msg_label.setText(f"[1/3] Ingesting dark frames (0/{self.dark_frame_count})...")
         self.progress_msg_label.show()
 
         worker = DarkDiagnosticsWorker(
@@ -634,20 +640,33 @@ class DarkMaskingView(QWidget):
 
     def _on_worker_error(self, err: str) -> None:
         logger.error("Dark mask worker error: %s", err)
+        self._diagnostics = None
+        self.generate_btn.setText("▶ Generate Histograms")
+        self.generate_btn.setEnabled(self.dark_frame_count > 0)
         self.progress_msg_label.setText(f"Error: {err}")
         self.progress_msg_label.setStyleSheet("color: #ef4444; font-size: 11px;")
+        self.progress_bar.hide()
+        self._current_worker = None
 
     def _on_worker_finished(self) -> None:
-        self.generate_btn.setEnabled(self.dark_frame_count > 0)
-        self.progress_bar.hide()
-        self.progress_msg_label.hide()
         self._current_worker = None
 
     def _on_diagnostics_ready(self, diag: DarkDiagnostics) -> None:
         self._diagnostics = diag
         self.save_btn.setEnabled(True)
+        self.progress_bar.setValue(92)
+        self.progress_msg_label.setText("[3/3] Rendering diagnostic histograms...")
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
         self._render_histograms()
         self._update_kpis_and_cutlines()
+        self.progress_bar.setValue(100)
+        self.generate_btn.setText("▶ Generate Histograms")
+        self.generate_btn.setEnabled(self.dark_frame_count > 0)
+        self.progress_bar.hide()
+        self.progress_msg_label.hide()
+        self._current_worker = None
 
     # ------------------------------------------------------------------
     # Histogram Rendering & Cutlines
@@ -1038,6 +1057,9 @@ class DarkMaskingView(QWidget):
 
     def cleanup(self) -> None:
         """Explicitly dispose of Matplotlib canvas and subplots."""
+        if self._current_worker is not None:
+            self._current_worker.cancel()
+            self._current_worker = None
         if hasattr(self, "canvas") and self.canvas is not None:
             self.canvas.cleanup()
 

@@ -182,6 +182,7 @@ def compute_dark_diagnostics(
     dark_paths: Sequence[Path | str],
     tail_pct: float = 0.9333,
     progress_callback: Callable[[int, int], None] | None = None,
+    stage_callback: Callable[[int, int, int, str], None] | None = None,
     max_frames: int = 0,
 ) -> DarkDiagnostics:
     """Compute temporal median dark frame, per-pixel stddev, and 93rd-percentile absolute residuals.
@@ -189,7 +190,8 @@ def compute_dark_diagnostics(
     Args:
         dark_paths: List of filepaths to raw dark TIFF frames.
         tail_pct: Percentile ratio for residual evaluation (default 0.9333 for 93.33rd percentile).
-        progress_callback: Optional callback receiving (current_frame, total_frames).
+        progress_callback: Optional legacy callback receiving (current_frame, total_frames).
+        stage_callback: Optional multi-stage callback receiving (stage_idx, current, total, message).
         max_frames: Max dark frames to process (0 = all).
 
     Returns:
@@ -224,6 +226,8 @@ def compute_dark_diagnostics(
         dark_stack[i] = frame
         if progress_callback:
             progress_callback(i + 1, n_dark)
+        if stage_callback:
+            stage_callback(1, i + 1, n_dark, f"Ingesting dark frame {i + 1}/{n_dark}...")
 
     med_dark = np.empty((h, w), dtype=np.float32)
     per_pixel_stddev = np.empty((h, w), dtype=np.float32)
@@ -233,6 +237,8 @@ def compute_dark_diagnostics(
         med_dark[:, :] = dark_stack[0].astype(np.float32)
         per_pixel_stddev[:, :] = 0.0
         pct93_residual[:, :] = 0.0
+        if stage_callback:
+            stage_callback(2, 1, 1, "Computing noise statistics (chunk 1/1)...")
     else:
         q_ratio = float(tail_pct if tail_pct <= 1.0 else tail_pct / 100.0)
         c_lib = _get_c_lib()
@@ -241,11 +247,14 @@ def compute_dark_diagnostics(
 
         chunk_size = 128
         chunk_ranges = [(r, min(r + chunk_size, h)) for r in range(0, h, chunk_size)]
+        total_chunks = len(chunk_ranges)
 
         if has_c_int16 or has_c_float:
-            from concurrent.futures import ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            def _process_c_chunk(cr: tuple[int, int]) -> None:
+            completed_chunks = 0
+
+            def _process_c_chunk(cr: tuple[int, int]) -> tuple[int, int, np.ndarray, np.ndarray, np.ndarray]:
                 r_start, r_end = cr
                 num_rows = r_end - r_start
                 c_slice = np.ascontiguousarray(dark_stack[:, r_start:r_end, :])
@@ -272,21 +281,39 @@ def compute_dark_diagnostics(
                         c_std.ctypes.data_as(ctypes.c_void_p),
                         c_pct.ctypes.data_as(ctypes.c_void_p),
                     )
-                med_dark[r_start:r_end, :] = c_med.reshape((num_rows, w))
-                per_pixel_stddev[r_start:r_end, :] = c_std.reshape((num_rows, w))
-                pct93_residual[r_start:r_end, :] = c_pct.reshape((num_rows, w))
+                return r_start, r_end, c_med.reshape((num_rows, w)), c_std.reshape((num_rows, w)), c_pct.reshape((num_rows, w))
 
             with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 4)) as executor:
-                list(executor.map(_process_c_chunk, chunk_ranges))
+                futures = [executor.submit(_process_c_chunk, cr) for cr in chunk_ranges]
+                for fut in as_completed(futures):
+                    r_start, r_end, c_med_res, c_std_res, c_pct_res = fut.result()
+                    med_dark[r_start:r_end, :] = c_med_res
+                    per_pixel_stddev[r_start:r_end, :] = c_std_res
+                    pct93_residual[r_start:r_end, :] = c_pct_res
+                    completed_chunks += 1
+                    if stage_callback:
+                        stage_callback(
+                            2,
+                            completed_chunks,
+                            total_chunks,
+                            f"Computing noise statistics (chunk {completed_chunks}/{total_chunks})...",
+                        )
         else:
             q = q_ratio * 100.0
-            for r_start, r_end in chunk_ranges:
+            for chunk_idx, (r_start, r_end) in enumerate(chunk_ranges, 1):
                 c_stack = dark_stack[:, r_start:r_end, :].astype(np.float32)
                 c_med = np.median(c_stack, axis=0).astype(np.float32)
                 med_dark[r_start:r_end, :] = c_med
                 per_pixel_stddev[r_start:r_end, :] = np.std(c_stack, axis=0).astype(np.float32)
                 c_res = np.abs(c_stack - c_med[np.newaxis, :, :])
                 pct93_residual[r_start:r_end, :] = np.percentile(c_res, q=q, axis=0).astype(np.float32)
+                if stage_callback:
+                    stage_callback(
+                        2,
+                        chunk_idx,
+                        total_chunks,
+                        f"Computing noise statistics (chunk {chunk_idx}/{total_chunks})...",
+                    )
 
     return DarkDiagnostics(
         med_dark=med_dark,

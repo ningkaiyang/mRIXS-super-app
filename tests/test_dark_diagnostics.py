@@ -121,6 +121,28 @@ def test_compute_dark_diagnostics_progress_callback(temp_dark_stack):
     assert calls[-1] == (10, 10)
 
 
+def test_compute_dark_diagnostics_stage_callback(temp_dark_stack):
+    """Verify stage_callback emits progress updates for both frame ingestion and chunk noise statistics."""
+    stage_calls = []
+
+    def stage_cb(stage, cur, tot, msg):
+        stage_calls.append((stage, cur, tot, msg))
+
+    compute_dark_diagnostics(temp_dark_stack["paths"][:10], stage_callback=stage_cb)
+
+    stage1_calls = [c for c in stage_calls if c[0] == 1]
+    stage2_calls = [c for c in stage_calls if c[0] == 2]
+
+    assert len(stage1_calls) == 10
+    assert stage1_calls[0][1] == 1 and stage1_calls[0][2] == 10
+    assert "Ingesting dark frame" in stage1_calls[0][3]
+    assert stage1_calls[-1][1] == 10 and stage1_calls[-1][2] == 10
+
+    assert len(stage2_calls) > 0
+    assert "Computing noise statistics" in stage2_calls[0][3]
+    assert stage2_calls[-1][1] == stage2_calls[-1][2]  # final chunk completed
+
+
 def test_hot_pixel_detection_in_diagnostics(temp_dark_stack):
     """Verify hot pixel with elevated stddev is identified and masked by apply_dark_thresholds."""
     diag = compute_dark_diagnostics(temp_dark_stack["paths"])

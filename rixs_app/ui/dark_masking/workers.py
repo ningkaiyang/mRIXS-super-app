@@ -66,12 +66,22 @@ class DarkDiagnosticsWorker(QRunnable):
         """Request cooperative cancellation of the background worker."""
         self.is_canceled = True
 
-    def _progress_callback(self, current: int, total: int) -> None:
-        """Progress callback invoked from compute_dark_diagnostics."""
+    def _stage_callback(self, stage: int, current: int, total: int, msg: str) -> None:
+        """Stage-aware progress callback invoked from compute_dark_diagnostics."""
         if self.is_canceled:
             return
-        self._safe_emit(self.signals.progress, current, total)
-        self._safe_emit(self.signals.progress_msg, f"Reading dark frame {current}/{total}...")
+        if stage == 1:
+            pct = int((current / total) * 50) if total > 0 else 0
+            formatted_msg = f"[1/3] Ingesting dark frames ({current}/{total})..."
+        elif stage == 2:
+            pct = int(50 + (current / total) * 40) if total > 0 else 50
+            formatted_msg = f"[2/3] Computing noise statistics (chunk {current}/{total})..."
+        else:
+            pct = int((current / total) * 100) if total > 0 else 0
+            formatted_msg = msg
+
+        self._safe_emit(self.signals.progress, pct, 100)
+        self._safe_emit(self.signals.progress_msg, formatted_msg)
 
     @Slot()
     def run(self) -> None:
@@ -83,11 +93,13 @@ class DarkDiagnosticsWorker(QRunnable):
             if self.is_canceled:
                 return
 
-            self._safe_emit(self.signals.progress_msg, "Reading dark frames...")
+            total_frames = self.max_frames if 0 < self.max_frames < len(self.dark_paths) else len(self.dark_paths)
+            self._safe_emit(self.signals.progress, 0, 100)
+            self._safe_emit(self.signals.progress_msg, f"[1/3] Ingesting dark frames (0/{total_frames})...")
             diagnostics = compute_dark_diagnostics(
                 dark_paths=self.dark_paths,
                 tail_pct=self.tail_pct,
-                progress_callback=self._progress_callback,
+                stage_callback=self._stage_callback,
                 max_frames=self.max_frames,
             )
             if not self.is_canceled:
