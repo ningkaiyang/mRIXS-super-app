@@ -50,6 +50,9 @@ from .photon_clustering import (
     process_signal_stack_clusters,
     reconstruct_photon_event_map,
     export_intden_histogram,
+    export_dark_diagnostics,
+    export_dark_diagnostics_data,
+    export_dark_diagnostics_plots,
 )
 from .dark_mask_store import (
     DEFAULT_MASK_DIR,
@@ -115,6 +118,9 @@ __all__ = [
     "process_signal_stack_clusters",
     "reconstruct_photon_event_map",
     "export_intden_histogram",
+    "export_dark_diagnostics",
+    "export_dark_diagnostics_data",
+    "export_dark_diagnostics_plots",
     "DEFAULT_CALIBRATION_DIR",
     "DARK_CAL_DIR",
     "CalibrationRecord",

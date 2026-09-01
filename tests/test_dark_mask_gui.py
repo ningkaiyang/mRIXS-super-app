@@ -212,3 +212,110 @@ def test_dark_mask_view_clear_and_slider_lifecycle(qapp, qtbot, mock_diagnostics
     assert view.ax_res.get_legend() is None
 
     view.cleanup()
+
+
+def test_dark_mask_view_action_buttons_styling_and_lifecycle(qapp, qtbot, mock_diagnostics):
+    """Verify export and save buttons have correct QSS objectNames and lifecycle state transitions."""
+    view = DarkMaskingView()
+    qtbot.addWidget(view)
+    view.show()
+
+    # Verify styling objectNames
+    assert hasattr(view, "export_btn")
+    assert view.export_btn.objectName() == "sort_btn"
+    assert view.save_btn.objectName() == "success_btn"
+
+    # Verify initial disabled state
+    assert not view.export_btn.isEnabled()
+    assert not view.save_btn.isEnabled()
+
+    # Enable on diagnostics ready
+    view._on_diagnostics_ready(mock_diagnostics)
+    assert view.export_btn.isEnabled()
+    assert view.save_btn.isEnabled()
+
+    # Disable on clear files
+    view._clear_files()
+    assert not view.export_btn.isEnabled()
+    assert not view.save_btn.isEnabled()
+
+    # Re-enable and verify disable during generation
+    view._on_diagnostics_ready(mock_diagnostics)
+    view.dark_paths = ["/dummy/dark_001.tif"]
+    view.dark_frame_count = 1
+    with patch("rixs_app.ui.dark_masking.dark_mask_view.QThreadPool"):
+        view._on_generate_clicked()
+        assert not view.export_btn.isEnabled()
+        assert not view.save_btn.isEnabled()
+
+    # Re-enable and verify disable on worker error
+    view._on_diagnostics_ready(mock_diagnostics)
+    view._on_worker_error("Synthetic worker failure")
+    assert not view.export_btn.isEnabled()
+    assert not view.save_btn.isEnabled()
+
+    view.cleanup()
+
+
+def test_dark_mask_view_export_dialog_and_handler(qapp, qtbot, mock_diagnostics, tmp_path):
+    """Verify export button ampersand, directory picker, async worker, and live button text progress."""
+    view = DarkMaskingView()
+    qtbot.addWidget(view)
+    view.show()
+
+    # Verify ampersand mnemonic escaping in button text
+    assert "&&" in view.export_btn.text()
+    assert "Export Data" in view.export_btn.text()
+    assert "Plots" in view.export_btn.text()
+
+    # Calling export with no diagnostics is a no-op
+    view._diagnostics = None
+    with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory") as mock_dialog:
+        view._on_export_clicked()
+        mock_dialog.assert_not_called()
+
+    # Load diagnostics
+    view._on_diagnostics_ready(mock_diagnostics)
+    view.dark_paths = [str(tmp_path / "raw" / "dark_000.tif")]
+
+    # 1. User cancels directory dialog
+    with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=""):
+        view.export_btn.click()
+        assert view.save_status_label.text() == ""
+
+    # 2. Asynchronous export execution & progress simulation
+    export_dir = tmp_path / "diag_export"
+    with patch("PySide6.QtWidgets.QFileDialog.getExistingDirectory", return_value=str(export_dir)):
+        view.export_btn.click()
+        # Buttons disabled during export
+        assert not view.export_btn.isEnabled()
+        assert not view.save_btn.isEnabled()
+
+        # Simulate progress signal
+        view._on_export_progress(2, 4)
+        assert "2/4" in view.export_btn.text()
+        assert "⏳ Exporting" in view.export_btn.text()
+
+        view._on_export_msg("Rendering StdDev plot...")
+        assert "Rendering StdDev plot..." in view.save_status_label.text()
+
+        # Simulate completion
+        view._on_export_result({"summary": export_dir / "dark_diagnostics_summary.csv"}, "diag_export")
+        view._on_export_finished()
+
+        assert view.export_btn.isEnabled()
+        assert view.save_btn.isEnabled()
+        assert view.export_btn.text() == "📊 Export Data && Plots"
+        assert "✓ Exported histogram data && plots to diag_export/" in view.save_status_label.text()
+        assert "#34d399" in view.save_status_label.styleSheet()
+
+    # 3. Export failure error handling
+    view._on_export_error("Permission denied")
+    view._on_export_finished()
+    assert "✕ Export failed: Permission denied" in view.save_status_label.text()
+    assert "#ef4444" in view.save_status_label.styleSheet()
+    assert view.export_btn.text() == "📊 Export Data && Plots"
+    assert view.export_btn.isEnabled()
+
+    view.cleanup()
+

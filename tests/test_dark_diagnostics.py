@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 import tifffile
 
@@ -17,6 +18,9 @@ from rixs_app.core.photon_clustering import (
     apply_dark_thresholds,
     compute_dark_diagnostics,
     compute_dark_mask,
+    export_dark_diagnostics,
+    export_dark_diagnostics_data,
+    export_dark_diagnostics_plots,
 )
 
 
@@ -437,4 +441,225 @@ def test_adversarial_sequential_dimensions(tmp_path: Path):
         diag = compute_dark_diagnostics(paths)
         assert diag.med_dark.shape == (h, w)
         assert diag.per_pixel_stddev.shape == (h, w)
+
+
+def test_export_dark_diagnostics_data_csvs(tmp_path: Path):
+    """Verify export_dark_diagnostics_data produces all 4 CSV files with exact schemas and valid calculations."""
+    h, w = 32, 32
+    total_px = h * w
+    rng = np.random.default_rng(42)
+
+    med_dark = np.full((h, w), 500.0, dtype=np.float32)
+    per_pixel_stddev = rng.normal(8.0, 2.0, (h, w)).astype(np.float32)
+    pct93_residual = rng.normal(12.0, 3.0, (h, w)).astype(np.float32)
+
+    # Hot pixel at (5, 5): high stddev
+    per_pixel_stddev[5, 5] = 95.0
+    # RTS pixel at (10, 10): high residual
+    pct93_residual[10, 10] = 120.0
+
+    diag = DarkDiagnostics(
+        med_dark=med_dark,
+        per_pixel_stddev=per_pixel_stddev,
+        pct93_residual=pct93_residual,
+        dark_frame_count=150,
+    )
+
+    export_dir = tmp_path / "csv_export"
+    res = export_dark_diagnostics_data(
+        diagnostics=diag,
+        export_dir=export_dir,
+        stddev_thresh=40.0,
+        absdev_thresh=60.0,
+        bins=60,
+    )
+
+    assert isinstance(res, dict)
+    assert set(res.keys()) == {"summary", "stddev_bins", "residual_bins", "pixel_metrics"}
+
+    # 1. Summary CSV
+    summary_path = res["summary"]
+    assert summary_path.exists()
+    df_summary = pd.read_csv(summary_path)
+    assert "metric" in [c.lower() for c in df_summary.columns] or "key" in [c.lower() for c in df_summary.columns] or len(df_summary.columns) == 2
+    # Convert summary to dict
+    summary_dict = dict(zip(df_summary.iloc[:, 0], df_summary.iloc[:, 1]))
+    assert "Dark Frames Count" in summary_dict
+    assert int(float(summary_dict["Dark Frames Count"])) == 150
+    assert "Total Pixels" in summary_dict
+    assert int(float(summary_dict["Total Pixels"])) == total_px
+    assert "Valid Pixels" in summary_dict
+    assert int(float(summary_dict["Valid Pixels"])) == total_px
+
+    # 2. StdDev Bins CSV
+    stddev_bins_path = res["stddev_bins"]
+    assert stddev_bins_path.exists()
+    df_std_bins = pd.read_csv(stddev_bins_path)
+    expected_bin_cols = {"bin_index", "bin_start_adu", "bin_end_adu", "bin_center_adu", "linear_count", "log10_count"}
+    assert expected_bin_cols.issubset(set(df_std_bins.columns))
+    assert len(df_std_bins) == 60
+    assert df_std_bins["linear_count"].sum() == total_px
+
+    # 3. Residual Bins CSV
+    residual_bins_path = res["residual_bins"]
+    assert residual_bins_path.exists()
+    df_res_bins = pd.read_csv(residual_bins_path)
+    assert expected_bin_cols.issubset(set(df_res_bins.columns))
+    assert len(df_res_bins) == 60
+    assert df_res_bins["linear_count"].sum() == total_px
+
+    # 4. Pixel Metrics CSV
+    metrics_path = res["pixel_metrics"]
+    assert metrics_path.exists()
+    df_metrics = pd.read_csv(metrics_path)
+    expected_metric_cols = {"pixel_index", "row", "col", "stddev_adu", "residual_adu", "is_valid_mask"}
+    assert expected_metric_cols.issubset(set(df_metrics.columns))
+    assert len(df_metrics) == total_px
+
+    # Verify hot pixel (5, 5) and RTS pixel (10, 10) are marked invalid
+    hot_row = df_metrics[(df_metrics["row"] == 5) & (df_metrics["col"] == 5)]
+    assert len(hot_row) == 1
+    assert int(hot_row["is_valid_mask"].iloc[0]) == 0
+
+    rts_row = df_metrics[(df_metrics["row"] == 10) & (df_metrics["col"] == 10)]
+    assert len(rts_row) == 1
+    assert int(rts_row["is_valid_mask"].iloc[0]) == 0
+
+    clean_row = df_metrics[(df_metrics["row"] == 0) & (df_metrics["col"] == 0)]
+    assert len(clean_row) == 1
+    assert int(clean_row["is_valid_mask"].iloc[0]) == 1
+
+
+def test_export_dark_diagnostics_plots(tmp_path: Path):
+    """Verify export_dark_diagnostics_plots creates publication-grade PNG files without errors."""
+    h, w = 32, 32
+    rng = np.random.default_rng(123)
+
+    med_dark = np.full((h, w), 500.0, dtype=np.float32)
+    per_pixel_stddev = rng.normal(8.0, 2.0, (h, w)).astype(np.float32)
+    pct93_residual = rng.normal(12.0, 3.0, (h, w)).astype(np.float32)
+
+    diag = DarkDiagnostics(
+        med_dark=med_dark,
+        per_pixel_stddev=per_pixel_stddev,
+        pct93_residual=pct93_residual,
+        dark_frame_count=100,
+    )
+
+    export_dir = tmp_path / "plot_export"
+    res = export_dark_diagnostics_plots(
+        diagnostics=diag,
+        export_dir=export_dir,
+        bins=60,
+        dpi=150,
+    )
+
+    assert isinstance(res, dict)
+    assert set(res.keys()) == {"combined_plot", "stddev_plot", "residual_plot"}
+
+    for key, path in res.items():
+        assert path.exists(), f"Missing plot: {key} at {path}"
+        assert path.name.endswith(".png")
+        data = path.read_bytes()
+        assert len(data) > 1000
+        assert data.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_export_dark_diagnostics_full_bundle(tmp_path: Path):
+    """Verify export_dark_diagnostics combines all data and plot exports into a unified workflow."""
+    h, w = 24, 24
+    rng = np.random.default_rng(99)
+
+    diag = DarkDiagnostics(
+        med_dark=np.full((h, w), 500.0, dtype=np.float32),
+        per_pixel_stddev=rng.normal(6.0, 1.5, (h, w)).astype(np.float32),
+        pct93_residual=rng.normal(10.0, 2.0, (h, w)).astype(np.float32),
+        dark_frame_count=50,
+    )
+
+    export_dir = tmp_path / "full_export"
+    all_exports = export_dark_diagnostics(
+        diagnostics=diag,
+        export_dir=export_dir,
+        stddev_thresh=35.0,
+        absdev_thresh=55.0,
+        bins=50,
+        dpi=150,
+    )
+
+    expected_keys = {
+        "summary",
+        "stddev_bins",
+        "residual_bins",
+        "pixel_metrics",
+        "combined_plot",
+        "stddev_plot",
+        "residual_plot",
+    }
+    assert set(all_exports.keys()) == expected_keys
+    for key, p in all_exports.items():
+        assert p.exists(), f"File for {key} does not exist: {p}"
+
+
+def test_export_dark_diagnostics_nan_inf_robustness(tmp_path: Path):
+    """Verify data and plot exports handle NaN and Inf gracefully without crashing."""
+    h, w = 10, 10
+    total_px = h * w
+    stddev = np.full((h, w), 5.0, dtype=np.float32)
+    residual = np.full((h, w), 10.0, dtype=np.float32)
+
+    stddev[0, 0] = np.nan
+    stddev[0, 1] = np.inf
+    residual[1, 0] = np.nan
+    residual[1, 1] = np.inf
+
+    diag = DarkDiagnostics(
+        med_dark=np.zeros((h, w), dtype=np.float32),
+        per_pixel_stddev=stddev,
+        pct93_residual=residual,
+        dark_frame_count=20,
+    )
+
+    export_dir = tmp_path / "nan_inf_export"
+    all_exports = export_dark_diagnostics(diag, export_dir=export_dir)
+
+    assert export_dir.exists()
+    for key, p in all_exports.items():
+        assert p.exists()
+
+    df_metrics = pd.read_csv(all_exports["pixel_metrics"])
+    assert len(df_metrics) == total_px
+    # Pixels with NaN or Inf must have is_valid_mask == 0
+    assert df_metrics.loc[(df_metrics["row"] == 0) & (df_metrics["col"] == 0), "is_valid_mask"].iloc[0] == 0
+    assert df_metrics.loc[(df_metrics["row"] == 0) & (df_metrics["col"] == 1), "is_valid_mask"].iloc[0] == 0
+    assert df_metrics.loc[(df_metrics["row"] == 1) & (df_metrics["col"] == 0), "is_valid_mask"].iloc[0] == 0
+    assert df_metrics.loc[(df_metrics["row"] == 1) & (df_metrics["col"] == 1), "is_valid_mask"].iloc[0] == 0
+    assert df_metrics.loc[(df_metrics["row"] == 5) & (df_metrics["col"] == 5), "is_valid_mask"].iloc[0] == 1
+
+
+def test_export_dark_diagnostics_progress_callback(tmp_path: Path):
+    """Verify export_dark_diagnostics emits progress callbacks at each export step."""
+    h, w = 16, 16
+    diag = DarkDiagnostics(
+        med_dark=np.full((h, w), 100.0, dtype=np.float32),
+        per_pixel_stddev=np.full((h, w), 20.0, dtype=np.float32),
+        pct93_residual=np.full((h, w), 30.0, dtype=np.float32),
+        dark_frame_count=10,
+    )
+    progress_steps = []
+
+    def _cb(curr: int, total: int, msg: str) -> None:
+        progress_steps.append((curr, total, msg))
+
+    out_dir = tmp_path / "cb_export"
+    export_dark_diagnostics(diag, out_dir, progress_callback=_cb)
+
+    assert len(progress_steps) == 4
+    assert [s[0] for s in progress_steps] == [1, 2, 3, 4]
+    assert all(s[1] == 4 for s in progress_steps)
+    assert any("CSV" in s[2] for s in progress_steps)
+    assert any("StdDev" in s[2] for s in progress_steps)
+    assert any("Residual" in s[2] for s in progress_steps)
+    assert any("Combined" in s[2] for s in progress_steps)
+
 

@@ -12,7 +12,11 @@ from typing import Sequence
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
-from rixs_app.core.photon_clustering import DarkDiagnostics, compute_dark_diagnostics
+from rixs_app.core.photon_clustering import (
+    DarkDiagnostics,
+    compute_dark_diagnostics,
+    export_dark_diagnostics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +26,7 @@ class WorkerSignals(QObject):
 
     progress = Signal(int, int)        # current_frame, total_frames
     progress_msg = Signal(str)         # textual progress description
-    result = Signal(object)            # payload (DarkDiagnostics)
+    result = Signal(object)            # payload (DarkDiagnostics or dict of export paths)
     error = Signal(str)                # error message
     finished = Signal()                # completion signal
 
@@ -110,3 +114,87 @@ class DarkDiagnosticsWorker(QRunnable):
                 self._safe_emit(self.signals.error, str(exc))
         finally:
             self._safe_emit(self.signals.finished)
+
+
+class DarkExportWorker(QRunnable):
+    """Background worker for exporting dark diagnostics data and publication plots asynchronously.
+
+    Args:
+        diagnostics: DarkDiagnostics instance to export.
+        export_dir: Destination directory path.
+        stddev_thresh: StdDev threshold (ADU).
+        absdev_thresh: Excursion residual threshold (ADU).
+        tail_ratio: Tail percentile ratio (default 0.9333).
+        bins: Number of histogram bins (default 60).
+        dpi: Output resolution for publication figures (default 300).
+    """
+
+    def __init__(
+        self,
+        diagnostics: DarkDiagnostics,
+        export_dir: Path | str,
+        stddev_thresh: float = 40.0,
+        absdev_thresh: float = 60.0,
+        tail_ratio: float = 0.9333,
+        bins: int = 60,
+        dpi: int = 300,
+    ) -> None:
+        super().__init__()
+        self.diagnostics = diagnostics
+        self.export_dir = Path(export_dir)
+        self.stddev_thresh = float(stddev_thresh)
+        self.absdev_thresh = float(absdev_thresh)
+        self.tail_ratio = float(tail_ratio)
+        self.bins = int(bins)
+        self.dpi = int(dpi)
+        self.is_canceled = False
+        self.signals = WorkerSignals()
+        self.setAutoDelete(True)
+
+    def _safe_emit(self, signal, *args) -> None:
+        """Safely emit Qt signals guarding against deleted underlying C++ QObjects."""
+        try:
+            signal.emit(*args)
+        except (RuntimeError, AttributeError):
+            pass
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation of the background worker."""
+        self.is_canceled = True
+
+    def _progress_cb(self, current: int, total: int, msg: str) -> None:
+        if self.is_canceled:
+            return
+        self._safe_emit(self.signals.progress, current, total)
+        self._safe_emit(self.signals.progress_msg, msg)
+
+    @Slot()
+    def run(self) -> None:
+        """Execute data and plot export in background thread."""
+        try:
+            if self.is_canceled:
+                return
+
+            self._safe_emit(self.signals.progress, 0, 4)
+            self._safe_emit(self.signals.progress_msg, "Initializing export...")
+
+            results = export_dark_diagnostics(
+                diagnostics=self.diagnostics,
+                export_dir=self.export_dir,
+                stddev_thresh=self.stddev_thresh,
+                absdev_thresh=self.absdev_thresh,
+                tail_ratio=self.tail_ratio,
+                bins=self.bins,
+                dpi=self.dpi,
+                progress_callback=self._progress_cb,
+            )
+
+            if not self.is_canceled:
+                self._safe_emit(self.signals.result, results)
+        except Exception as exc:
+            if not self.is_canceled:
+                logger.exception("DarkExportWorker failed: %s", exc)
+                self._safe_emit(self.signals.error, str(exc))
+        finally:
+            self._safe_emit(self.signals.finished)
+

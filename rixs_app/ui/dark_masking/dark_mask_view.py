@@ -47,10 +47,11 @@ from rixs_app.core.photon_clustering import (
     DarkDiagnostics,
     apply_dark_thresholds,
     compute_dark_diagnostics,
+    export_dark_diagnostics,
 )
 from rixs_app.core.utils import natural_sort
 from rixs_app.ui import theme
-from rixs_app.ui.dark_masking.workers import DarkDiagnosticsWorker
+from rixs_app.ui.dark_masking.workers import DarkDiagnosticsWorker, DarkExportWorker
 from rixs_app.ui.widgets import SafeFigureCanvasQTAgg
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,7 @@ class DarkMaskingView(QWidget):
 
         self._diagnostics: DarkDiagnostics | None = None
         self._current_worker: DarkDiagnosticsWorker | None = None
+        self._export_worker: DarkExportWorker | None = None
         self._copilot_btn: QPushButton | None = None
 
         # Hist cutline, span, and patch objects
@@ -448,7 +450,7 @@ class DarkMaskingView(QWidget):
         sliders_layout.addWidget(self.final_mask_kpi_label)
         layout.addWidget(sliders_box)
 
-        # Bottom Action Bar: Save Status & Save Button
+        # Bottom Action Bar: Save Status, Export Button & Save Button
         save_bar = QHBoxLayout()
         save_bar.setSpacing(10)
 
@@ -456,10 +458,18 @@ class DarkMaskingView(QWidget):
         self.save_status_label.setStyleSheet("font-size: 12px; color: #34d399; font-weight: bold;")
         save_bar.addWidget(self.save_status_label, 1)
 
+        self.export_btn = QPushButton("📊 Export Data && Plots", panel)
+        self.export_btn.setFixedHeight(36)
+        theme.set_sort_btn(self.export_btn)
+        self.export_btn.setToolTip("Export histogram raw data, CSV metrics, and publication-ready plots")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self._on_export_clicked)
+        save_bar.addWidget(self.export_btn)
+
         self.save_btn = QPushButton("💾 Save Dark Mask", panel)
         self.save_btn.setFixedHeight(36)
         self.save_btn.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 16px;")
-        theme.set_tool_btn(self.save_btn)
+        theme.set_success_btn(self.save_btn)
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save_clicked)
         save_bar.addWidget(self.save_btn)
@@ -551,6 +561,7 @@ class DarkMaskingView(QWidget):
         self.source_dir_label.setText("Source: None")
         self.generate_btn.setText("▶ Generate Histograms")
         self.generate_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self.save_status_label.setText("")
         self._diagnostics = None
@@ -611,6 +622,7 @@ class DarkMaskingView(QWidget):
 
         self.generate_btn.setText("⏳ Processing Histograms...")
         self.generate_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self.progress_bar.setValue(0)
         self.progress_bar.show()
@@ -643,6 +655,8 @@ class DarkMaskingView(QWidget):
         self._diagnostics = None
         self.generate_btn.setText("▶ Generate Histograms")
         self.generate_btn.setEnabled(self.dark_frame_count > 0)
+        self.export_btn.setEnabled(False)
+        self.save_btn.setEnabled(False)
         self.progress_msg_label.setText(f"Error: {err}")
         self.progress_msg_label.setStyleSheet("color: #ef4444; font-size: 11px;")
         self.progress_bar.hide()
@@ -653,6 +667,7 @@ class DarkMaskingView(QWidget):
 
     def _on_diagnostics_ready(self, diag: DarkDiagnostics) -> None:
         self._diagnostics = diag
+        self.export_btn.setEnabled(True)
         self.save_btn.setEnabled(True)
         self.progress_bar.setValue(92)
         self.progress_msg_label.setText("[3/3] Rendering diagnostic histograms...")
@@ -1051,6 +1066,70 @@ class DarkMaskingView(QWidget):
         )
         self.save_status_label.setStyleSheet("color: #34d399; font-weight: bold; font-size: 12px;")
 
+    def _on_export_clicked(self) -> None:
+        """Open directory dialog and launch asynchronous dark diagnostics export worker."""
+        if self._diagnostics is None:
+            return
+
+        default_dir = str(Path(self.dark_paths[0]).parent) if self.dark_paths else os.getcwd()
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Directory to Export Histograms && Data",
+            default_dir,
+        )
+        if not folder:
+            return
+
+        self.export_btn.setEnabled(False)
+        self.save_btn.setEnabled(False)
+        self.export_btn.setText("⏳ Exporting 0/4...")
+        self.save_status_label.setText("Exporting data and publication plots...")
+        self.save_status_label.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 12px;")
+
+        worker = DarkExportWorker(
+            diagnostics=self._diagnostics,
+            export_dir=folder,
+            stddev_thresh=self._stddev_thresh,
+            absdev_thresh=self._absdev_thresh,
+            tail_ratio=self._tail_ratio,
+        )
+        folder_name = Path(folder).name
+        worker.signals.progress.connect(self._on_export_progress)
+        worker.signals.progress_msg.connect(self._on_export_msg)
+        worker.signals.result.connect(lambda res, name=folder_name: self._on_export_result(res, name))
+        worker.signals.error.connect(self._on_export_error)
+        worker.signals.finished.connect(self._on_export_finished)
+
+        self._export_worker = worker
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_export_progress(self, current: int, total: int) -> None:
+        """Update export button text with live step progress."""
+        self.export_btn.setText(f"⏳ Exporting {current}/{total}...")
+
+    def _on_export_msg(self, msg: str) -> None:
+        """Update save status label with live export step description."""
+        self.save_status_label.setText(f"Exporting: {msg}")
+
+    def _on_export_result(self, exported: dict, folder_name: str) -> None:
+        """Display success notification upon export completion."""
+        self.save_status_label.setText(f"✓ Exported histogram data && plots to {folder_name}/")
+        self.save_status_label.setStyleSheet("color: #34d399; font-weight: bold; font-size: 12px;")
+        logger.info("Successfully exported dark histogram data and plots to %s", folder_name)
+
+    def _on_export_error(self, err: str) -> None:
+        """Display error notification if export fails."""
+        logger.error("Failed to export dark diagnostics: %s", err)
+        self.save_status_label.setText(f"✕ Export failed: {err}")
+        self.save_status_label.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 12px;")
+
+    def _on_export_finished(self) -> None:
+        """Restore export button text and re-enable action buttons."""
+        self.export_btn.setText("📊 Export Data && Plots")
+        self.export_btn.setEnabled(self._diagnostics is not None)
+        self.save_btn.setEnabled(self._diagnostics is not None)
+        self._export_worker = None
+
     # ------------------------------------------------------------------
     # Cleanup & Lifecycle
     # ------------------------------------------------------------------
@@ -1060,6 +1139,9 @@ class DarkMaskingView(QWidget):
         if self._current_worker is not None:
             self._current_worker.cancel()
             self._current_worker = None
+        if self._export_worker is not None:
+            self._export_worker.cancel()
+            self._export_worker = None
         if hasattr(self, "canvas") and self.canvas is not None:
             self.canvas.cleanup()
 

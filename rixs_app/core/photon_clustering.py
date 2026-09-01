@@ -775,3 +775,443 @@ def export_intden_histogram(
     fig.clear()
 
     return out_path
+
+
+# ============================================================================
+# Dark Diagnostics Data & Publication Plot Export
+# ============================================================================
+
+def export_dark_diagnostics_data(
+    diagnostics: DarkDiagnostics,
+    export_dir: str | Path,
+    stddev_thresh: float = 40.0,
+    absdev_thresh: float = 60.0,
+    tail_ratio: float = 0.9333,
+    bins: int = 60,
+) -> dict[str, Path]:
+    """Export dark diagnostics summary, histogram bin distributions, and per-pixel metrics to CSV.
+
+    Args:
+        diagnostics: DarkDiagnostics instance containing per_pixel_stddev and pct93_residual.
+        export_dir: Destination directory path.
+        stddev_thresh: Upper threshold for per-pixel standard deviation (ADU).
+        absdev_thresh: Upper threshold for 93rd-percentile absolute residual (ADU).
+        tail_ratio: Required fraction of stable frames.
+        bins: Number of histogram bins.
+
+    Returns:
+        Dictionary mapping keys ('summary', 'stddev_bins', 'residual_bins', 'pixel_metrics') to Path objects.
+    """
+    out_dir = Path(export_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    std_arr = diagnostics.per_pixel_stddev
+    res_arr = diagnostics.pct93_residual
+
+    total_pixels = int(std_arr.size)
+    valid_mask = np.isfinite(std_arr) & np.isfinite(res_arr)
+    valid_pixels = int(np.count_nonzero(valid_mask))
+
+    std_finite = std_arr[np.isfinite(std_arr)]
+    res_finite = res_arr[np.isfinite(res_arr)]
+
+    # Dynamic histogram upper bounds matching UI logic
+    std_max = max(100.0, float(np.percentile(std_finite, 99.9))) if len(std_finite) > 0 else 100.0
+    res_max = max(150.0, float(np.percentile(res_finite, 99.9))) if len(res_finite) > 0 else 150.0
+
+    # 1. Summary CSV
+    m_t1 = (std_arr < stddev_thresh) & np.isfinite(std_arr)
+    t1_surviving = int(np.count_nonzero(m_t1))
+    t1_pct = (t1_surviving / total_pixels * 100.0) if total_pixels > 0 else 0.0
+
+    m_t2 = (res_arr < absdev_thresh) & np.isfinite(res_arr)
+    t2_surviving = int(np.count_nonzero(m_t2))
+    t2_pct = (t2_surviving / total_pixels * 100.0) if total_pixels > 0 else 0.0
+
+    m_final = m_t1 & m_t2
+    final_active = int(np.count_nonzero(m_final))
+    final_pct = (final_active / total_pixels * 100.0) if total_pixels > 0 else 0.0
+
+    summary_rows = [
+        {"Metric": "Dark Frames Count", "Value": str(diagnostics.dark_frame_count)},
+        {"Metric": "Total Pixels", "Value": str(total_pixels)},
+        {"Metric": "Valid Pixels", "Value": str(valid_pixels)},
+        {"Metric": "StdDev Mean (ADU)", "Value": f"{float(np.mean(std_finite)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev Std (ADU)", "Value": f"{float(np.std(std_finite)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev Median (ADU)", "Value": f"{float(np.median(std_finite)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev Min (ADU)", "Value": f"{float(np.min(std_finite)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev Max (ADU)", "Value": f"{float(np.max(std_finite)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 25% (ADU)", "Value": f"{float(np.percentile(std_finite, 25)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 50% (ADU)", "Value": f"{float(np.percentile(std_finite, 50)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 75% (ADU)", "Value": f"{float(np.percentile(std_finite, 75)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 90% (ADU)", "Value": f"{float(np.percentile(std_finite, 90)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 95% (ADU)", "Value": f"{float(np.percentile(std_finite, 95)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 99% (ADU)", "Value": f"{float(np.percentile(std_finite, 99)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "StdDev 99.9% (ADU)", "Value": f"{float(np.percentile(std_finite, 99.9)):.4f}" if len(std_finite) > 0 else "0.0"},
+        {"Metric": "Residual Mean (ADU)", "Value": f"{float(np.mean(res_finite)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual Std (ADU)", "Value": f"{float(np.std(res_finite)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual Median (ADU)", "Value": f"{float(np.median(res_finite)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual Min (ADU)", "Value": f"{float(np.min(res_finite)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual Max (ADU)", "Value": f"{float(np.max(res_finite)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 25% (ADU)", "Value": f"{float(np.percentile(res_finite, 25)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 50% (ADU)", "Value": f"{float(np.percentile(res_finite, 50)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 75% (ADU)", "Value": f"{float(np.percentile(res_finite, 75)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 90% (ADU)", "Value": f"{float(np.percentile(res_finite, 90)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 95% (ADU)", "Value": f"{float(np.percentile(res_finite, 95)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 99% (ADU)", "Value": f"{float(np.percentile(res_finite, 99)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Residual 99.9% (ADU)", "Value": f"{float(np.percentile(res_finite, 99.9)):.4f}" if len(res_finite) > 0 else "0.0"},
+        {"Metric": "Tier 1 Threshold (ADU)", "Value": f"{stddev_thresh:.2f}"},
+        {"Metric": "Tier 1 Surviving Pixels", "Value": str(t1_surviving)},
+        {"Metric": "Tier 1 Surviving Pct (%)", "Value": f"{t1_pct:.2f}"},
+        {"Metric": "Tier 2 Threshold (ADU)", "Value": f"{absdev_thresh:.2f}"},
+        {"Metric": "Tier 2 Surviving Pixels", "Value": str(t2_surviving)},
+        {"Metric": "Tier 2 Surviving Pct (%)", "Value": f"{t2_pct:.2f}"},
+        {"Metric": "Final Mask Active Pixels", "Value": str(final_active)},
+        {"Metric": "Final Mask Active Pct (%)", "Value": f"{final_pct:.2f}"},
+    ]
+    summary_path = out_dir / "dark_diagnostics_summary.csv"
+    pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+
+    # 2. StdDev Histogram Bins CSV
+    std_counts, std_edges = np.histogram(std_finite, bins=bins, range=(0.0, std_max))
+    std_starts = std_edges[:-1]
+    std_ends = std_edges[1:]
+    std_centers = (std_starts + std_ends) / 2.0
+    std_log_counts = np.zeros(bins, dtype=np.float64)
+    np.log10(std_counts, where=(std_counts > 0), out=std_log_counts)
+
+    df_std_bins = pd.DataFrame({
+        "bin_index": np.arange(bins, dtype=np.int64),
+        "bin_start_adu": std_starts,
+        "bin_end_adu": std_ends,
+        "bin_center_adu": std_centers,
+        "linear_count": std_counts,
+        "log10_count": std_log_counts,
+    })
+    stddev_bins_path = out_dir / "dark_stddev_histogram_bins.csv"
+    df_std_bins.to_csv(stddev_bins_path, index=False)
+
+    # 3. Residual Histogram Bins CSV
+    res_counts, res_edges = np.histogram(res_finite, bins=bins, range=(0.0, res_max))
+    res_starts = res_edges[:-1]
+    res_ends = res_edges[1:]
+    res_centers = (res_starts + res_ends) / 2.0
+    res_log_counts = np.zeros(bins, dtype=np.float64)
+    np.log10(res_counts, where=(res_counts > 0), out=res_log_counts)
+
+    df_res_bins = pd.DataFrame({
+        "bin_index": np.arange(bins, dtype=np.int64),
+        "bin_start_adu": res_starts,
+        "bin_end_adu": res_ends,
+        "bin_center_adu": res_centers,
+        "linear_count": res_counts,
+        "log10_count": res_log_counts,
+    })
+    residual_bins_path = out_dir / "dark_residual_histogram_bins.csv"
+    df_res_bins.to_csv(residual_bins_path, index=False)
+
+    # 4. Pixel Metrics CSV
+    h, w = std_arr.shape
+    rows_idx, cols_idx = np.indices((h, w))
+    df_metrics = pd.DataFrame({
+        "pixel_index": np.arange(total_pixels, dtype=np.int64),
+        "row": rows_idx.ravel(),
+        "col": cols_idx.ravel(),
+        "stddev_adu": std_arr.ravel(),
+        "residual_adu": res_arr.ravel(),
+        "is_valid_mask": m_final.ravel().astype(np.int8),
+    })
+    pixel_metrics_path = out_dir / "dark_pixel_metrics.csv"
+    df_metrics.to_csv(pixel_metrics_path, index=False)
+
+    return {
+        "summary": summary_path,
+        "stddev_bins": stddev_bins_path,
+        "residual_bins": residual_bins_path,
+        "pixel_metrics": pixel_metrics_path,
+    }
+
+
+def export_dark_diagnostics_plots(
+    diagnostics: DarkDiagnostics,
+    export_dir: str | Path,
+    bins: int = 60,
+    dpi: int = 300,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Path]:
+    """Export publication-grade scientific dark diagnostic histogram figures.
+
+    Renders:
+    - dark_histograms_publication.png (2-panel combined side-by-side)
+    - dark_stddev_histogram_publication.png (standalone high-res StdDev plot)
+    - dark_residual_histogram_publication.png (standalone high-res Residual plot)
+
+    Publication styling:
+    - Pure white background (facecolor="white")
+    - Crisp spines (#334155), dark typography (#1e293b), subtle dashed grid (#cbd5e1)
+    - Dual-axis: Log scale primary + Linear scale secondary overlay
+    - Clean distribution without interactive cutlines or shaded spans
+
+    Args:
+        diagnostics: DarkDiagnostics instance containing per_pixel_stddev and pct93_residual.
+        export_dir: Destination directory path.
+        bins: Number of histogram bins.
+        dpi: Output resolution (default 300 DPI for publication).
+        progress_callback: Optional progress callback receiving (current_step, total_steps, message).
+
+    Returns:
+        Dictionary mapping keys ('combined_plot', 'stddev_plot', 'residual_plot') to Path objects.
+    """
+    out_dir = Path(export_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    std_data = diagnostics.per_pixel_stddev.ravel()
+    res_data = diagnostics.pct93_residual.ravel()
+
+    std_finite = std_data[np.isfinite(std_data)]
+    res_finite = res_data[np.isfinite(res_data)]
+
+    std_max = max(100.0, float(np.percentile(std_finite, 99.9))) if len(std_finite) > 0 else 100.0
+    res_max = max(150.0, float(np.percentile(res_finite, 99.9))) if len(res_finite) > 0 else 150.0
+
+    def _draw_std_axis(ax_log, ax_lin) -> None:
+        ax_log.set_facecolor("white")
+        ax_log.set_title("Pixel Noise StdDev (σ)", color="#1e293b", fontsize=11, fontweight="bold", pad=8)
+        ax_log.set_xlabel("Standard Deviation σ (ADU)", color="#1e293b", fontsize=10)
+        ax_log.set_ylabel("Log Count", color="#0284c7", fontsize=10)
+        ax_log.tick_params(colors="#0284c7", labelsize=9)
+        for spine in ax_log.spines.values():
+            spine.set_color("#334155")
+        ax_log.grid(True, linestyle="--", color="#cbd5e1", alpha=0.5)
+
+        ax_lin.set_ylabel("Linear Count", color="#4338ca", fontsize=10)
+        ax_lin.tick_params(colors="#4338ca", labelsize=9)
+        ax_lin.yaxis.tick_right()
+        ax_lin.yaxis.set_label_position("right")
+        ax_lin.yaxis.get_offset_text().set_color("#4338ca")
+        ax_lin.yaxis.get_offset_text().set_fontsize(8)
+        for spine in ax_lin.spines.values():
+            spine.set_color("#334155")
+
+        if len(std_finite) > 0:
+            _, _, p_log = ax_log.hist(
+                std_finite,
+                bins=bins,
+                range=(0, std_max),
+                color="#0284c7",
+                edgecolor="#0f172a",
+                alpha=0.65,
+                log=True,
+                label="Log Count",
+            )
+            ax_lin.hist(
+                std_finite,
+                bins=bins,
+                range=(0, std_max),
+                histtype="stepfilled",
+                color="#818cf8",
+                alpha=0.25,
+                log=False,
+            )
+            _, _, p_lin = ax_lin.hist(
+                std_finite,
+                bins=bins,
+                range=(0, std_max),
+                histtype="step",
+                color="#4338ca",
+                linewidth=1.5,
+                log=False,
+                label="Linear Count",
+            )
+            handles = []
+            labels = []
+            if len(p_log) > 0:
+                handles.append(p_log[0])
+                labels.append("Log Count")
+            if len(p_lin) > 0:
+                handles.append(p_lin[0])
+                labels.append("Linear Count")
+            if handles:
+                ax_log.legend(
+                    handles,
+                    labels,
+                    facecolor="white",
+                    edgecolor="#cbd5e1",
+                    labelcolor="#1e293b",
+                    fontsize=9,
+                    loc="upper right",
+                )
+
+    def _draw_res_axis(ax_log, ax_lin) -> None:
+        ax_log.set_facecolor("white")
+        ax_log.set_title("93rd-Percentile Residual (Δ)", color="#1e293b", fontsize=11, fontweight="bold", pad=8)
+        ax_log.set_xlabel("Excursion Residual Δ (ADU)", color="#1e293b", fontsize=10)
+        ax_log.set_ylabel("Log Count", color="#d97706", fontsize=10)
+        ax_log.tick_params(colors="#d97706", labelsize=9)
+        for spine in ax_log.spines.values():
+            spine.set_color("#334155")
+        ax_log.grid(True, linestyle="--", color="#cbd5e1", alpha=0.5)
+
+        ax_lin.set_ylabel("Linear Count", color="#c2410c", fontsize=10)
+        ax_lin.tick_params(colors="#c2410c", labelsize=9)
+        ax_lin.yaxis.tick_right()
+        ax_lin.yaxis.set_label_position("right")
+        ax_lin.yaxis.get_offset_text().set_color("#c2410c")
+        ax_lin.yaxis.get_offset_text().set_fontsize(8)
+        for spine in ax_lin.spines.values():
+            spine.set_color("#334155")
+
+        if len(res_finite) > 0:
+            _, _, p_log = ax_log.hist(
+                res_finite,
+                bins=bins,
+                range=(0, res_max),
+                color="#d97706",
+                edgecolor="#0f172a",
+                alpha=0.65,
+                log=True,
+                label="Log Count",
+            )
+            ax_lin.hist(
+                res_finite,
+                bins=bins,
+                range=(0, res_max),
+                histtype="stepfilled",
+                color="#fb923c",
+                alpha=0.25,
+                log=False,
+            )
+            _, _, p_lin = ax_lin.hist(
+                res_finite,
+                bins=bins,
+                range=(0, res_max),
+                histtype="step",
+                color="#c2410c",
+                linewidth=1.5,
+                log=False,
+                label="Linear Count",
+            )
+            handles = []
+            labels = []
+            if len(p_log) > 0:
+                handles.append(p_log[0])
+                labels.append("Log Count")
+            if len(p_lin) > 0:
+                handles.append(p_lin[0])
+                labels.append("Linear Count")
+            if handles:
+                ax_log.legend(
+                    handles,
+                    labels,
+                    facecolor="white",
+                    edgecolor="#cbd5e1",
+                    labelcolor="#1e293b",
+                    fontsize=9,
+                    loc="upper right",
+                )
+
+    # 1. Standalone StdDev Plot
+    fig_std = Figure(figsize=(6.5, 5), facecolor="white")
+    _ = FigureCanvasAgg(fig_std)
+    ax_std_solo = fig_std.add_subplot(111)
+    ax_std_solo_lin = ax_std_solo.twinx()
+    _draw_std_axis(ax_std_solo, ax_std_solo_lin)
+    fig_std.tight_layout()
+    stddev_path = out_dir / "dark_stddev_histogram_publication.png"
+    fig_std.savefig(stddev_path, dpi=dpi, facecolor="white", bbox_inches="tight")
+    fig_std.clear()
+    if progress_callback is not None:
+        progress_callback(2, 4, "Rendering StdDev plot...")
+
+    # 2. Standalone Residual Plot
+    fig_res = Figure(figsize=(6.5, 5), facecolor="white")
+    _ = FigureCanvasAgg(fig_res)
+    ax_res_solo = fig_res.add_subplot(111)
+    ax_res_solo_lin = ax_res_solo.twinx()
+    _draw_res_axis(ax_res_solo, ax_res_solo_lin)
+    fig_res.tight_layout()
+    residual_path = out_dir / "dark_residual_histogram_publication.png"
+    fig_res.savefig(residual_path, dpi=dpi, facecolor="white", bbox_inches="tight")
+    fig_res.clear()
+    if progress_callback is not None:
+        progress_callback(3, 4, "Rendering Residual plot...")
+
+    # 3. 2-Panel Side-by-Side Combined Plot
+    fig_comb = Figure(figsize=(12, 5), facecolor="white")
+    _ = FigureCanvasAgg(fig_comb)
+    ax_std_comb = fig_comb.add_subplot(121)
+    ax_res_comb = fig_comb.add_subplot(122)
+    ax_std_comb_lin = ax_std_comb.twinx()
+    ax_res_comb_lin = ax_res_comb.twinx()
+
+    _draw_std_axis(ax_std_comb, ax_std_comb_lin)
+    _draw_res_axis(ax_res_comb, ax_res_comb_lin)
+
+    fig_comb.tight_layout()
+    combined_path = out_dir / "dark_histograms_publication.png"
+    fig_comb.savefig(combined_path, dpi=dpi, facecolor="white", bbox_inches="tight")
+    fig_comb.clear()
+    if progress_callback is not None:
+        progress_callback(4, 4, "Rendering Combined plot...")
+
+    return {
+        "combined_plot": combined_path,
+        "stddev_plot": stddev_path,
+        "residual_plot": residual_path,
+    }
+
+
+def export_dark_diagnostics(
+    diagnostics: DarkDiagnostics,
+    export_dir: str | Path,
+    stddev_thresh: float = 40.0,
+    absdev_thresh: float = 60.0,
+    tail_ratio: float = 0.9333,
+    bins: int = 60,
+    dpi: int = 300,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Path]:
+    """Comprehensive export of dark frame diagnostics: summary metrics, histogram data, and publication plots.
+
+    Args:
+        diagnostics: DarkDiagnostics instance containing per_pixel_stddev and pct93_residual.
+        export_dir: Destination directory path.
+        stddev_thresh: Upper threshold for per-pixel standard deviation (ADU).
+        absdev_thresh: Upper threshold for 93rd-percentile absolute residual (ADU).
+        tail_ratio: Required fraction of stable frames.
+        bins: Number of histogram bins.
+        dpi: Output resolution for publication figures.
+        progress_callback: Optional progress callback receiving (current_step, total_steps, message).
+
+    Returns:
+        Dictionary mapping all export keys ('summary', 'stddev_bins', 'residual_bins', 'pixel_metrics',
+        'combined_plot', 'stddev_plot', 'residual_plot') to their respective Path objects.
+    """
+    out_dir = Path(export_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    data_exports = export_dark_diagnostics_data(
+        diagnostics=diagnostics,
+        export_dir=out_dir,
+        stddev_thresh=stddev_thresh,
+        absdev_thresh=absdev_thresh,
+        tail_ratio=tail_ratio,
+        bins=bins,
+    )
+    if progress_callback is not None:
+        progress_callback(1, 4, "Saving CSV data...")
+
+    plot_exports = export_dark_diagnostics_plots(
+        diagnostics=diagnostics,
+        export_dir=out_dir,
+        bins=bins,
+        dpi=dpi,
+        progress_callback=progress_callback,
+    )
+
+    return {**data_exports, **plot_exports}
+
+
