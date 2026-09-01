@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QSplitter,
     QVBoxLayout,
+    QToolTip,
 )
 
 from rixs_app.ui.theme import (
@@ -40,6 +41,7 @@ from rixs_app.ui.theme import (
     _DROPDOWN_ARROW_SVG,
     _DROPDOWN_ARROW_HOVER_SVG,
     _DROPDOWN_ARROW_DISABLED_SVG,
+    apply_dark_palette,
     set_tool_btn,
     set_play_btn,
     set_active_btn,
@@ -281,7 +283,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     # Initial state
     assert rixs._sidebar_visible is False
     assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
-    assert rixs._sidebar_toggle.toolTip() == "Toggle RIXS Co-Pilot sidebar"
+    assert rixs._sidebar_toggle.toolTip() == "Open RIXS Co-Pilot Agentic AI Side Panel"
     assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
 
@@ -289,7 +291,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     rixs._show_sidebar()
     assert rixs._sidebar_visible is True
     assert rixs._sidebar_toggle.text() == "🤖 ✕"
-    assert rixs._sidebar_toggle.toolTip() == "Close Co-Pilot sidebar"
+    assert rixs._sidebar_toggle.toolTip() == "Close RIXS Co-Pilot Agentic AI Side Panel"
     assert "border: 1.5px solid #38bdf8" in rixs._sidebar_toggle.styleSheet()
     assert "color: #ffffff" in rixs._sidebar_toggle.styleSheet()
 
@@ -297,7 +299,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     rixs._hide_sidebar()
     assert rixs._sidebar_visible is False
     assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
-    assert rixs._sidebar_toggle.toolTip() == "Toggle RIXS Co-Pilot sidebar"
+    assert rixs._sidebar_toggle.toolTip() == "Open RIXS Co-Pilot Agentic AI Side Panel"
     assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
 
@@ -372,3 +374,64 @@ def test_all_app_comboboxes_styled_cleanly(qapp):
     model_combo = QComboBox(parent)
     model_combo.addItems(["lbl/cborg-deepthought:latest", "lbl/cborg-coder:latest"])
     assert model_combo.count() == 2
+
+
+# ===========================================================================
+# 8. Dark Palette, ToolTip & Squircle Card Sizing
+# ===========================================================================
+
+def test_apply_dark_palette_configures_palette_and_tooltip(qapp):
+    """Verify apply_dark_palette sets dark roles on QApplication, QPalette, and QToolTip."""
+    palette = apply_dark_palette(qapp)
+
+    # Check key color roles
+    assert palette.color(QPalette.ColorRole.Window).name().lower() == "#1a1a2e"
+    assert palette.color(QPalette.ColorRole.WindowText).name().lower() == "#e8eaf6"
+    assert palette.color(QPalette.ColorRole.Base).name().lower() == "#16213e"
+    assert palette.color(QPalette.ColorRole.Text).name().lower() == "#e8eaf6"
+    assert palette.color(QPalette.ColorRole.ToolTipBase).name().lower() == "#16213e"
+    assert palette.color(QPalette.ColorRole.ToolTipText).name().lower() == "#e8eaf6"
+
+    # Check global QToolTip palette
+    tooltip_palette = QToolTip.palette()
+    assert tooltip_palette.color(QPalette.ColorRole.ToolTipBase).name().lower() == "#16213e"
+    assert tooltip_palette.color(QPalette.ColorRole.ToolTipText).name().lower() == "#e8eaf6"
+
+
+def test_apply_dark_palette_with_widget(qapp):
+    """Verify apply_dark_palette applies to a QWidget instance."""
+    w = QWidget()
+    palette = apply_dark_palette(w)
+    assert w.palette().color(QPalette.ColorRole.ToolTipBase).name().lower() == "#16213e"
+    assert w.palette().color(QPalette.ColorRole.ToolTipText).name().lower() == "#e8eaf6"
+
+
+def test_apply_dark_palette_sets_fusion_style_and_global_stylesheet(qapp):
+    """Verify apply_dark_palette enforces Fusion style and FULL_QSS on QApplication."""
+    apply_dark_palette(qapp)
+    style = qapp.style()
+    style_names = [style.name().lower() if hasattr(style, "name") else style.objectName().lower()]
+    style_names.extend([c.name().lower() for c in style.children() if hasattr(c, "name")])
+    assert any("fusion" in name for name in style_names)
+    assert qapp.styleSheet() == FULL_QSS
+
+
+def test_qtooltip_qss_styling():
+    """Verify QToolTip and QLabel#qtooltip_label QSS rule in DARK_STYLE has explicit colors, borders, and padding."""
+    assert "QToolTip, QLabel#qtooltip_label" in DARK_STYLE or "QToolTip,\nQLabel#qtooltip_label" in DARK_STYLE
+    assert f"background-color: {PALETTE['bg_panel']};" in DARK_STYLE
+    assert f"color: {PALETTE['text']};" in DARK_STYLE
+    assert f"border: 1px solid {PALETTE['border_focus']};" in DARK_STYLE
+    assert "padding: 4px 8px;" in DARK_STYLE
+    assert "border-radius: 4px;" in DARK_STYLE
+
+
+def test_squircle_card_qss_no_forced_min_size():
+    """Verify QFrame#squircle_card does not enforce artificial min-width or min-height in QSS."""
+    match = re.search(r"QFrame#squircle_card\s*\{([^}]+)\}", DARK_STYLE)
+    assert match is not None, "QFrame#squircle_card rule not found in DARK_STYLE"
+    card_block = match.group(1)
+    assert "min-width" not in card_block, f"min-width should not be enforced in QSS: {card_block}"
+    assert "min-height" not in card_block, f"min-height should not be enforced in QSS: {card_block}"
+    assert "border-radius: 12px;" in card_block
+

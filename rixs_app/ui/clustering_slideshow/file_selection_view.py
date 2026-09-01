@@ -184,9 +184,8 @@ class ClusteringFileSelectionView(QWidget):
 
         layout.addStretch(1)
 
-        # Co-Pilot button docking container (transparent)
+        # Co-Pilot docking container
         self._copilot_container = QWidget(navbar)
-        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._copilot_container)

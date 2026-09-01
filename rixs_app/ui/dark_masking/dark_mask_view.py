@@ -178,9 +178,8 @@ class DarkMaskingView(QWidget):
 
         navbar_layout.addStretch(1)
 
-        # Co-Pilot docking container (transparent)
+        # Co-Pilot docking placeholder container
         self._copilot_container = QWidget(self)
-        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         navbar_layout.addWidget(self._copilot_container)

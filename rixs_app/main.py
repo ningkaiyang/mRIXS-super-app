@@ -12,13 +12,13 @@ import os
 import sys
 import platform
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QSplitter, QWidget,
     QVBoxLayout, QHBoxLayout, QPushButton,
 )
 
-from rixs_app.ui.theme import FULL_QSS, PALETTE, set_tool_btn, set_copilot_btn
+from rixs_app.ui.theme import FULL_QSS, PALETTE, set_tool_btn, set_copilot_btn, apply_dark_palette
 
 
 from rixs_app.ui.home_launchpad import HomeLaunchpadView
@@ -54,6 +54,39 @@ _VIEW_NAMES = {
 }
 
 
+class RixsStackedWidget(QStackedWidget):
+    """Responsive stacked widget that limits its sizeHint and minimumSizeHint to active page."""
+
+    def minimumSizeHint(self) -> QSize:
+        cur = self.currentWidget()
+        if cur is not None:
+            min_hint = cur.minimumSizeHint()
+            w = min(min_hint.width(), 800) if min_hint.width() > 0 else 400
+            h = min(min_hint.height(), 600) if min_hint.height() > 0 else 300
+            return QSize(w, h)
+        return QSize(400, 300)
+
+    def sizeHint(self) -> QSize:
+        cur = self.currentWidget()
+        if cur is not None:
+            shint = cur.sizeHint()
+            w = min(shint.width(), 1200) if shint.width() > 0 else 800
+            h = min(shint.height(), 900) if shint.height() > 0 else 600
+            return QSize(w, h)
+        return QSize(800, 600)
+
+
+class RixsSplitter(QSplitter):
+    """Responsive horizontal splitter preventing layout expansion on child toggle."""
+
+    def __init__(self, orientation: Qt.Orientation = Qt.Orientation.Horizontal, parent: QWidget | None = None):
+        super().__init__(orientation, parent)
+        self.setChildrenCollapsible(False)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(600, 400)
+
+
 class RixsApp(QMainWindow):
     """Main application window for the RIXS Super-App.
 
@@ -77,16 +110,19 @@ class RixsApp(QMainWindow):
 
         # Apply global dark theme
         self.setStyleSheet(FULL_QSS)
+        apply_dark_palette(self)
 
         # ------------------------------------------------------------------
-        # Central layout: QSplitter (views left | agent sidebar right)
+        # Central layout: RixsSplitter (views left | agent sidebar right)
         # ------------------------------------------------------------------
-        self._splitter = QSplitter(Qt.Horizontal, self)
+        self._splitter = RixsSplitter(Qt.Orientation.Horizontal, self)
         self.setCentralWidget(self._splitter)
 
         # Left side: stacked views (no wrapper — Co-Pilot btn lives in each navbar)
-        self._stack = QStackedWidget()
+        self._stack = RixsStackedWidget()
         self._splitter.addWidget(self._stack)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
 
         # Build views
         self.home_view = HomeLaunchpadView(
@@ -146,7 +182,7 @@ class RixsApp(QMainWindow):
         # Co-Pilot toggle button (reparented into each view's navbar on switch)
         self._sidebar_toggle = QPushButton("🤖 Co-Pilot")
         self._sidebar_toggle.setFixedHeight(28)
-        self._sidebar_toggle.setToolTip("Toggle RIXS Co-Pilot sidebar")
+        self._sidebar_toggle.setToolTip("Open RIXS Co-Pilot Agentic AI Side Panel")
         set_copilot_btn(self._sidebar_toggle)
         self._sidebar_toggle.clicked.connect(self._toggle_sidebar)
         self._stack.currentChanged.connect(self._reparent_toggle_btn)
@@ -161,10 +197,11 @@ class RixsApp(QMainWindow):
         self._sidebar_visible = False
         self._models_loaded = False
 
-        # Pre-warm Chromium so the sidebar opens instantly on first toggle.
-        # No setVisible(False) — Chromium defers page loading for hidden widgets.
+        # Pre-warm Chromium and pre-initialize sidebar in hidden state so
+        # QSplitter topology is established at startup (eliminates first-toggle layout jump)
         from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
         self._preloaded_chat_view = ChatWebView()
+        self._init_sidebar(prompt_wizard=False)
 
         self.show_home()
         self._reparent_toggle_btn(self._stack.currentIndex())  # initial placement
@@ -177,27 +214,36 @@ class RixsApp(QMainWindow):
     # Agent sidebar management
     # ------------------------------------------------------------------
 
-    def _init_sidebar(self) -> None:
-        """Lazily initialise the agent sidebar, engine, and bridge.
+    def _init_sidebar(self, prompt_wizard: bool = True) -> bool:
+        """Initialise the agent sidebar, engine, and bridge.
 
-        Called on first sidebar toggle. Checks for API key availability
-        and shows the setup wizard if needed.
+        Args:
+            prompt_wizard: If True, show the setup wizard modal if API key is missing.
+                If False, gracefully skip initialization until user triggers the sidebar.
+
+        Returns:
+            True if sidebar is created and ready, False otherwise.
         """
+        if self._sidebar is not None:
+            return True
+
         from rixs_app.agent.auth import resolve_api_key, fetch_model_list, CBORG_DEFAULT_MODEL
         from rixs_app.agent.tools import create_default_registry
         from rixs_app.agent.engine import CborgAgentEngine
         from rixs_app.agent.bridge import GuiAgentBridge
         from rixs_app.ui.agent_sidebar.sidebar_widget import AgentSidebarWidget
 
-        # Resolve API key (may trigger setup wizard)
+        # Resolve API key (optionally trigger setup wizard)
         api_key = resolve_api_key()
         if not api_key:
+            if not prompt_wizard:
+                return False
             from rixs_app.ui.agent_sidebar.setup_wizard import CBORGSetupWizard
             wizard = CBORGSetupWizard(self)
             if wizard.exec():
                 api_key = wizard.api_key
             if not api_key:
-                return  # User cancelled — don't create sidebar
+                return False
 
         # Create agent infrastructure
         registry = create_default_registry()
@@ -225,11 +271,15 @@ class RixsApp(QMainWindow):
         # Override get_minimal_gui_context to provide real context
         self._sidebar.get_minimal_gui_context = self._get_gui_context
 
-        # Add to splitter
+        # Add to splitter in hidden state so splitter layout is pre-established
+        self._sidebar.hide()
         self._splitter.addWidget(self._sidebar)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setStretchFactor(1, 0)
 
         # Populate model list in background
         self._load_models_async(api_key)
+        return True
 
     def _load_models_async(self, api_key: str) -> None:
         """Load available models in a background thread and update UI safely on main thread."""
@@ -292,8 +342,7 @@ class RixsApp(QMainWindow):
     def _toggle_sidebar(self) -> None:
         """Toggle the agent sidebar visibility."""
         if self._sidebar is None:
-            self._init_sidebar()
-            if self._sidebar is None:
+            if not self._init_sidebar(prompt_wizard=True):
                 return  # Setup was cancelled
             self._show_sidebar()
         elif self._sidebar_visible:
@@ -306,25 +355,18 @@ class RixsApp(QMainWindow):
         if self._sidebar is None:
             return
 
-        was_maximized = self.isMaximized()
-        geom = self.geometry()
-
-        self._sidebar.show()
-
-        total_width = self.centralWidget().width() if self.centralWidget() else self.width()
+        total_width = (
+            self._splitter.width()
+            or (self.centralWidget().width() if self.centralWidget() else 0)
+            or self.width()
+        )
         sidebar_w = min(self._sidebar_cached_width, max(280, total_width // 3))
         left_w = max(300, total_width - sidebar_w)
         self._splitter.setSizes([left_w, sidebar_w])
-
-        # Ensure window geometry was not altered by Qt layout recalculation
-        if was_maximized and not self.isMaximized():
-            self.showMaximized()
-        elif not was_maximized and self.geometry() != geom:
-            self.setGeometry(geom)
-
+        self._sidebar.show()
         self._sidebar_visible = True
         self._sidebar_toggle.setText("🤖 ✕")
-        self._sidebar_toggle.setToolTip("Close Co-Pilot sidebar")
+        self._sidebar_toggle.setToolTip("Close RIXS Co-Pilot Agentic AI Side Panel")
         self._sidebar_toggle.setStyleSheet(
             "QPushButton#copilot_btn { background-color: #0369a1; border: 1.5px solid #38bdf8; color: #ffffff; border-radius: 14px; padding: 4px 14px; font-weight: 600; }"
         )
@@ -339,7 +381,7 @@ class RixsApp(QMainWindow):
         self._sidebar.hide()
         self._sidebar_visible = False
         self._sidebar_toggle.setText("🤖 Co-Pilot")
-        self._sidebar_toggle.setToolTip("Toggle RIXS Co-Pilot sidebar")
+        self._sidebar_toggle.setToolTip("Open RIXS Co-Pilot Agentic AI Side Panel")
         self._sidebar_toggle.setStyleSheet("")
         set_copilot_btn(self._sidebar_toggle)
 
@@ -652,6 +694,7 @@ class RixsApp(QMainWindow):
 def main() -> None:
     """Application entry point."""
     app = QApplication.instance() or QApplication(sys.argv)
+    apply_dark_palette(app)
     window = RixsApp(show_window=True)
     sys.exit(app.exec())
 

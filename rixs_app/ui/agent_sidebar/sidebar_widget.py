@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QComboBox, QMessageBox,
+    QTextEdit, QComboBox, QMessageBox, QSizePolicy,
 )
 
 from rixs_app.ui.theme import (
@@ -145,7 +145,13 @@ class AgentSidebarWidget(QWidget):
 
         self.model_combo = QComboBox()
         self.model_combo.setFixedHeight(28)
-        self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.model_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.model_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.model_combo.setMinimumContentsLength(6)
         self.model_combo.view().setTextElideMode(Qt.TextElideMode.ElideNone)
         self.model_combo.currentTextChanged.connect(self.bridge.set_model)
         toolbar_layout.addWidget(self.model_combo)

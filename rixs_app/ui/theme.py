@@ -6,13 +6,18 @@ throughout the codebase.
 
 Usage::
 
-    from rixs_app.ui.theme import DARK_STYLE, PALETTE, make_button_style
+    from rixs_app.ui.theme import DARK_STYLE, PALETTE, apply_dark_palette, make_button_style
+    apply_dark_palette(app)
     app.setStyleSheet(DARK_STYLE)
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication, QToolTip, QWidget
 
 _ASSETS_DIR = Path(__file__).parent / "assets"
 _DROPDOWN_ARROW_SVG = (_ASSETS_DIR / "dropdown_arrow.svg").resolve().as_posix()
@@ -54,8 +59,6 @@ PALETTE = {
     "scroll_handle":"#3d4a7a",
     "scroll_hover": "#5060a0",
 }
-
-import sys
 
 # ---------------------------------------------------------------------------
 # Font Stacks (platform-specific physical fonts to avoid QPA alias penalty)
@@ -688,11 +691,11 @@ QMessageBox QPushButton {{
 }}
 
 /* ── ToolTips ───────────────────────────────────────────── */
-QToolTip {{
+QToolTip, QLabel#qtooltip_label {{
     background-color: {PALETTE['bg_panel']};
     color: {PALETTE['text']};
     border: 1px solid {PALETTE['border_focus']};
-    padding: 4px 6px;
+    padding: 4px 8px;
     border-radius: 4px;
 }}
 
@@ -701,8 +704,6 @@ QFrame#squircle_card {{
     background-color: {PALETTE['bg_panel']};
     border: 1px solid {PALETTE['border']};
     border-radius: 12px;
-    min-width: 280px;
-    min-height: 160px;
 }}
 
 QFrame#squircle_card:hover {{
@@ -915,4 +916,50 @@ def set_copilot_btn(btn) -> None:
 
 # Alias used by main.py for the full application stylesheet
 FULL_QSS = DARK_STYLE
+
+
+def apply_dark_palette(app_or_widget: QApplication | QWidget | None = None) -> QPalette:
+    """Configure and apply a comprehensive dark QPalette, Fusion style, and stylesheet.
+
+    Fixes macOS Cocoa blank/light tooltip rendering where unset QPalette or native style
+    causes tooltips to render as blank light-gray rectangles despite stylesheet definitions.
+
+    Args:
+        app_or_widget: Optional QApplication or QWidget instance to apply the palette to.
+            If None, the current QApplication.instance() is targeted if available.
+
+    Returns:
+        The configured QPalette instance.
+    """
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(PALETTE["bg_base"]))          # #1a1a2e
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(PALETTE["text"]))         # #e8eaf6
+    palette.setColor(QPalette.ColorRole.Base, QColor(PALETTE["bg_panel"]))           # #16213e
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(PALETTE["bg_base"]))   # #1a1a2e
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(PALETTE["bg_panel"]))    # #16213e
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(PALETTE["text"]))        # #e8eaf6
+    palette.setColor(QPalette.ColorRole.Text, QColor(PALETTE["text"]))               # #e8eaf6
+    palette.setColor(QPalette.ColorRole.Button, QColor(PALETTE["bg_panel"]))         # #16213e
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(PALETTE["text"]))         # #e8eaf6
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(PALETTE["text_error"]))   # #ef5350
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(PALETTE["accent_blue"]))   # #2196f3
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+
+    # Explicitly configure QToolTip palette for Cocoa / macOS
+    QToolTip.setPalette(palette)
+
+    # Apply Fusion style, global stylesheet, and palette to QApplication
+    app = app_or_widget if isinstance(app_or_widget, QApplication) else QApplication.instance()
+    if app is not None:
+        app.setStyle("Fusion")
+        app.setStyleSheet(FULL_QSS)
+        app.setPalette(palette)
+
+    # Apply palette to widget if a specific widget was passed
+    if app_or_widget is not None and app_or_widget is not app:
+        if hasattr(app_or_widget, "setPalette"):
+            app_or_widget.setPalette(palette)
+
+    return palette
+
 

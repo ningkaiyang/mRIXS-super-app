@@ -238,9 +238,8 @@ class ClusteringStudioView(QWidget):
         self._save_chunks_btn.clicked.connect(self._handle_save_chunks_clicked)
         layout.addWidget(self._save_chunks_btn)
 
-        # Co-Pilot docking container (transparent)
+        # Co-Pilot docking container
         self._copilot_container = QWidget(navbar)
-        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._copilot_container)

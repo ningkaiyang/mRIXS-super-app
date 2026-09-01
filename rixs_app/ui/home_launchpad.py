@@ -186,9 +186,8 @@ class HomeLaunchpadView(QWidget):
 
         self._header_layout.addStretch(1)
 
-        # Docking placeholder container for Co-Pilot button (transparent)
+        # Docking placeholder container for Co-Pilot button
         self._copilot_container = QWidget(self)
-        self._copilot_container.setStyleSheet("background: transparent;")
         self._copilot_container_layout = QHBoxLayout(self._copilot_container)
         self._copilot_container_layout.setContentsMargins(0, 0, 0, 0)
         self._header_layout.addWidget(self._copilot_container)
