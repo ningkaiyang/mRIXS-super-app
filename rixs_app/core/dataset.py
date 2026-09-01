@@ -32,6 +32,7 @@ import os
 import pathlib
 import hashlib
 import threading
+import datetime
 
 
 def _frame_key(filepath: str) -> str:
@@ -48,6 +49,61 @@ def _frame_key(filepath: str) -> str:
     except OSError:
         mtime = ""
     return hashlib.md5((filepath + mtime).encode()).hexdigest()[:12]
+
+
+def _write_cache_readme(cache_dir: str, tif_dir: str, file_list: list[str]) -> None:
+    """Write or update a human-readable README_CACHE.txt and .gitignore inside the cache folder.
+
+    Args:
+        cache_dir: Path to the cache directory (e.g. ``<tif_dir>/tif-cache``).
+        tif_dir: Path to the source TIFF directory.
+        file_list: List of source TIFF file paths.
+    """
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        gitignore_path = os.path.join(cache_dir, ".gitignore")
+        if not os.path.exists(gitignore_path):
+            with open(gitignore_path, "w", encoding="utf-8") as f:
+                f.write("*\n")
+
+        readme_path = os.path.join(cache_dir, "README_CACHE.txt")
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        lines = [
+            "=" * 80,
+            "QERLIN Beamline 6.0.2 RIXS Super-App — Frame Performance Cache",
+            "=" * 80,
+            "This directory (tif-cache/) was automatically generated to accelerate GUI",
+            "slider scrubbing, temporal median calculations, and alignment processing.",
+            "",
+            f"Source Directory : {tif_dir}",
+            f"Last Updated     : {now_str}",
+            "",
+            "SAFETY NOTE:",
+            "- This directory contains ONLY cached binary data.",
+            "- It is 100% SAFE TO DELETE at any time.",
+            "- If deleted, the application will automatically regenerate it on the next run.",
+            "",
+            "Cached Files:",
+        ]
+
+        for idx, filepath in enumerate(file_list, 1):
+            fname = os.path.basename(filepath)
+            key = _frame_key(filepath)
+            try:
+                size_mb = os.path.getsize(filepath) / (1024 * 1024)
+                mtime_str = datetime.datetime.fromtimestamp(os.path.getmtime(filepath)).strftime("%Y-%m-%d %H:%M:%S")
+                lines.append(f"  - [{idx:03d}] {fname} (Key: {key}, Size: {size_mb:.1f} MB, Modified: {mtime_str})")
+            except OSError:
+                lines.append(f"  - [{idx:03d}] {fname} (Key: {key})")
+
+        lines.append("=" * 80)
+        lines.append("")
+
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+    except Exception:
+        pass
 
 
 class ZarrSequenceManager:
@@ -81,6 +137,8 @@ class ZarrSequenceManager:
         median_frame (np.ndarray | None): 2-D ``float32`` array of shape
             ``(H, W)`` containing the pixel-wise temporal median across all
             frames.  ``None`` until :meth:`compute_median` completes.
+        cache_dir (str | None): Path to the on-disk cache directory.
+        tif_dir (str | None): Path to the directory containing source TIFF files.
     """
 
     def __init__(self, file_list: list[str], chunk_size: int = 10):
@@ -89,6 +147,8 @@ class ZarrSequenceManager:
         self.n_frames = len(file_list)
         self.zarr_group = None
         self.median_frame = None
+        self.cache_dir = None
+        self.tif_dir = None
         self._loading_done = threading.Event()
         self._init_zarr()
 
@@ -103,24 +163,28 @@ class ZarrSequenceManager:
         by all :class:`ZarrSequenceManager` instances that point at the same
         directory.  Individual frames are keyed by :func:`_frame_key`.
         """
-        if not self.file_list:
+        if not self.file_list or not any(os.path.exists(f) for f in self.file_list):
             self._loading_done.set()
             return
 
-        tif_dir = os.path.dirname(os.path.abspath(self.file_list[0]))
+        self.tif_dir = os.path.dirname(os.path.abspath(self.file_list[0]))
         try:
-            cache_dir = os.path.join(tif_dir, "tif-cache")
-            os.makedirs(cache_dir, exist_ok=True)
-            group_path = os.path.join(cache_dir, "frames.zarr")
+            self.cache_dir = os.path.join(self.tif_dir, "tif-cache")
+            os.makedirs(self.cache_dir, exist_ok=True)
+            _write_cache_readme(self.cache_dir, self.tif_dir, self.file_list)
+            group_path = os.path.join(self.cache_dir, "frames.zarr")
             self.zarr_group = zarr.open_group(pathlib.Path(group_path), mode="a")
         except (PermissionError, OSError):
             try:
                 import tempfile
-                dir_hash = hashlib.md5(tif_dir.encode("utf-8")).hexdigest()
-                group_path = os.path.join(tempfile.gettempdir(), f"rixs_cache_{dir_hash}")
+                dir_hash = hashlib.md5(self.tif_dir.encode("utf-8")).hexdigest()
+                self.cache_dir = os.path.join(tempfile.gettempdir(), f"rixs_cache_{dir_hash}")
+                group_path = self.cache_dir
                 self.zarr_group = zarr.open_group(pathlib.Path(group_path), mode="a")
+                _write_cache_readme(self.cache_dir, self.tif_dir, self.file_list)
             except Exception:
                 self.zarr_group = None
+                self.cache_dir = None
         self._load_all_async()
 
     def _load_all_async(self) -> None:
@@ -134,16 +198,21 @@ class ZarrSequenceManager:
         def _worker():
             try:
                 for filepath in self.file_list:
-                    key = _frame_key(filepath)
-                    if self.zarr_group is not None and key not in self.zarr_group:
-                        try:
+                    try:
+                        key = _frame_key(filepath)
+                        if self.zarr_group is not None and key not in self.zarr_group:
                             raw = tifffile.imread(filepath).astype(np.float32)
                             raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
                             if self.zarr_group is not None:
                                 self.zarr_group[key] = raw
-                        except Exception:
-                            pass
-                self.compute_median()
+                    except Exception:
+                        pass
+                try:
+                    self.compute_median()
+                    if self.cache_dir and self.tif_dir:
+                        _write_cache_readme(self.cache_dir, self.tif_dir, self.file_list)
+                except Exception:
+                    pass
             finally:
                 self._loading_done.set()
 
@@ -303,4 +372,7 @@ class CLIZarrSequenceManager(ZarrSequenceManager):
                             file=sys.stderr,
                         )
         self.compute_median()
+        if self.cache_dir and self.tif_dir:
+            _write_cache_readme(self.cache_dir, self.tif_dir, self.file_list)
         self._loading_done.set()
+

@@ -69,3 +69,67 @@ class TestZarrHashPath(unittest.TestCase):
         # Verify no truncated directory was created in the temp parent
         current_contents = os.listdir(self.temp_parent)
         self.assertEqual(current_contents, ["spec#1"], "No truncated or extra directories should be created")
+
+    def test_zarr_cache_skipped_for_empty_or_missing_files(self) -> None:
+        """Verify that no tif-cache is created if file_list is empty or files don't exist."""
+        # Case 1: Empty file list
+        empty_manager = ZarrSequenceManager([])
+        empty_manager._loading_done.wait(timeout=1.0)
+        self.assertIsNone(empty_manager.zarr_group)
+
+        # Case 2: Non-existent file path
+        missing_path = os.path.join(self.temp_parent, "non_existent", "frame_001.tif")
+        manager = ZarrSequenceManager([missing_path])
+        manager._loading_done.wait(timeout=1.0)
+
+        cache_dir = os.path.join(os.path.dirname(missing_path), "tif-cache")
+        self.assertFalse(os.path.exists(cache_dir), "tif-cache should not be created for non-existent files")
+        self.assertIsNone(manager.zarr_group)
+
+    def test_zarr_cache_readme_and_gitignore_created(self) -> None:
+        """Verify that README_CACHE.txt and .gitignore are created inside tif-cache."""
+        manager = ZarrSequenceManager([self.mock_tif])
+        manager._loading_done.wait(timeout=5.0)
+
+        cache_dir = os.path.join(self.hash_dir, "tif-cache")
+        readme_path = os.path.join(cache_dir, "README_CACHE.txt")
+        gitignore_path = os.path.join(cache_dir, ".gitignore")
+
+        self.assertTrue(os.path.exists(readme_path), "README_CACHE.txt should be created")
+        self.assertTrue(os.path.exists(gitignore_path), ".gitignore should be created")
+
+        with open(readme_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("QERLIN Beamline 6.0.2 RIXS Super-App", content)
+        self.assertIn("100% SAFE TO DELETE", content)
+        self.assertIn("frame_001.tif", content)
+        self.assertIn(self.hash_dir, content)
+        self.assertIn("Source Directory :", content)
+        self.assertIn("Last Updated     :", content)
+        self.assertIn("Cached Files:", content)
+
+        with open(gitignore_path, "r", encoding="utf-8") as f:
+            gi_content = f.read()
+        self.assertEqual(gi_content.strip(), "*")
+
+    def test_zarr_cache_readme_updates_on_new_file(self) -> None:
+        """Verify that README_CACHE.txt is updated with all files when a sequence is loaded."""
+        mock_tif2 = os.path.join(self.hash_dir, "frame_002.tif")
+        dummy_data2 = np.ones((10, 10), dtype=np.float32)
+        tifffile.imwrite(mock_tif2, dummy_data2)
+
+        manager = ZarrSequenceManager([self.mock_tif, mock_tif2])
+        self.assertTrue(manager._loading_done.wait(timeout=5.0))
+
+        cache_dir = os.path.join(self.hash_dir, "tif-cache")
+        readme_path = os.path.join(cache_dir, "README_CACHE.txt")
+        self.assertTrue(os.path.exists(readme_path), "README_CACHE.txt should exist")
+
+        with open(readme_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("[001] frame_001.tif", content)
+        self.assertIn("[002] frame_002.tif", content)
+
+
