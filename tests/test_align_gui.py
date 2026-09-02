@@ -21,9 +21,8 @@ import pytest
 import tifffile
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QSlider
+from PySide6.QtWidgets import QApplication, QSlider, QStackedWidget, QWidget
 
-from rixs_app.main import RixsApp
 from rixs_app.core import (
     natural_sort,
     find_peak_line,
@@ -32,7 +31,46 @@ from rixs_app.core import (
     preprocess_image,
     PCAFitFailure,
 )
+from rixs_app.ui.sorting_view import SortingView
+from rixs_app.ui.alignment_slideshow.slideshow_view import SlideshowView
 from rixs_app.ui.alignment_slideshow.alignment_manager import SlideshowManager
+
+
+class _MockAlignAppWindow(QWidget):
+    """Lightweight harness providing sorting_view and slideshow_view with stacked navigation."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._stack = QStackedWidget(self)
+        self.sorting_view = SortingView(
+            on_back=lambda: None,
+            on_start_slideshow=self.show_slideshow,
+            on_zeroth_order=lambda: None,
+        )
+        self.slideshow_view = SlideshowView(
+            on_back_to_sorting=self.show_sorting,
+            on_show_export_comparison=lambda *args: None,
+        )
+        self._stack.addWidget(self.sorting_view)
+        self._stack.addWidget(self.slideshow_view)
+        self._stack.setCurrentWidget(self.sorting_view)
+
+    def show_sorting(self) -> None:
+        self._stack.setCurrentWidget(self.sorting_view)
+        self.sorting_view.update_listbox()
+
+    def show_slideshow(self, file_list: list[str]) -> None:
+        self._stack.setCurrentWidget(self.slideshow_view)
+        self.slideshow_view.start(file_list)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        if key == Qt.Key_Left:
+            if self._stack.currentWidget() is self.slideshow_view:
+                self.slideshow_view.prev_frame()
+        elif key == Qt.Key_Right:
+            if self._stack.currentWidget() is self.slideshow_view:
+                self.slideshow_view.next_frame()
 
 
 # ---------------------------------------------------------------------------
@@ -69,11 +107,12 @@ def temp_tif_files(tmp_path):
 
 @pytest.fixture
 def app_window(qapp, temp_tif_files, qtbot):
-    """Instantiate RixsApp headlessly and register with qtbot."""
-    window = RixsApp(show_window=False)
+    """Instantiate lightweight alignment test harness without RixsApp overhead."""
+    window = _MockAlignAppWindow()
     qtbot.addWidget(window)
     yield window
     window.close()
+    window.deleteLater()
 
 
 # ---------------------------------------------------------------------------

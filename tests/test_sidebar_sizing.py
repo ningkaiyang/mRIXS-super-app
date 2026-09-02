@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 import pytest
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -39,6 +39,14 @@ from rixs_app.main import (
     _IDX_ZEROTH_ORDER,
 )
 from rixs_app.ui.agent_sidebar.sidebar_widget import AgentSidebarWidget
+from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
+from tests.conftest import cleanup_app
+
+
+class _MockChat(QWidget):
+    """Mock ChatWebView to prevent Chromium / QWebEngineView initialization during tests."""
+    approval_given = Signal(object)
+    approval_rejected = Signal(object)
 
 
 @pytest.fixture(scope="session")
@@ -122,6 +130,7 @@ def test_sidebar_toggle_preserves_main_window_geometry(qapp, qtbot):
     assert app_win.size() == initial_size
     assert app_win.width() == initial_size.width()
     assert app_win.height() == initial_size.height()
+    cleanup_app(app_win, qapp, qtbot)
 
 
 def test_sidebar_toggle_across_all_views(qapp, qtbot):
@@ -168,6 +177,7 @@ def test_sidebar_toggle_across_all_views(qapp, qtbot):
         app_win._hide_sidebar()
         qapp.processEvents()
         assert app_win.size() == target_size, f"Size changed on close in view {name}: {app_win.size()} vs {target_size}"
+    cleanup_app(app_win, qapp, qtbot)
 
 
 # ===========================================================================
@@ -194,6 +204,7 @@ def test_copilot_button_tooltip_states(qapp, qtbot):
     # Close sidebar
     app_win._hide_sidebar()
     assert app_win._sidebar_toggle.toolTip() == "Open RIXS Co-Pilot Agentic AI Side Panel"
+    cleanup_app(app_win, qapp, qtbot)
 
 
 # ===========================================================================
@@ -204,7 +215,8 @@ def test_agent_sidebar_model_combo_responsiveness(qapp, qtbot):
     """Verify model_combo has Expanding size policy and AdjustToMinimumContentsLengthWithIcon."""
     mock_bridge = MagicMock()
     mock_main = QWidget()
-    sidebar = AgentSidebarWidget(bridge=mock_bridge, main_window_ref=mock_main)
+    mock_chat = _MockChat()
+    sidebar = AgentSidebarWidget(bridge=mock_bridge, main_window_ref=mock_main, chat_view=mock_chat)
     qtbot.addWidget(sidebar)
 
     policy = sidebar.model_combo.sizePolicy()
@@ -227,6 +239,7 @@ def test_main_app_applies_dark_palette(qapp, qtbot):
     palette = app_win.palette()
     assert palette.color(QPalette.ColorRole.ToolTipBase).name().lower() == "#16213e"
     assert palette.color(QPalette.ColorRole.Window).name().lower() == "#1a1a2e"
+    cleanup_app(app_win, qapp, qtbot)
 
 
 # ===========================================================================
@@ -235,10 +248,11 @@ def test_main_app_applies_dark_palette(qapp, qtbot):
 
 def test_sidebar_first_init_hidden_and_smooth_sizing(qapp, qtbot, monkeypatch):
     """Verify _init_sidebar hides sidebar before adding to splitter and _show_sidebar calculates sizes smoothly."""
+    monkeypatch.setattr("rixs_app.ui.agent_sidebar.chat_web_view.ChatWebView", _MockChat)
     monkeypatch.setattr("rixs_app.agent.auth.resolve_api_key", lambda: "mock_key")
     monkeypatch.setattr("rixs_app.main.RixsApp._load_models_async", lambda self, key: None)
 
-    app_win = RixsApp(show_window=False)
+    app_win = RixsApp(show_window=False, preload_copilot=True)
     qtbot.addWidget(app_win)
     app_win.resize(1200, 800)
     app_win.show()
@@ -260,6 +274,7 @@ def test_sidebar_first_init_hidden_and_smooth_sizing(qapp, qtbot, monkeypatch):
     assert sizes[1] > 0
     assert sizes[0] >= 300
     assert sizes[1] <= app_win._sidebar_cached_width
+    cleanup_app(app_win, qapp, qtbot)
 
 
 def test_show_sidebar_total_width_fallback(qapp, qtbot, monkeypatch):
@@ -294,5 +309,6 @@ def test_show_sidebar_total_width_fallback(qapp, qtbot, monkeypatch):
     assert len(set_sizes_called_with) == 2
     assert set_sizes_called_with[1] > 0
     assert set_sizes_called_with[0] >= 300
+    cleanup_app(app_win, qapp, qtbot)
 
 

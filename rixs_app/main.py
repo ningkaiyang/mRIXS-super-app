@@ -96,13 +96,16 @@ class RixsApp(QMainWindow):
     Args:
         show_window: Whether to show the window after construction. Set
             False during headless testing.
+        preload_copilot: Whether to pre-warm the agent sidebar Chromium view.
+            Defaults to True if show_window=True and not running in pytest.
     """
 
-    def __init__(self, show_window: bool = True):
+    def __init__(self, show_window: bool = True, preload_copilot: bool | None = None):
         """Initialise the main window and all sub-views.
 
         Args:
             show_window: Whether to call show() at the end of __init__.
+            preload_copilot: Whether to pre-warm the agent sidebar Chromium view.
         """
         super().__init__()
         self.setWindowTitle("RIXS Super-App — Advanced X-ray Spectroscopy Suite")
@@ -197,11 +200,17 @@ class RixsApp(QMainWindow):
         self._sidebar_visible = False
         self._models_loaded = False
 
-        # Pre-warm Chromium and pre-initialize sidebar in hidden state so
-        # QSplitter topology is established at startup (eliminates first-toggle layout jump)
-        from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
-        self._preloaded_chat_view = ChatWebView()
-        self._init_sidebar(prompt_wizard=False)
+        if preload_copilot is None:
+            preload_copilot = show_window and not bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+        if preload_copilot:
+            # Pre-warm Chromium and pre-initialize sidebar in hidden state so
+            # QSplitter topology is established at startup (eliminates first-toggle layout jump)
+            from rixs_app.ui.agent_sidebar.chat_web_view import ChatWebView
+            self._preloaded_chat_view = ChatWebView()
+            self._init_sidebar(prompt_wizard=False)
+        else:
+            self._preloaded_chat_view = None
 
         self.show_home()
         self._reparent_toggle_btn(self._stack.currentIndex())  # initial placement

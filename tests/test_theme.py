@@ -54,6 +54,7 @@ from rixs_app.ui.theme import (
     set_amber_btn,
 )
 from rixs_app.main import RixsApp, _IDX_SORTING, _IDX_SLIDESHOW, _IDX_COMPARISON, _IDX_ZEROTH_ORDER
+from tests.conftest import cleanup_app
 
 
 @pytest.fixture(scope="session")
@@ -302,6 +303,7 @@ def test_copilot_sidebar_toggle_lifecycle(qapp):
     assert rixs._sidebar_toggle.toolTip() == "Open RIXS Co-Pilot Agentic AI Side Panel"
     assert rixs._sidebar_toggle.objectName() == "copilot_btn"
     assert rixs._sidebar_toggle.styleSheet() == ""
+    cleanup_app(rixs, qapp)
 
 
 def test_copilot_reparenting_across_views(qapp):
@@ -321,6 +323,7 @@ def test_copilot_reparenting_across_views(qapp):
         assert rixs._sidebar_toggle.text() == "🤖 Co-Pilot"
         assert rixs._sidebar_toggle.objectName() == "copilot_btn"
         assert rixs._sidebar_toggle.styleSheet() == ""
+    cleanup_app(rixs, qapp)
 
 
 # ===========================================================================

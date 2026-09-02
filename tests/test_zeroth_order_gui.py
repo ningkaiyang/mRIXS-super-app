@@ -19,10 +19,45 @@ import tifffile
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from rixs_app.main import RixsApp
+from rixs_app.ui.zeroth_order_slideshow.slideshow_view import ZerothOrderSlideshowView
 from rixs_app.ui.zeroth_order_slideshow.manager import ZerothOrderManager
 from rixs_app.core.dataset import ZarrSequenceManager
 from rixs_app.core.zeroth_order_evaluator import ZerothOrderResult
+
+
+class _MockZerothOrderAppWindow:
+    """Lightweight adapter mimicking RixsApp for ZerothOrderSlideshowView testing."""
+
+    def __init__(self, view: ZerothOrderSlideshowView):
+        self.zeroth_order_view = view
+
+    def show_zeroth_order_calibration(
+        self, file_list: list[str], txt_path: str | None = None
+    ) -> None:
+        self.zeroth_order_view.start(file_list, txt_path=txt_path)
+
+    def show(self) -> None:
+        self.zeroth_order_view.show()
+
+    def activateWindow(self) -> None:  # noqa: N802
+        self.zeroth_order_view.activateWindow()
+
+    def close(self) -> None:
+        self.zeroth_order_view.close()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        focused = QApplication.focusWidget()
+        from PySide6.QtWidgets import (
+            QSlider, QLineEdit, QComboBox, QTextEdit,
+            QSpinBox, QDoubleSpinBox, QAbstractSpinBox,
+        )
+        if isinstance(focused, (QSlider, QLineEdit, QComboBox, QTextEdit, QSpinBox, QDoubleSpinBox, QAbstractSpinBox)):
+            return
+        key = event.key()
+        if key == Qt.Key_Left:
+            self.zeroth_order_view.prev_frame()
+        elif key == Qt.Key_Right:
+            self.zeroth_order_view.next_frame()
 
 
 # ---------------------------------------------------------------------------
@@ -53,11 +88,14 @@ def temp_tif_files(tmp_path):
 
 @pytest.fixture
 def app_window(qapp, temp_tif_files, qtbot):
-    """Instantiate RixsApp headlessly and register with qtbot."""
-    window = RixsApp(show_window=False)
-    qtbot.addWidget(window)
+    """Instantiate ZerothOrderSlideshowView headlessly without full RixsApp overhead."""
+    view = ZerothOrderSlideshowView()
+    qtbot.addWidget(view)
+    window = _MockZerothOrderAppWindow(view)
     yield window
-    window.close()
+    view.manager.session_id = object()
+    view.close()
+    view.deleteLater()
 
 
 # ---------------------------------------------------------------------------
