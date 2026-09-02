@@ -1,234 +1,505 @@
 # RIXS Super-App
 
-A comprehensive desktop application and headless CLI tool suite designed for LBNL RIXS beamlines (e.g., QERLIN). Originally an alignment GUI, this project is evolving into a unified platform to parse and handle all detector data, featuring offline alignment, zeroth-order line calibration (FWHM, resolving power R, mirror pitch focus curves), and automated batch export diagnostics.
+[![Python 3.10–3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
+[![UI Framework: PySide6 (Qt 6)](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52.svg)](https://wiki.qt.io/Qt_for_Python)
+[![Core: NumPy / SciPy / OpenCV / Zarr](https://img.shields.io/badge/core-NumPy%20%7C%20SciPy%20%7C%20OpenCV%20%7C%20Zarr-orange.svg)](https://numpy.org/)
+[![LLM Agent: LBNL CBORG](https://img.shields.io/badge/AI%20Agent-LBNL%20CBORG-purple.svg)](https://cborg.lbl.gov/)
+[![Tests: 650+ passing](https://img.shields.io/badge/tests-650%2B%20passing%20(34%20suites)-brightgreen.svg)](https://pytest.org/)
 
-## Setup Instructions
+**RIXS Super-App** is a high-performance desktop application and headless CLI toolkit engineered for the **QERLIN Spectrometer** at **Beamline 6.0.2** of the **Advanced Light Source (ALS), Lawrence Berkeley National Laboratory (LBNL)**.
+
+The software provides an end-to-end data processing workflow:
+1. **Dark Frame Masking & Baseline Calibration** — Hot-pixel filtering, RTS noise rejection, and baseline correction
+2. **Single-Photon Clustering & Event Reconstruction** — Single-photon identification, energy filtering, and sub-pixel event map generation
+3. **Spatial Drift Alignment** — Sub-pixel frame registration to correct drift across long acquisitions
+4. **Zeroth-Order Focus Calibration** — Spectrometer mirror pitch focus optimization via FWHM line analysis
+
+Additionally, it integrates the **RIXS Co-Pilot Agent Sidebar**—an LLM-powered assistant connected to LBNL CBORG for natural-language automation, tool execution, and dataset diagnostics.
+
+---
+
+## Table of Contents
+
+- [The 4 Core Pillars](#the-4-core-pillars)
+  - [Pillar 1: Dark Frame Masking & Baseline Calibration](#pillar-1-dark-frame-masking--baseline-calibration)
+  - [Pillar 2: Single-Photon Clustering & Super-Resolution Event Reconstruction](#pillar-2-single-photon-clustering--super-resolution-event-reconstruction)
+  - [Pillar 3: Spatial Drift Alignment](#pillar-3-spatial-drift-alignment)
+  - [Pillar 4: Zeroth-Order Focus Calibration (Mirror Pitch)](#pillar-4-zeroth-order-focus-calibration-mirror-pitch)
+- [RIXS Co-Pilot AI Agent Sidebar](#rixs-co-pilot-ai-agent-sidebar)
+- [Architecture & Performance Highlights](#architecture--performance-highlights)
+- [Setup & Installation](#setup--installation)
+  - [Prerequisites](#prerequisites)
+  - [Installation Steps](#installation-steps)
+  - [Desktop Shortcut Creation](#desktop-shortcut-creation)
+  - [GUI Framework Notice (PySide6 Only)](#gui-framework-notice-pyside6-only)
+- [Execution & CLI Command Reference](#execution--cli-command-reference)
+  - [1. Desktop GUI Launcher](#1-desktop-gui-launcher)
+  - [2. Spatial Drift Alignment CLI (`align_cli.py`)](#2-spatial-drift-alignment-cli-align_clipy)
+  - [3. Photon Clustering CLI (`cluster_cli.py`)](#3-photon-clustering-cli-cluster_clipy)
+  - [4. Zeroth-Order Calibration CLI (`zeroth_order_cli.py`)](#4-zeroth-order-calibration-cli-zeroth_order_clipy)
+  - [5. Image Denoising CLI (`denoise_cli.py`)](#5-image-denoising-cli-denoise_clipy)
+- [Automated Testing Suite](#automated-testing-suite)
+- [Project Directory Structure](#project-directory-structure)
+- [License & Acknowledgements](#license--acknowledgements)
+
+---
+
+## The 4 Core Pillars
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                    RIXS Super-App                                      │
+├────────────────────┬────────────────────┬────────────────────┬─────────────────────────┤
+│    Pillar 1        │    Pillar 2        │    Pillar 3        │    Pillar 4             │
+│    Dark Masking    │ Photon Clustering  │ Spatial Drift      │ Zeroth-Order Focus      │
+│   & Baseline Cal   │ & Event Recon      │    Alignment       │ (Mirror Pitch Cal)      │
+├────────────────────┼────────────────────┼────────────────────┼─────────────────────────┤
+│ • Temporal Median  │ • 8-Conn Clusters  │ • Iterative ECC    │ • 6-Stage Pipeline      │
+│ • StdDev Cutoff    │ • IntDen Filtering │ • PCA Line Fit     │ • FWHM (px & meV)       │
+│ • RTS Noise Reject │ • Centroiding      │ • Phase Correlation│ • Resolving Power R     │
+│ • CDF Overlays     │ • Event Map Recon  │ • Side-by-Side View│ • Parabolic Focus Curve │
+└────────────────────┴────────────────────┴────────────────────┴─────────────────────────┘
+```
+
+---
+
+### Pillar 1: Dark Frame Masking & Baseline Calibration
+
+**UI View:** `DarkMaskingView` (Nav Index `1`) · **CLI Subcommand:** `python cluster_cli.py dark-mask`
+
+Establishes a clean detector baseline across the sCMOS array, filtering out hot pixels, telegraph (RTS) noise, and spatial offset variations prior to signal processing.
+
+#### Features & Workflow
+- **Temporal Median Baseline:** Computes a per-pixel median across dark frames, rejecting transient cosmic rays and baseline fluctuations.
+- **Two-Tier Noise Masking:**
+  - *Standard Deviation Cutoff:* Identifies and masks persistently noisy or unstable pixels.
+  - *Tail Excursion Cutoff:* Flags random telegraph signal (RTS) switching pixels that fluctuate between discrete energy levels.
+- **Interactive Dual Histograms:** Matplotlib visualization showing StdDev and Tail Residual distributions with draggable threshold sliders and twin-axis cumulative distribution (CDF) overlays.
+- **Real-Time KPI Cards:** Displays surviving pixel counts, active detector area percentage, rejection rates, mean baseline ADU, and outlier counts.
+- **Publication-Ready Export:** Generates high-resolution dual-panel PNG diagnostic figures.
+- **Atomic Disk Persistence:** Saves calibration outputs (`MED_Dark.tif`, `Final_Mask.tif`, and metadata JSON) via safe temporary file swapping.
+
+---
+
+### Pillar 2: Single-Photon Clustering & Super-Resolution Event Reconstruction
+
+**UI View:** `ClusteringStudioView` (Nav Index `3`) · **CLI Subcommands:** `cluster_cli.py cluster`, `reconstruct`, `full`
+
+Isolates individual photon events on sCMOS frames in the soft X-ray regime (e.g., Ni L3, Fe L, O K), discriminates against cosmic rays, and reconstructs super-resolution event maps.
+
+```
+Raw Signal TIFFs ──► Baseline Conditioning & Noise Masking ──► Threshold Cutoff
+                          │
+                          ▼
+                 8-Connected Components Cluster Extraction
+                          │
+                          ▼
+             Cluster Features (IntDen, Centroid XM/YM, Area, Circularity)
+                          │
+                          ▼
+             Energy & Geometry Filtering (IntDen Window, Max Area, Min Circularity)
+                          │
+                          ▼
+             Super-Resolution Sub-Pixel Accumulation
+                          │
+                          ▼
+             Output: Photon_Event_Map.tif & IntDen_histogram.png
+```
+
+#### Features & Workflow
+- **Signal Conditioning:** Applies the dark baseline and noise mask, zeroing out sub-threshold background noise.
+- **Cluster Extraction:** Groups adjacent lit pixels using 8-connected component labeling and computes cluster properties: integrated density (IntDen), area, circularity, and sub-pixel intensity centroid coordinates.
+- **Energy & Geometry Filtering:**
+  - *Integrated Density (IntDen):* Selects photon events matching specific absorption edge energy windows.
+  - *Morphology Filter:* Rejects elongated cosmic ray tracks and electrical discharge events based on cluster size and circularity thresholds.
+- **Super-Resolution Event Map:** Accumulates sub-pixel centroid coordinates into a 2D event map (at 1× or 2× scale).
+- **Three Workspace Modes:**
+  - *Mode A: Dashboard Overview* — Total photon events, average flux rate, interactive IntDen histogram with cutoff sliders, and event map preview.
+  - *Mode B: Frame Inspection* — Synchronized raw vs. conditioned frame viewer with overlaid cluster bounding boxes, centroids, and cluster property tooltips.
+  - *Mode C: Chunk Analysis* — Sequence chunking to track photon event rates, beam decay, and stability over time.
+
+---
+
+### Pillar 3: Spatial Drift Alignment
+
+**UI View:** `SlideshowView` (Nav Index `5`) · `ExportComparisonView` (Nav Index `6`) · **CLI:** `python align_cli.py`
+
+Corrects sub-pixel spatial drift between sequential frames across long exposure runs to prevent spectral broadening when summing frames.
+
+#### Multi-Engine Registration Architecture
+
+| Engine | Description | Best Suited For |
+|---|---|---|
+| **Iterative ECC Maximization** *(Default)* | Multi-level Gaussian Pyramid correlation with Scharr gradient magnitude filtering and physical drift projection. | Diffuse inelastic scattering clouds, line-less spectra, noisy or low-contrast acquisitions. |
+| **PCA (SVD) Peak-Line Fitting** | Intensity-weighted spatial covariance analysis along prominent spectral lines with automated threshold optimization (`-t auto`). | Sharp, prominent elastic scattering lines with high SNR. |
+| **Fourier Phase Correlation** | Translation estimation in the Fourier domain with bandpass pre-filtering and Tukey windowing. | Datasets with distributed or periodic spectral features. |
+
+#### Features & GUI Controls
+- **Interactive Slideshow & Zoom:** Sub-pixel navigation with smooth multi-level zoom, intensity ceiling/floor sliders, and hot pixel suppression.
+- **Auto-Snap Threshold Sweeps:** Sweeps over intensity percentiles to find the optimal perpendicular line spread.
+- **Manual Line Drawing Override:** User-defined guide lines to anchor or override alignment vectors.
+- **Side-by-Side Comparison:** Direct visual comparison of unaligned vs. aligned sums with independent contrast scaling before saving.
+
+---
+
+### Pillar 4: Zeroth-Order Focus Calibration (Mirror Pitch)
+
+**UI View:** `ZerothOrderSlideshowView` (Nav Index `7`) · **CLI:** `python zeroth_order_cli.py`
+
+Analyzes specular reflection (zeroth order, m=0) grating sweeps to determine the optimal spectrometer mirror pitch angle (SM3) by measuring line sharpness.
+
+```
+Raw Frame ──► Border Crop ──► Multistage Denoise ──► Background Subtraction
+                                                            │
+                                                            ▼
+Focus Curve & Motor Position ◄── 1D Gaussian Fit ◄── Robust Line Fit ◄── Scharr Edge
+```
+
+#### The 6-Stage Algorithmic Pipeline
+1. **Boundary Edge Cropping:** Strips dead detector borders and non-illuminated pixels.
+2. **Multistage Denoising:** Anscombe transform, Median Absolute Deviation (MAD) despiking, and edge-preserving bilateral filtering.
+3. **Background Subtraction:** Row-wise smoothing and baseline offset removal.
+4. **Edge Enhancement:** Scharr gradient magnitude filtering perpendicular to the spectral line.
+5. **Robust Line Extraction:** Identifies line orientation via RANSAC and SVD.
+6. **1D Gaussian Profile Fitting:** Extracts a perpendicular profile and fits a Gaussian curve to measure sub-pixel Full Width at Half Maximum (FWHM).
+
+#### Physical Metrics & Focus Analysis
+- **Energy Conversion:** Converts FWHM from pixels to meV using detector dispersion.
+- **Resolving Power (R):** Calculates spectrometer resolving power (R = E_mono / FWHM_eV) when incident monochromator energy is supplied.
+- **Parabolic Focus Curve:** Fits a parabola to motor position vs. FWHM to determine the optimal focus position.
+- **GUI & CLI Diagnostics:** 5-stage intermediate pipeline strip viewer, automatic beamline `.txt` scan log pairing, and `focus_curve.png` export.
+
+---
+
+## RIXS Co-Pilot AI Agent Sidebar
+
+The application includes an integrated, asynchronous AI Co-Pilot agent connected to the **LBNL CBORG OpenAI-compatible endpoint** (`cborg.lbl.gov`).
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             PySide6 GUI Thread                              │
+│  ┌───────────────────────┐                    ┌───────────────────────────┐ │
+│  │   RixsStackedWidget   │                    │   SafeFigureCanvasQTAgg   │ │
+│  │   (8 Views)           │                    │   (Matplotlib)            │ │
+│  └───────────┬───────────┘                    └───────────────────────────┘ │
+│              │                                              ▲               │
+│              │ Qt Signals / Slots                           │               │
+│  ┌───────────▼──────────────────────────────────────────────┴─────────────┐ │
+│  │               AgentSidebarWidget (Collapsible Preloaded Panel)          │ │
+│  │  ┌──────────────────────────────────────────────────────────────────┐  │ │
+│  │  │ QWebEngineView (Chromium) + QWebChannel Bridge (Markdown & UI)   │  │ │
+│  │  └─────────────────────────────────┬────────────────────────────────┘  │ │
+│  └────────────────────────────────────┼───────────────────────────────────┘ │
+└───────────────────────────────────────┼─────────────────────────────────────┘
+                                        │ run_coroutine_threadsafe
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    _AsyncLoopThread (Dedicated asyncio Event Loop)          │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │ CborgAgentEngine (AsyncOpenAI / CBORG API)                            │  │
+│  │  • Multi-turn streaming chat                                          │  │
+│  │  • Multi-tier API key resolution (.env, ~/.cborg_api_key, Env, UI)    │  │
+│  │  • Approval Barriers (asyncio.Event for destructive / CLI actions)    │  │
+│  │  • ToolRegistry dispatch (Auto JSON schemas from Python type hints)   │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Capabilities
+- **Streaming Chat:** Renders real-time responses with syntax-highlighted code.
+- **Approval-Gated Tool Calling:** Destructive actions (CLI runs, calibrations, disk modifications) present an interactive UI approval card (`Approve` / `Reject` with feedback) before executing.
+- **Subprocess Log Streaming:** Subprocess stdout/stderr streams directly to the Co-Pilot chat transcript.
+- **Multi-Tier API Key Resolution:**
+  1. Local project `.env` file (`CBORG_API_KEY=...`)
+  2. User home directory configuration file (`~/.cborg_api_key`)
+  3. Shell environment variable (`export CBORG_API_KEY=...`)
+  4. In-app Setup Wizard modal with keychain persistence.
+
+### Built-in Agent Tools
+
+| Tool Name | Type | Description | Requires Approval |
+|---|:---:|---|:---:|
+| `list_directory` | Read-only | Lists files and subdirectories with file size summaries. | No |
+| `check_alignment_readiness` | Read-only | Verifies TIFF file counts and dataset suitability for spatial alignment. | No |
+| `check_calibration_readiness`| Read-only | Verifies TIFF sequence and scan log `.txt` metadata for mirror calibration. | No |
+| `read_file_contents` | Read-only | Safely inspects configuration, scan logs, JSON summaries, and scripts. | No |
+| `get_cli_help` | Read-only | Queries `--help` options for project CLI utilities. | No |
+| `get_active_gui_state` | Read-only | Queries active view index, loaded dataset path, frame index, and metadata. | No |
+| `run_spatial_alignment` | Execution | Triggers `align_cli.py` with selected engine and parameters. | **Yes** |
+| `run_zeroth_order_calibration`| Execution | Triggers `zeroth_order_cli.py` with dispersion and mono energy. | **Yes** |
+| `run_image_denoising` | Execution | Runs `denoise_cli.py` on single frames or batch directories. | **Yes** |
+| `cli_runner` | Execution | Executes custom arguments against project CLI tools with streaming logs. | **Yes** |
+| `update_gui_parameter` | GUI Control | Updates GUI state (such as jumping to a specific frame index). | **Yes** |
+| `execute_terminal_command` | Execution | Arbitrary shell execution (available when Full Terminal Access is enabled). | **Yes** |
+
+---
+
+## Architecture & Performance Highlights
+
+- **Pure CMV (Controller-Manager-View) Architecture:**
+  - **Managers** (`SlideshowManager`, `ZerothOrderManager`, `ClusteringManager`): Handle all state machines, caching, and algorithmic workflows with **zero PySide6/Qt imports**.
+  - **Controllers** (`*View` classes): Wire UI panels, handle Qt signals, and manage worker thread lifecycles.
+  - **Panels**: Modular Qt view widgets communicating exclusively via controller references.
+- **Zarr Content-Addressed Frame Cache (`dataset.py`):**
+  - High-resolution TIFF sequences are cached inside `<dataset_dir>/tif-cache/frames.zarr` using MD5 keys computed from `filepath + modification_time`.
+  - Subsequent sequence loads are instantaneous (< 1 ms per frame) across application sessions.
+- **Thread Safety & GC Retention:**
+  - Background computations run via `QThreadPool` and `QRunnable` workers.
+  - Explicit GC retention pattern (`self._workers.add(worker)`) prevents Python garbage collection from tearing down active workers before Qt signal emission.
+- **Performance Budgets:**
+  - `apply_dark_thresholds()`: < 10 ms for 2048×2048 arrays.
+  - `get_reconstruction()`: < 50 ms for real-time slider updates.
+- **Fusion Dark Theme:** High-contrast palette (`#1a1a2e` base, `#16213e` panels, `#2196f3` accent) with native font stack fallbacks and dark tooltip palette enforcement.
+
+---
+
+## Setup & Installation
 
 ### Prerequisites
-- Python 3.10 or higher
-- System libraries for Tkinter/CustomTkinter
+- **Python 3.10, 3.11, or 3.12**
+- Standard C compiler / build tools (for NumPy, SciPy, and OpenCV)
 
-### Installation
-1. Create a virtual environment:
+### Installation Steps
+
+1. **Clone the repository:**
    ```bash
-   python3 -m venv .venv
+   git clone https://github.com/als-beamline-602/Each200Frames.git
+   cd Each200Frames
    ```
-2. Activate the virtual environment:
-   - On macOS/Linux:
+
+2. **Create and activate a virtual environment:**
+   - **macOS / Linux:**
      ```bash
+     python3 -m venv .venv
      source .venv/bin/activate
      ```
-   - On Windows:
-     ```bash
+   - **Windows:**
+     ```cmd
+     python -m venv .venv
      .venv\Scripts\activate
      ```
-3. Install the required dependencies:
+
+3. **Install dependencies:**
    ```bash
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
-## Running the Application
-To launch the graphical user interface:
+### Desktop Shortcut Creation
+
+A cross-platform shortcut creator (`create_shortcut.py`) creates a desktop launcher with the application icon:
+
+- **macOS (Recommended):**
+  ```bash
+  python3 create_shortcut.py --terminal
+  ```
+  *(The `--terminal` flag launches via Terminal.app, avoiding macOS Gatekeeper Automator stub restrictions).*
+
+- **Windows:**
+  ```cmd
+  python create_shortcut.py
+  ```
+
+---
+
+### GUI Framework Notice (PySide6 Only)
+
+> [!IMPORTANT]
+> **PySide6 (Qt 6) is the sole graphical user interface framework.**
+> All legacy Tkinter and CustomTkinter code has been completely deprecated and purged from the repository.
+
+---
+
+## Execution & CLI Command Reference
+
+### 1. Desktop GUI Launcher
+
+Launch the primary desktop interface:
 ```bash
 python run.py
 ```
 
-### Creating a Desktop Shortcut
-To create a simple, double-clickable Desktop shortcut for lab computers:
+---
 
-- **On Windows:**
-  ```cmd
-  python create_shortcut.py
-  ```
-- **On macOS:**
-  ```bash
-  python3 create_shortcut.py --terminal
-  ```
+### 2. Spatial Drift Alignment CLI (`align_cli.py`)
 
-This automatically generates a Desktop shortcut with the custom RIXS icon pointing to `run.py` and the project working directory.
+Headless batch alignment tool for TIFF sequences.
 
-## Key Features
-
-1. **Zarr-Backed Frame Caching:** High-resolution TIFF loading is optimized by caching frame arrays inside a content-addressed `tif-cache/frames.zarr` database in the dataset directory. Cache keys are computed via MD5 hashes of filepaths and modification times, ensuring instantaneous sequence reloads even across different run sessions.
-2. **Multi-Engine Alignment Architecture:**
-   - **Iterative ECC Maximization (Default):** Uses a 3-level Gaussian Pyramid for robust sub-pixel alignment. It applies a Scharr gradient magnitude pre-filter after a Gaussian blur (sigma=4.0) to convert the image into a clean peak-edge intensity map, crops horizontally to the spectral band, and projects the 2D offset onto a 1D physical drift vector.
-   - **PCA (SVD) Peak-Line Fitting:** Solves the intensity-weighted 2D coordinate covariance to align the critical cross-dispersion direction, utilizing Fourier-Domain Phase Correlation for the parallel component. Ideal for datasets with a sharp, prominent spectral line.
-   - **Phase Correlation:** DoG bandpass-filtered Fourier-domain translation estimation with a Tukey (tapered cosine) window that preserves spectral line features near detector edges.
-   - **Background Precomputation:** The UI supports batch precomputation of alignment offsets and sharpness scores on background threads, keeping the GUI responsive while progress is updated via thread-safe queues.
-3. **Interactive UI Panels:**
-   - **File Selection View:** Add and order files dynamically, with a **"Clear All"** button to quickly empty the queue, and natural sorting to sort by filename.
-   - **Zeroth-Order Calibration Slideshow:** A specialized view (`ZerothOrderSlideshowView`) for mirror pitch calibration. It visualizes pipeline stages (Raw → Denoised → Row-Smoothed → Gradient → Fitted-Line Strip) alongside a 1D Gaussian profile fit, reporting FWHM in pixels and meV, and resolving power R. Supports TXT scan log import to map motor pitch to frames, peak-focus jump, and bulk diagnostic PNG export including a mirror pitch vs FWHM focus curve.
-   - **Clamping Controls:** Adjust intensity floor and ceiling sliders in real-time to strip hot pixels or boost low-intensity structural boundaries.
-   - **Auto-Snap Threshold Sweeps:** Sweep PCA thresholds dynamically on a background thread to locate the minimum perpendicular spread and align cleanly.
-   - **Manual Line Alignment (PCA only):** Draw custom reference lines and click-to-override alignment offsets.
-   - **Zooming & Panning:** Smooth multi-level zoom to target fine sub-pixel features.
-4. **Inline Export Comparison & Multi-Plot Export:** 
-   - Side-by-side comparison of the direct (unaligned) and aligned summation arrays with independent contrast scaling via the isolated `ExportComparisonView`, allowing visual validation of alignment efficacy prior to saving.
-   - The Zeroth-Order Calibration Slideshow supports bulk exporting of multi-plot diagnostic PNGs summarizing the entire pipeline for each frame, plus a `focus_curve.png` focus curve with parabolic fit and resolving power R annotation. When a TXT scan log is loaded, the X-axis shows motor goal position; when absent, it falls back to Frame Index.
-
-## Running the Tests
-To run the entire test suite (including E2E, manager, stress, CLI, and core algorithmic tests):
 ```bash
-pytest -v
+# Align single directory with default ECC engine and save comparison PNG
+python -u align_cli.py -d "path/to/dataset" -e ECC --png
+
+# Recursively align all subdirectories with multiple engines and JSON offset logging
+python -u align_cli.py -d "path/to/root_dir" -r -e ECC PCA PhaseCorrelation --png --json
+
+# Automatic PCA threshold optimization with overwrite enabled
+python -u align_cli.py -d "path/to/dataset" -e PCA -t auto --overwrite --png
 ```
-To run specific test modules, run them individually:
+
+#### CLI Options (`align_cli.py`)
+| Option | Description | Default |
+|---|---|:---:|
+| `-d`, `--dir` | Target directory containing TIFF images *(required)* | — |
+| `-r`, `--recursive` | Recursively scan and process subdirectories | `False` |
+| `-e`, `--engines` | Alignment engine(s): `ECC`, `PCA`, `PhaseCorrelation`, `all` | `ECC` |
+| `-t`, `--threshold` | PCA intensity percentile cutoff (`float` or `auto`) | `99.9` |
+| `--png` | Save side-by-side comparison PNG (`comparison_<engine>.png`) | `False` |
+| `--json` | Export per-frame (dx, dy) drift offsets to JSON | `False` |
+| `--ephemeral-cache` | Remove `tif-cache/` Zarr directory upon completion | `False` |
+| `--overwrite` | Overwrite existing files in `sum/` output directory | `False` |
+
+---
+
+### 3. Photon Clustering CLI (`cluster_cli.py`)
+
+Headless toolkit for single-photon event extraction across Stages 1, 2, and 3.
+
 ```bash
-pytest tests/test_e2e.py -v
-pytest tests/test_align.py -v
-pytest tests/test_cli.py -v
+# Stage 1: Generate Dark Baseline & 2-Tier Noise Mask
+python -u cluster_cli.py dark-mask -d "path/to/dark_tifs" -o "path/to/output_cal"
+
+# Stage 2: Cluster Extraction on Raw Signal Frames
+python -u cluster_cli.py cluster -s "path/to/signal_tifs" \
+    --dark-tif "path/to/MED_Dark.tif" --mask-tif "path/to/Final_Mask.tif"
+
+# Stage 3: Super-Resolution Event Map Reconstruction from Cluster Table
+python -u cluster_cli.py reconstruct -c "path/to/Results_clusters.parquet" \
+    --intden-low 175 --intden-high 500 --scale-factor 2
+
+# End-to-End Pipeline (Stages 1, 2, and 3 Chained)
+python -u cluster_cli.py full -d "path/to/dark_tifs" -s "path/to/signal_tifs" \
+    --intden-low 175 --intden-high 500 --scale-factor 1
 ```
 
-## Headless CLI Tool
+#### Subcommand Options (`cluster_cli.py`)
+| Subcommand | Key Options | Description |
+|---|---|---|
+| `dark-mask` | `-d`, `--stddev-thresh 40.0`, `--tail-thresh-ratio 0.9333` | Computes temporal median and noise rejection mask. |
+| `cluster` | `-s`, `--dark-tif`, `--mask-tif`, `--pixel-thresh 45.0` | Extracts 8-connected photon clusters and coordinates. |
+| `reconstruct` | `-c`, `--intden-low`, `--intden-high`, `--max-area 9`, `--min-circ 0.3`, `--scale-factor` | Reconstructs super-resolution 2D event map. |
+| `full` | `-d`, `-s`, `--intden-low`, `--intden-high`, `-o` | Executes full calibration -> clustering -> map generation. |
 
-A standalone command-line interface (`align_cli.py`) is provided for batch-processing TIFF sequences without a GUI. This is ideal for remote servers, HPC clusters, or automated workflows.
+---
 
-### CLI Usage
+### 4. Zeroth-Order Calibration CLI (`zeroth_order_cli.py`)
 
-**Process a single directory:**
+Mirror pitch focus calibration and resolving power evaluation tool.
+
 ```bash
-python3 align_cli.py -d "tif-files/Fe L" -e ECC --png
-```
-
-**Recursively process all subdirectories:**
-```bash
-python3 align_cli.py -d tif-files/ -r -e ECC --png
-```
-
-**Run multiple engines:**
-```bash
-python3 align_cli.py -d tif-files/ -r -e ECC PhaseCorrelation PCA --png
-```
-
-**Use automatic PCA threshold optimization:**
-```bash
-python3 align_cli.py -d tif-files/ -r -e PCA -t auto --png
-```
-
-### CLI Arguments
-
-| Argument | Description | Default |
-| :--- | :--- | :--- |
-| `-d`, `--dir` | Root directory containing TIFF files | *(required)* |
-| `-r`, `--recursive` | Recurse into subdirectories | `False` |
-| `-e`, `--engines` | Alignment engines to run (`ECC`, `PCA`, `PhaseCorrelation`, `all`) | `ECC` |
-| `-t`, `--threshold` | PCA percentile threshold (float or `auto` for auto-optimization) | `99.9` |
-| `--png` | Save side-by-side comparison PNG (Direct Sum vs Aligned Sum) | `False` |
-| `--json` | Save per-frame offset log as a JSON file | `False` |
-| `--ephemeral-cache` | Delete `tif-cache/` after processing | `False` |
-| `--overwrite` | Overwrite existing `sum/` output files | `False` |
-
-### CLI Output Structure
-
-For each processed directory, the CLI creates a `sum/` subdirectory containing:
-```
-dataset_folder/
-└── sum/
-    ├── base_sum.tif                     # Unaligned direct sum
-    ├── aligned_sum_ECC.tif              # Aligned sum (per engine)
-    ├── aligned_offsets_ECC.json         # Per-frame (dx, dy) offsets + metadata (only if --json)
-    └── comparison_ECC.png               # Side-by-side comparison (if --png)
-```
-
-## Zeroth-Order Calibration CLI
-
-A dedicated headless CLI (`zeroth_order_cli.py`) batch-processes zeroth-order mirror-pitch scan directories, computing FWHM for every frame and identifying the optimal mirror position. It mirrors the feature set of the GUI's Export panel, including focus curve generation, diagnostic PNGs, and tabular summary reports.
-
-### CLI Usage
-
-**Process a single scan directory (with TXT scan log and physical parameters):**
-```bash
-python3 zeroth_order_cli.py -d "RIXS_ZeroOrderScan/Single Motor Scan 004202 Images" \
+# Process scan directory with dispersion and mono energy (auto-discovers .txt scan log)
+python -u zeroth_order_cli.py -d "path/to/Single_Motor_Scan_004202" \
     --dispersion 2.5 --mono-energy 850.0
-```
 
-**Recursive batch across all scan subdirectories:**
-```bash
-python3 zeroth_order_cli.py -d RIXS_ZeroOrderScan -r \
+# Batch process all scan runs with full CSV/JSON reporting and all diagnostic PNGs
+python -u zeroth_order_cli.py -d "path/to/scans_root" -r \
     --dispersion 2.5 --mono-energy 850.0 --format all --export-plots all
+
+# Minimal terminal summary table without saving plot images
+python -u zeroth_order_cli.py -d "path/to/scan" --export-plots none --no-focus-curve
 ```
 
-**Minimal run — terminal table only, no plots:**
+#### CLI Options (`zeroth_order_cli.py`)
+| Option | Description | Default |
+|---|---|:---:|
+| `-d`, `--dir` | Target scan directory or parent folder *(required)* | — |
+| `-r`, `--recursive` | Recursively scan subdirectories for TIFF sequences | `False` |
+| `-t`, `--txt` | Explicit path to `.txt` scan log (overrides auto-discovery) | Auto |
+| `-o`, `--output-dir` | Output folder for plots and tables | `<dir>/zeroth_order_analysis/` |
+| `--dispersion` | Detector energy dispersion in meV/pixel (e.g. `2.5`) | `0.0` |
+| `--mono-energy` | Incident monochromator energy in eV (e.g. `850.0`) | `0.0` |
+| `--plot-focus-curve` | Generate parabolic `focus_curve.png` plot | `True` |
+| `--export-plots` | Diagnostic PNG export mode: `best`, `all`, `none` | `best` |
+| `--format` | Summary format: `table`, `csv`, `json`, `all` | `table` |
+| `--overwrite` | Overwrite existing output analysis folder | `False` |
+
+---
+
+### 5. Image Denoising CLI (`denoise_cli.py`)
+
+Stand-alone preprocessing utility for 2D spectroscopic frames.
+
 ```bash
-python3 zeroth_order_cli.py -d path/to/scan --export-plots none --no-focus-curve
+# Denoise all TIFF frames in a directory using full pipeline
+python -u denoise_cli.py -d "path/to/raw_tifs" --output-dir "path/to/denoised" \
+    --clip --despike --anscombe --bilateral
+
+# Denoise a single image file with custom MAD despiking threshold
+python -u denoise_cli.py --input frame_001.tif --output frame_001_clean.tif \
+    --despike --mad-threshold 4.5
 ```
 
-**Export JSON summary and all diagnostic PNGs:**
+---
+
+## Automated Testing Suite
+
+The repository features an automated test suite comprising **650+ tests across 34 test modules**, covering core algorithms, PySide6 CMV architecture, GUI widgets, asynchronous agent flows, and CLI interfaces.
+
+### Running Tests
+
+Execute the full test suite headlessly:
 ```bash
-python3 zeroth_order_cli.py -d RIXS_ZeroOrderScan -r --format json --export-plots all --overwrite
+# Fast test run with quiet output
+pytest tests/ -x -q
+
+# Full verbose test execution
+pytest -v
+
+# Run specific subsystem test suites
+pytest tests/test_photon_clustering.py -v       # Photon clustering & event reconstruction
+pytest tests/test_dark_diagnostics.py -v        # Dark masking & noise thresholding
+pytest tests/test_align_core.py -v              # Registration algorithms (ECC, PCA, PhaseCorr)
+pytest tests/test_zeroth_order.py -v            # Zeroth-order 6-stage calibration
+pytest tests/test_agent_chat_flow.py -v         # AI Co-Pilot agent bridge & tool calling
+pytest tests/e2e/ -v                            # End-to-end integration workflows
 ```
 
-### CLI Arguments
+---
 
-| Argument | Description | Default |
-| :--- | :--- | :--- |
-| `-d`, `--dir` | Root directory containing TIFF images (or parent when combined with `-r`) | *(required)* |
-| `-r`, `--recursive` | Recursively scan subdirectories for TIFF datasets | `False` |
-| `-t`, `--txt` | Explicit path to a `.txt` scan log file (overrides auto-discovery) | auto-discover |
-| `-o`, `--output-dir` | Custom output directory | `<scan_dir>/zeroth_order_analysis/` |
-| `--dispersion` | Energy dispersion in meV/px (e.g. `2.5`) | *(optional)* |
-| `--mono-energy` | Monochromator energy E_mono in eV (e.g. `850.0`). Enables resolving power R | *(optional)* |
-| `--plot-focus-curve` / `--no-focus-curve` | Toggle `focus_curve.png` generation | enabled |
-| `--export-plots` | Diagnostic PNG mode: `best` (optimal frame only), `all`, or `none` | `best` |
-| `--format` | Summary report format: `table` (terminal), `csv`, `json`, or `all` | `table` |
-| `--overwrite` | Overwrite existing `zeroth_order_analysis/` output directory | `False` |
-| `-q`, `--quiet` | Suppress terminal output | `False` |
+## Project Directory Structure
 
-### CLI Output Structure
-
-For each processed directory, the CLI creates a `zeroth_order_analysis/` subdirectory containing:
 ```
-scan_directory/
-└── zeroth_order_analysis/
-    ├── focus_curve.png                  # Motor position (or Frame Index) vs FWHM with parabolic fit
-    ├── frame_NNN_diagnostic.png         # 2×2 diagnostic PNG for best (or all) frames
-    ├── summary.csv                      # Per-frame table (if --format csv or all)
-    └── summary.json                     # Full metadata + per-frame records (if --format json or all)
+Each200Frames/
+├── run.py                          # GUI application entry point
+├── align_cli.py                    # Headless spatial drift alignment CLI
+├── cluster_cli.py                  # Single-photon clustering & dark masking CLI
+├── zeroth_order_cli.py             # Mirror pitch zeroth-order focus calibration CLI
+├── denoise_cli.py                  # Spectroscopic image preprocessing CLI
+├── create_shortcut.py              # Cross-platform Desktop shortcut creator
+├── requirements.txt                # Python package dependencies
+├── rixs_app/
+│   ├── core/                       # Pure algorithmic layer (ZERO UI dependencies)
+│   │   ├── alignment.py            # ECC, PCA, Phase Correlation registration
+│   │   ├── photon_clustering.py    # Connected components, IntDen, event map recon
+│   │   ├── zeroth_order.py         # 6-stage mirror pitch calibration
+│   │   ├── preprocessing.py        # Anscombe VST, MAD despiking, bilateral filter
+│   │   ├── dataset.py              # Zarr sequence caching & MD5 manifests
+│   │   ├── dark_mask_store.py      # Atomic dark mask persistence
+│   │   ├── dark_mask_export.py     # Publication-grade histogram figures
+│   │   ├── txt_metadata_parser.py  # Beamline scan log parsing
+│   │   └── cli_utils.py            # Directory discovery & CLI helpers
+│   ├── agent/                      # RIXS Co-Pilot LLM Subsystem
+│   │   ├── auth.py                 # Multi-tier API key resolution
+│   │   ├── engine.py               # AsyncOpenAI / CBORG engine & streaming
+│   │   ├── bridge.py               # Qt Signals <-> Asyncio bridge
+│   │   ├── tools.py                # Tool registry & auto-schema generators
+│   │   └── system_prompt.py        # Co-Pilot domain system prompt
+│   └── ui/                         # PySide6 (Qt 6) Graphical Interface
+│       ├── home_launchpad.py       # 2×2 squircle card home view
+│       ├── dark_masking/           # Pillar 1: Dark masking studio
+│       ├── clustering_slideshow/   # Pillar 2: 3-mode photon clustering studio
+│       ├── alignment_slideshow/    # Pillar 3: Drift slideshow & comparison view
+│       ├── zeroth_order_slideshow/ # Pillar 4: Mirror pitch focus slideshow
+│       ├── agent_sidebar/          # QWebEngineView Chromium agent chat panel
+│       ├── sorting_view.py         # File queue manager & drag-and-drop
+│       ├── theme.py                # Fusion dark palette & button styling
+│       └── widgets.py              # Custom RangeSlider & SafeFigureCanvasQTAgg
+└── tests/                          # 34 test suites (650+ unit/GUI/E2E tests)
 ```
 
-**`summary.csv` columns**: `frame_index`, `filename`, `motor_position`, `fwhm_px`, `fwhm_mev`, `resolving_power`, `score`, `fit_ok`.
+---
 
-**`summary.json` top-level fields**: `scan_dir`, `txt_log`, `total_frames`, `valid_fwhm_count`, `best_frame_index`, `best_fwhm_px`, `best_fwhm_mev`, `best_resolving_power`, `optimal_motor_position`, `energy_dispersion_mev_per_px`, `mono_energy_ev`, `frames` (array of per-frame records).
+## License & Acknowledgements
 
-**TXT scan log auto-discovery**: The CLI searches for a `.txt` file inside each scan directory (the same location as the TIF images). When multiple `.txt` files exist, the first sorted file is used. The `-t` flag overrides auto-discovery.
+Developed for **Beamline 6.0.2 (QERLIN)** at the **Advanced Light Source (ALS), Lawrence Berkeley National Laboratory (LBNL)**.
 
-**Focus curve fallback**: When no `.txt` scan log is found, `focus_curve.png` is still generated with **Frame Index** on the X-axis, so you always get a visual overview of the FWHM trend across the sequence.
-
-# QERLIN Beamline Spectrometer Scan Alignment Project
-
-## 1. Context & Experimental Physics
-This project supports the QERLIN beamline (Beamline 6.0.2) at the Advanced Light Source (ALS), Lawrence Berkeley National Laboratory (LBNL). QERLIN performs high-resolution, momentum-resolved (q-resolved) Resonant Inelastic X-ray Scattering (RIXS) in the soft X-ray regime. 
-
-To resolve fine-grained electronic features (such as phonons, magnons, and d-d excitations), the spectrometer requires extreme energy resolution and uses long path-length disperser arms. Consequently, the instrument is highly sensitive to sub-pixel spatial drift at the detector face. This drift is induced by mechanical relaxation and micro-thermal fluctuations over the course of long experimental runs.
-
-## 2. The Core Problem
-To prevent spatial drift from broadening and blurring the spectral features, long scans are acquired as a sequence of shorter, sliced exposures (e.g., 200 frames per scan merged together in TIFF format). However, because the camera and optics shift dynamically during the process, these individual slices undergo 2D translations (Δx, Δy) relative to one another. If summed directly without alignment, the resulting spectrum suffers from severe resolution loss.
-
-## 3. Current Implementation & Limitations
-The alignment application corrects these shifts using three auto-alignment engines and manual override modes:
-- **Iterative ECC Engine (Default):** 3-level Gaussian Pyramid for robust sub-pixel alignment. It applies a Scharr gradient magnitude pre-filter after a Gaussian blur to convert the image into a clean peak-edge intensity map, cropping horizontally to the valid spectral band.
-- **PCA Engine:** Locates the spectroscopic line via intensity-weighted PCA (SVD) on pixels that exceed an intensity percentile threshold. Best for sharp, prominent lines. Supports automatic threshold optimization.
-- **Phase Correlation Engine:** Computes translation offsets in the Fourier domain with DoG bandpass pre-filtering and Tukey (tapered cosine) windowing for improved accuracy under low SNR.
-- **Manual Mode (PCA only):** The user manually draws a line corresponding to a visible spectral feature to guide or override PCA alignment offsets.
-
-### The PCA Limitation:
-The intensity-weighted PCA auto-alignment engine assumes the **elastic scattering line** (zero energy loss) is the brightest feature on the detector. However, in many experimental regimes (such as certain transition metal L-edges or highly absorbing samples), elastic scattering is weak. As a result, the elastic line is dim, sparse, or completely absent. 
-
-Under these conditions, the intensity-weighted PCA is dominated by Poisson noise, cosmic rays, or the diffuse 2D inelastic scattering cloud in the center of the detector. This leads to erratic centroid determinations on noise spikes, failed line fits, and incorrect alignment offsets. To bypass this limitation, users should use the default **ECC Engine**, which precomputes robust sub-pixel alignment over diffuse, line-less spectral clouds.
-
-## 4. Technical Goals & Roadmap
-The ultimate objective is to develop a robust, fully automated super-app that handles the entire lifecycle of RIXS detector data, from live acquisition to offline alignment and analysis.
-
-### A. Core Tool Suite & Diagnostics
-1. **Zeroth-Order Calibration (Implemented):** A robust programmatic zeroth-order line detection and FWHM evaluation pipeline (`zeroth_order.py`, `zeroth_order_evaluator.py`) paired with a full GUI (`ZerothOrderSlideshowView`). Reports FWHM in px and meV, resolving power R, and generates a mirror-pitch focus curve from imported scan log TXT files. Headless batch CLI available via `zeroth_order_cli.py` — supports single and recursive batch modes, focus curve generation (motor position or Frame Index fallback), diagnostic PNGs, CSV/JSON summary reports, and resolving power R calculation.
-2. **Live Data Streaming & Cluster Analysis:** Integrate real-time processing pipelines (from legacy scripts) to monitor live data collection. This includes dark background masking, connected-component cluster analysis (identifying single-photon events), and generating live 2D spatial event maps and IntDen histograms.
-3. **Multi-Panel UI:** Expand the GUI beyond the alignment slideshow to host dedicated workspaces for sharpness checking, live streaming dashboards, and histogram visualization.
-
-### B. Advanced Algorithmic Registration
-1. **Iterative ECC Maximization (Implemented):** A 3-level Gaussian Pyramid that pre-filters frames using a Scharr gradient magnitude filter after a Gaussian blur (sigma=4.0).
-2. **Fourier-Domain Phase Correlation with Spatial Pre-filtering (Implemented):** DoG bandpass filtering isolates structural boundaries while a Tukey window preserves signal near detector edges.
-3. **Headless CLI Batch Processing (Implemented):** Standalone `align_cli.py` script for batch-processing.
-
-### C. Machine Learning & Deep Learning Methods
-1. **Self-Supervised Deep Denoising (Noise2Noise / Noise2Void):** Leverage the temporal correlation of successive frames to train a U-Net to denoise sparse, photon-starved frames before registration.
-2. **Supervised Siamese Regression CNNs:** Train a convolutional network to predict (Δx, Δy) offsets directly from a stacked pair of frames.
-3. **Unsupervised Spatial Transformer Networks (STNs):** Train an end-to-end registration network that optimizes similarity metrics (e.g., SSIM) between the reference frame and the warped target frame.
+Built with Python, PySide6 (Qt 6), NumPy, SciPy, OpenCV, Zarr, Matplotlib, and LBNL CBORG.
