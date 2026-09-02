@@ -30,7 +30,7 @@ import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from rixs_app.ui.widgets import SafeFigureCanvasQTAgg
-from PySide6.QtCore import Qt, QThreadPool, Slot
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Slot
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -143,6 +144,16 @@ class ClusteringStudioView(QWidget):
 
         self._line_low = None
         self._line_high = None
+
+        self._current_zoom_level: float = 1.0
+        self._clamping_floor: float = 0.0
+        self._clamping_ceiling: float = 1.0
+        self._clamping_slider_max: float = 1.0
+
+        self._accum_timer = QTimer(self)
+        self._accum_timer.setInterval(100)
+        self._accum_timer.setSingleShot(True)
+        self._accum_timer.timeout.connect(self._on_accum_timer_tick)
 
         self._running_cluster_count = 0
         self._progressive_event_map = np.zeros((2048, 2048), dtype=np.float32)
@@ -304,17 +315,78 @@ class ClusteringStudioView(QWidget):
         left_layout.setContentsMargins(8, 8, 8, 8)
         left_layout.setSpacing(6)
 
-        left_header = QHBoxLayout()
         self._dash_title_lbl = QLabel("2D Single-Photon Event Map", left_panel)
-        self._dash_title_lbl.setStyleSheet("font-weight: bold; color: #e2e8f0; font-size: 13px;")
-        left_header.addWidget(self._dash_title_lbl)
-        left_header.addStretch(1)
+        self._dash_title_lbl.hide()
+
+        # Row 1: Zoom In, Zoom Out, Reset View, Zoom label, spacer, colormap combo.
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
+        self._zoom_in_btn = QPushButton("🔍+ Zoom In", left_panel)
+        self._zoom_out_btn = QPushButton("🔍- Zoom Out", left_panel)
+        self._zoom_reset_btn = QPushButton("↺ Reset View", left_panel)
+        theme.set_tool_btn(self._zoom_in_btn)
+        theme.set_tool_btn(self._zoom_out_btn)
+        theme.set_tool_btn(self._zoom_reset_btn)
+
+        self._zoom_lbl = QLabel("Zoom: 1×", left_panel)
+        self._zoom_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; margin-left: 4px;")
+
+        self._zoom_in_btn.clicked.connect(self._handle_zoom_in)
+        self._zoom_out_btn.clicked.connect(self._handle_zoom_out)
+        self._zoom_reset_btn.clicked.connect(self._handle_zoom_reset)
+
+        row1.addWidget(self._zoom_in_btn)
+        row1.addWidget(self._zoom_out_btn)
+        row1.addWidget(self._zoom_reset_btn)
+        row1.addWidget(self._zoom_lbl)
+        row1.addStretch(1)
 
         self._dash_cmap_combo = QComboBox(left_panel)
         self._dash_cmap_combo.addItems(["inferno", "viridis", "plasma", "magma", "hot", "gray"])
         self._dash_cmap_combo.currentTextChanged.connect(self._handle_dash_cmap_changed)
-        left_header.addWidget(self._dash_cmap_combo)
-        left_layout.addLayout(left_header)
+        row1.addWidget(self._dash_cmap_combo)
+
+        left_layout.addLayout(row1)
+
+        # Row 2: Intensity Clamping label, Floor QLineEdit, RangeSlider [0.0, 1.0], Ceiling QLineEdit.
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+
+        clamp_lbl = QLabel("Intensity Clamping:", left_panel)
+        clamp_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        row2.addWidget(clamp_lbl)
+
+        self._floor_entry = QLineEdit("0.00", left_panel)
+        self._floor_entry.setFixedWidth(55)
+        self._floor_entry.setAlignment(Qt.AlignCenter)
+        self._floor_entry.setStyleSheet(
+            "background-color: #0f172a; color: #f8fafc; border: 1px solid #334155; "
+            "border-radius: 4px; font-size: 11px; padding: 2px;"
+        )
+        row2.addWidget(self._floor_entry)
+
+        self._clamping_slider = RangeSlider(left_panel)
+        self._clamping_slider.configure_range(0.0, 1.0)
+        self._clamping_slider.set_values(0.0, 1.0)
+        row2.addWidget(self._clamping_slider, stretch=1)
+
+        self._ceiling_entry = QLineEdit("1.00", left_panel)
+        self._ceiling_entry.setFixedWidth(55)
+        self._ceiling_entry.setAlignment(Qt.AlignCenter)
+        self._ceiling_entry.setStyleSheet(
+            "background-color: #0f172a; color: #f8fafc; border: 1px solid #334155; "
+            "border-radius: 4px; font-size: 11px; padding: 2px;"
+        )
+        row2.addWidget(self._ceiling_entry)
+
+        self._clamping_slider.range_changed.connect(self._handle_clamping_changed)
+        self._floor_entry.returnPressed.connect(self._on_floor_entry_submitted)
+        self._floor_entry.editingFinished.connect(self._on_floor_entry_submitted)
+        self._ceiling_entry.returnPressed.connect(self._on_ceiling_entry_submitted)
+        self._ceiling_entry.editingFinished.connect(self._on_ceiling_entry_submitted)
+
+        left_layout.addLayout(row2)
 
         self._fig_dashboard = Figure(figsize=(6, 5), facecolor="#14172b")
         self._canvas_dashboard = CanvasCls(self._fig_dashboard)
@@ -703,19 +775,22 @@ class ClusteringStudioView(QWidget):
     def _on_worker_frame_result(self, frame_idx: int, frame_df: pd.DataFrame) -> None:
         """Progressive accumulation: append clusters from each frame as it finishes."""
         self.manager.append_frame_clusters(frame_idx, frame_df)
-
-        # Progressively update the 2D event map and histogram live
-        # Benchmark guarantee: in-memory reconstruction is <50ms
-        if self.manager.has_clusters:
-            recon = self.manager.get_reconstruction()
-            self._render_dashboard_event_map(recon.event_map)
-            self._render_intden_histogram()
-
         self._update_kpi_cards()
+
+        if not self._accum_timer.isActive():
+            self._accum_timer.start()
 
         # If user is in Frame Inspector and currently viewing this frame, refresh
         if self._current_mode == "Frame Inspector" and self._current_frame_idx == frame_idx:
             self._render_frame_inspector()
+
+    @Slot()
+    def _on_accum_timer_tick(self) -> None:
+        """Throttled update of the 2D event map and IntDen histogram."""
+        if self.manager.has_clusters:
+            recon = self.manager.get_reconstruction()
+            self._render_dashboard_event_map(recon.event_map)
+            self._render_intden_histogram()
 
     @Slot(int, int, int)
     def _on_worker_progress(self, current: int, total: int, clusters: int) -> None:
@@ -738,6 +813,7 @@ class ClusteringStudioView(QWidget):
 
     @Slot(object)
     def _on_worker_finished(self, df_all: pd.DataFrame) -> None:
+        self._accum_timer.stop()
         self.manager.set_all_clusters(df_all)
         self.manager.state.is_processing = False
         self._pipeline_worker = None
@@ -746,9 +822,7 @@ class ClusteringStudioView(QWidget):
         self._status_lbl.setText(f"Extraction complete ({len(df_all):,} clusters).")
 
         # Full refresh across views
-        recon = self.manager.get_reconstruction()
-        self._render_dashboard_event_map(recon.event_map)
-        self._render_intden_histogram()
+        self._on_accum_timer_tick()
         self._update_kpi_cards()
 
         if self._current_mode == "Frame Inspector":
@@ -966,12 +1040,21 @@ class ClusteringStudioView(QWidget):
         except Exception:
             return
 
+        vmax = float(np.max(event_arr)) if event_arr.size > 0 else 1.0
+        if vmax > self._clamping_slider_max:
+            self._clamping_slider_max = max(1.0, vmax)
+            self._clamping_slider.configure_range(0.0, self._clamping_slider_max)
+
         cmap = self._dash_cmap_combo.currentText()
         if self._im_dashboard_event is None:
             self._ax_dashboard_event.clear()
             self._ax_dashboard_event.set_facecolor("#16213e")
             self._im_dashboard_event = self._ax_dashboard_event.imshow(
-                event_arr, cmap=cmap, origin="upper"
+                event_arr,
+                cmap=cmap,
+                origin="lower",
+                vmin=self._clamping_floor,
+                vmax=self._clamping_ceiling,
             )
             self._ax_dashboard_event.set_title(
                 f"2D Photon Event Map ({int(np.sum(event_arr)):,} photons)",
@@ -982,15 +1065,21 @@ class ClusteringStudioView(QWidget):
             for spine in self._ax_dashboard_event.spines.values():
                 spine.set_color("#2d3561")
             self._fig_dashboard.tight_layout()
+            if self._current_zoom_level > 1.0:
+                self._apply_zoom()
+            else:
+                self._ax_dashboard_event.set_xlim(0.0, float(event_arr.shape[1]))
+                self._ax_dashboard_event.set_ylim(0.0, float(event_arr.shape[0]))
         else:
             self._im_dashboard_event.set_data(event_arr)
-            vmax = max(1.0, float(np.max(event_arr)))
-            self._im_dashboard_event.set_clim(0, vmax)
+            self._im_dashboard_event.set_clim(self._clamping_floor, self._clamping_ceiling)
             self._ax_dashboard_event.set_title(
                 f"2D Photon Event Map ({int(np.sum(event_arr)):,} photons)",
                 color="#f8fafc",
                 fontsize=11,
             )
+            if self._current_zoom_level > 1.0:
+                self._apply_zoom()
 
         self._canvas_dashboard.draw_idle()
 
@@ -1103,6 +1192,113 @@ class ClusteringStudioView(QWidget):
     def _handle_dash_cmap_changed(self, cmap_name: str) -> None:
         if self._im_dashboard_event is not None:
             self._im_dashboard_event.set_cmap(cmap_name)
+            self._canvas_dashboard.draw_idle()
+
+    # ------------------------------------------------------------------
+    # Dashboard Zoom & Intensity Clamping Handlers
+    # ------------------------------------------------------------------
+
+    def _handle_zoom_in(self) -> None:
+        """Double zoom level up to 32× centered on axes center."""
+        if self._current_zoom_level >= 32.0:
+            return
+        self._current_zoom_level = min(32.0, self._current_zoom_level * 2.0)
+        self._apply_zoom()
+
+    def _handle_zoom_out(self) -> None:
+        """Halve zoom level down to 1× centered on axes center."""
+        if self._current_zoom_level <= 1.0:
+            return
+        self._current_zoom_level = max(1.0, self._current_zoom_level / 2.0)
+        self._apply_zoom()
+
+    def _handle_zoom_reset(self) -> None:
+        """Reset view to full detector bounds and 1× zoom."""
+        self._current_zoom_level = 1.0
+        self._apply_zoom()
+
+    def _apply_zoom(self) -> None:
+        """Apply current zoom level to the 2D dashboard event map axes."""
+        self._zoom_lbl.setText(f"Zoom: {int(self._current_zoom_level)}×")
+        h, w = self.manager.state.image_shape
+        if self._im_dashboard_event is not None:
+            arr = self._im_dashboard_event.get_array()
+            if arr is not None and hasattr(arr, "shape") and len(arr.shape) == 2:
+                h, w = int(arr.shape[0]), int(arr.shape[1])
+
+        if self._current_zoom_level <= 1.0:
+            self._ax_dashboard_event.set_xlim(0.0, float(w))
+            self._ax_dashboard_event.set_ylim(0.0, float(h))
+        else:
+            xlim = self._ax_dashboard_event.get_xlim()
+            ylim = self._ax_dashboard_event.get_ylim()
+            if xlim == (0.0, 1.0) and ylim == (0.0, 1.0):
+                cx, cy = float(w) / 2.0, float(h) / 2.0
+            else:
+                cx = (float(xlim[0]) + float(xlim[1])) / 2.0
+                cy = (float(ylim[0]) + float(ylim[1])) / 2.0
+
+            hw = (float(w) / self._current_zoom_level) / 2.0
+            hh = (float(h) / self._current_zoom_level) / 2.0
+
+            x0 = max(0.0, cx - hw)
+            x1 = x0 + 2.0 * hw
+            if x1 > float(w):
+                x1 = float(w)
+                x0 = max(0.0, x1 - 2.0 * hw)
+
+            y0 = max(0.0, cy - hh)
+            y1 = y0 + 2.0 * hh
+            if y1 > float(h):
+                y1 = float(h)
+                y0 = max(0.0, y1 - 2.0 * hh)
+
+            self._ax_dashboard_event.set_xlim(x0, x1)
+            self._ax_dashboard_event.set_ylim(y0, y1)
+
+        self._canvas_dashboard.draw_idle()
+
+    def _handle_clamping_changed(self, floor: float, ceiling: float) -> None:
+        """Fast interactive response: clamp intensity contrast without recomputing event map."""
+        self._clamping_floor = float(floor)
+        self._clamping_ceiling = float(ceiling)
+        self._floor_entry.setText(f"{self._clamping_floor:.2f}")
+        self._ceiling_entry.setText(f"{self._clamping_ceiling:.2f}")
+        if self._im_dashboard_event is not None:
+            self._im_dashboard_event.set_clim(self._clamping_floor, self._clamping_ceiling)
+            self._canvas_dashboard.draw_idle()
+
+    def _on_floor_entry_submitted(self) -> None:
+        """Handle manual text entry submission for clamping floor."""
+        try:
+            val = float(self._floor_entry.text())
+        except ValueError:
+            self._floor_entry.setText(f"{self._clamping_floor:.2f}")
+            return
+        val = max(0.0, min(val, self._clamping_ceiling))
+        self._clamping_floor = val
+        self._floor_entry.setText(f"{self._clamping_floor:.2f}")
+        self._clamping_slider.set_values(self._clamping_floor, self._clamping_ceiling)
+        if self._im_dashboard_event is not None:
+            self._im_dashboard_event.set_clim(self._clamping_floor, self._clamping_ceiling)
+            self._canvas_dashboard.draw_idle()
+
+    def _on_ceiling_entry_submitted(self) -> None:
+        """Handle manual text entry submission for clamping ceiling."""
+        try:
+            val = float(self._ceiling_entry.text())
+        except ValueError:
+            self._ceiling_entry.setText(f"{self._clamping_ceiling:.2f}")
+            return
+        val = max(self._clamping_floor, val)
+        if val > self._clamping_slider_max:
+            self._clamping_slider_max = max(1.0, val)
+            self._clamping_slider.configure_range(0.0, self._clamping_slider_max)
+        self._clamping_ceiling = val
+        self._ceiling_entry.setText(f"{self._clamping_ceiling:.2f}")
+        self._clamping_slider.set_values(self._clamping_floor, self._clamping_ceiling)
+        if self._im_dashboard_event is not None:
+            self._im_dashboard_event.set_clim(self._clamping_floor, self._clamping_ceiling)
             self._canvas_dashboard.draw_idle()
 
     # ------------------------------------------------------------------
@@ -1370,6 +1566,9 @@ class ClusteringStudioView(QWidget):
 
     def cleanup(self) -> None:
         """Clean up Matplotlib figures and background workers to prevent memory leaks."""
+        if hasattr(self, "_accum_timer") and self._accum_timer.isActive():
+            self._accum_timer.stop()
+
         if self._pipeline_worker is not None:
             self._pipeline_worker.cancel()
             self._pipeline_worker = None

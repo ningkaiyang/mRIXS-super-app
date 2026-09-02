@@ -72,6 +72,7 @@ class DarkMaskRecord:
     source_dir: str
     med_dark_file: str
     final_mask_file: str
+    typical_dark_sigma: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize record fields to a JSON-compatible dictionary."""
@@ -85,6 +86,8 @@ class DarkMaskRecord:
             KeyError: If required keys (med_dark_file, final_mask_file) are missing.
             ValueError / TypeError: If field values cannot be cast to expected types.
         """
+        raw_sigma = data.get("typical_dark_sigma")
+        typical_dark_sigma = float(raw_sigma) if raw_sigma is not None else None
         return cls(
             date=str(data.get("date", "")),
             stddev_thresh=float(data.get("stddev_thresh", 40.0)),
@@ -97,6 +100,7 @@ class DarkMaskRecord:
             source_dir=str(data.get("source_dir", "")),
             med_dark_file=str(data["med_dark_file"]),
             final_mask_file=str(data["final_mask_file"]),
+            typical_dark_sigma=typical_dark_sigma,
         )
 
 
@@ -314,6 +318,8 @@ def save_dark_mask(
     mask_dir: Path | str | None = None,
     store_dir: Path | str | None = None,
     cal_dir: Path | str | None = None,
+    typical_dark_sigma: float | None = None,
+    per_pixel_stddev: np.ndarray | None = None,
 ) -> DarkMaskRecord:
     """Persist dark image baseline and pixel mask TIFF images and metadata to disk.
 
@@ -335,6 +341,8 @@ def save_dark_mask(
         mask_dir: Optional custom storage directory (defaults to DEFAULT_MASK_DIR).
         store_dir: Alias for mask_dir.
         cal_dir: Legacy alias for mask_dir.
+        typical_dark_sigma: Optional median dark noise standard deviation on valid pixels (ADU).
+        per_pixel_stddev: Optional 2D array of per-pixel standard deviation (used to compute typical_dark_sigma).
 
     Returns:
         The newly created and persisted DarkMaskRecord.
@@ -364,6 +372,11 @@ def save_dark_mask(
         iso_date = now.isoformat(timespec="seconds")
         date_suffix = now.strftime("%Y-%m-%d")
 
+    if typical_dark_sigma is None and per_pixel_stddev is not None:
+        valid_mask = (mask_arr == 1.0)
+        if np.any(valid_mask):
+            typical_dark_sigma = float(np.median(per_pixel_stddev[valid_mask]))
+
     med_filename = f"MED_Dark_{date_suffix}.tif"
     mask_filename = f"Final_Mask_{date_suffix}.tif"
     record = DarkMaskRecord(
@@ -378,6 +391,7 @@ def save_dark_mask(
         source_dir=str(source_dir),
         med_dark_file=med_filename,
         final_mask_file=mask_filename,
+        typical_dark_sigma=float(typical_dark_sigma) if typical_dark_sigma is not None else None,
     )
 
     med_path = target_dir / med_filename

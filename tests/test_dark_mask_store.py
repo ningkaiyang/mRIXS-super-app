@@ -197,3 +197,67 @@ def test_clear_dark_mask(temp_mask_dir: Path):
     assert has_dark_mask(temp_mask_dir) is True
     clear_dark_mask(temp_mask_dir)
     assert has_dark_mask(temp_mask_dir) is False
+
+
+def test_dark_mask_record_typical_dark_sigma(tmp_path: Path):
+    """Verify typical_dark_sigma is saved to mask_meta.json, serialized, and loaded back."""
+    h, w = 20, 20
+    med_dark = np.zeros((h, w), dtype=np.float32)
+    final_mask = np.ones((h, w), dtype=np.float32)
+    final_mask[0, 0] = 0.0  # mask 1 pixel
+
+    per_pixel_stddev = np.full((h, w), 14.2, dtype=np.float32)
+    per_pixel_stddev[0, 0] = 999.0  # masked pixel has high noise
+
+    # Case A: Computed from per_pixel_stddev
+    record = save_dark_mask(
+        med_dark=med_dark,
+        final_mask=final_mask,
+        stddev_thresh=40.0,
+        absdev_thresh=60.0,
+        tail_ratio=0.9333,
+        dark_frame_count=20,
+        surviving_pixels=399,
+        total_pixels=400,
+        suppression_pct=0.25,
+        source_dir="/tmp/test",
+        mask_dir=tmp_path / "case_a",
+        per_pixel_stddev=per_pixel_stddev,
+    )
+
+    assert record.typical_dark_sigma == pytest.approx(14.2)
+
+    # Check raw JSON file
+    meta_json = (tmp_path / "case_a" / "mask_meta.json").read_text()
+    meta_dict = json.loads(meta_json)
+    assert "typical_dark_sigma" in meta_dict
+    assert meta_dict["typical_dark_sigma"] == pytest.approx(14.2)
+
+    # Load back
+    _, _, loaded_record = load_dark_mask(tmp_path / "case_a")
+    assert loaded_record.typical_dark_sigma == pytest.approx(14.2)
+
+    # Case B: Explicit typical_dark_sigma passed
+    record_b = save_dark_mask(
+        med_dark=med_dark,
+        final_mask=final_mask,
+        stddev_thresh=40.0,
+        absdev_thresh=60.0,
+        tail_ratio=0.9333,
+        dark_frame_count=20,
+        surviving_pixels=399,
+        total_pixels=400,
+        suppression_pct=0.25,
+        source_dir="/tmp/test",
+        mask_dir=tmp_path / "case_b",
+        typical_dark_sigma=12.8,
+    )
+    assert record_b.typical_dark_sigma == pytest.approx(12.8)
+    _, _, loaded_b = load_dark_mask(tmp_path / "case_b")
+    assert loaded_b.typical_dark_sigma == pytest.approx(12.8)
+
+    # Case C: Backward compatibility with dict missing typical_dark_sigma
+    del meta_dict["typical_dark_sigma"]
+    legacy_record = DarkMaskRecord.from_dict(meta_dict)
+    assert legacy_record.typical_dark_sigma is None
+

@@ -20,6 +20,7 @@ from rixs_app.core.photon_clustering import (
     process_signal_stack_clusters,
     reconstruct_photon_event_map,
     export_intden_histogram,
+    _calc_typical_dark_sigma,
 )
 
 
@@ -181,6 +182,191 @@ def test_sub_threshold_and_mask_exclusion():
     df = process_single_frame_clusters(frame, med_dark, final_mask, config=config, slice_idx=1)
 
     assert len(df) == 0
+
+
+def test_calc_typical_dark_sigma_helper():
+    """Verify _calc_typical_dark_sigma helper handles small and large arrays and empty masks."""
+    # Small frame (< 65536)
+    s_small = np.ones((50, 50), dtype=np.float32) * 12.5
+    m_small = np.ones((50, 50), dtype=np.float32)
+    assert np.isclose(_calc_typical_dark_sigma(s_small, m_small), 12.5)
+
+    # Empty surviving mask
+    m_empty = np.zeros((50, 50), dtype=np.float32)
+    assert _calc_typical_dark_sigma(s_small, m_empty) == 0.0
+
+    # Large frame (> 65536)
+    s_large = np.ones((300, 300), dtype=np.float32) * 18.2
+    m_large = np.ones((300, 300), dtype=np.float32)
+    assert np.isclose(_calc_typical_dark_sigma(s_large, m_large), 18.2)
+
+
+def test_vectorized_single_pixel_parity_and_schema():
+    """Verify vectorized single-pixel extraction maintains exact schema, dtypes, and geometry parity."""
+    h, w = 120, 120
+    med_dark = np.zeros((h, w), dtype=np.float32)
+    final_mask = np.ones((h, w), dtype=np.float32)
+    frame = np.zeros((h, w), dtype=np.float32)
+
+    # Add 3 isolated single-pixel photons
+    single_photons = [
+        (10, 15, 120.0),  # (y, x, intensity)
+        (30, 45, 210.5),
+        (80, 95, 75.0),
+    ]
+    for y, x, val in single_photons:
+        frame[y, x] = val
+
+    # Add 1 multi-pixel cluster (2x2)
+    # y=50..51, x=60..61
+    frame[50, 60] = 100.0
+    frame[50, 61] = 50.0
+    frame[51, 60] = 50.0
+    frame[51, 61] = 100.0
+    # IntDen = 300, XM = 60.5, YM = 50.5, Area = 4, Mean = 75.0, Min = 50.0, Max = 100.0, StdDev = 25.0
+
+    config = ClusterConfig(sig_thresh_low=45.0, sig_thresh_high=1e6, connectivity=8)
+    df = process_single_frame_clusters(frame, med_dark, final_mask, config=config, slice_idx=7)
+
+    expected_cols = ["ClusterNum", "Slice", "Area", "Mean", "StdDev", "Min", "Max", "XM", "YM", "Circ.", "IntDen"]
+    assert list(df.columns) == expected_cols
+    assert len(df) == 4
+
+    # Verify all single-pixel clusters
+    for y, x, val in single_photons:
+        row = df[(np.isclose(df["XM"], x)) & (np.isclose(df["YM"], y))]
+        assert len(row) == 1
+        r = row.iloc[0]
+        assert r["Slice"] == 7
+        assert r["Area"] == 1
+        assert np.isclose(r["IntDen"], val)
+        assert np.isclose(r["Mean"], val)
+        assert np.isclose(r["Min"], val)
+        assert np.isclose(r["Max"], val)
+        assert np.isclose(r["StdDev"], 0.0)
+        assert np.isclose(r["Circ."], 1.0)
+        assert np.isclose(r["XM"], float(x))
+        assert np.isclose(r["YM"], float(y))
+
+    # Verify multi-pixel cluster
+    m_row = df[df["Area"] == 4].iloc[0]
+    assert m_row["Slice"] == 7
+    assert np.isclose(m_row["IntDen"], 300.0)
+    assert np.isclose(m_row["Mean"], 75.0)
+    assert np.isclose(m_row["Min"], 50.0)
+    assert np.isclose(m_row["Max"], 100.0)
+    assert np.isclose(m_row["XM"], 60.5)
+    assert np.isclose(m_row["YM"], 50.5)
+    assert np.isclose(m_row["StdDev"], 25.0)
+    assert m_row["Circ."] > 0.0
+
+    # Verify sequential ClusterNum
+    assert list(df["ClusterNum"]) == [0, 1, 2, 3]
+
+
+def test_vectorized_single_pixel_numerical_parity_against_reference():
+    """Verify 100% numerical parity against unvectorized reference calculation."""
+    import cv2
+    h, w = 150, 150
+    med_dark = np.zeros((h, w), dtype=np.float32)
+    final_mask = np.ones((h, w), dtype=np.float32)
+    frame = np.zeros((h, w), dtype=np.float32)
+
+    # Isolated single-pixel hits
+    frame[10, 10] = 120.0
+    frame[20, 30] = 230.5
+    frame[50, 70] = 85.0
+    frame[90, 100] = 300.0
+
+    # 2x2 cluster
+    frame[15:17, 15:17] = np.array([[100.0, 50.0], [60.0, 90.0]])
+    # 3-pixel L-shaped cluster
+    frame[35, 40] = 100.0
+    frame[36, 40] = 80.0
+    frame[36, 41] = 90.0
+
+    config = ClusterConfig(sig_thresh_low=45.0, sig_thresh_high=1e6, connectivity=8)
+
+    # Reference unvectorized loop
+    def _ref_clusters(frame, med_dark, final_mask, config, slice_idx=3):
+        clean = (frame.astype(np.float32) - med_dark) * final_mask
+        clean[clean < config.sig_thresh_low] = 0.0
+        binary = ((clean >= config.sig_thresh_low) & (clean <= config.sig_thresh_high)).astype(np.uint8)
+        n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=config.connectivity)
+        if n_labels <= 1:
+            return pd.DataFrame(columns=["ClusterNum", "Slice", "Area", "Mean", "StdDev", "Min", "Max", "XM", "YM", "Circ.", "IntDen"])
+        records = []
+        for label_id in range(1, n_labels):
+            x, y, w, h, area = stats[label_id]
+            if area <= 0:
+                continue
+            patch_clean = clean[y:y + h, x:x + w]
+            patch_labels = labels[y:y + h, x:x + w]
+            patch_mask = (patch_labels == label_id)
+            intensities = patch_clean[patch_mask]
+            int_den = float(np.sum(intensities))
+            if int_den <= 0.0 or len(intensities) == 0:
+                continue
+            mean_val = float(int_den / area)
+            min_val = float(np.min(intensities))
+            max_val = float(np.max(intensities))
+            std_val = float(np.std(intensities)) if area > 1 else 0.0
+            local_ys, local_xs = np.where(patch_mask)
+            global_xs = local_xs + x
+            global_ys = local_ys + y
+            xm = float(np.sum(global_xs * intensities) / int_den)
+            ym = float(np.sum(global_ys * intensities) / int_den)
+            if area == 1:
+                circ = 1.0
+            else:
+                contours, _ = cv2.findContours(patch_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours and len(contours) > 0:
+                    perimeter = float(cv2.arcLength(contours[0], True))
+                    circ = float(min(1.0, (4.0 * np.pi * area) / (perimeter ** 2))) if perimeter > 0.0 else 1.0
+                else:
+                    circ = 1.0
+            records.append({
+                "ClusterNum": len(records), "Slice": slice_idx, "Area": int(area),
+                "Mean": mean_val, "StdDev": std_val, "Min": min_val, "Max": max_val,
+                "XM": xm, "YM": ym, "Circ.": circ, "IntDen": int_den
+            })
+        return pd.DataFrame(records)
+
+    df_ref = _ref_clusters(frame, med_dark, final_mask, config, slice_idx=3)
+    df_vec = process_single_frame_clusters(frame, med_dark, final_mask, config=config, slice_idx=3)
+
+    assert len(df_ref) == len(df_vec)
+    assert list(df_ref.columns) == list(df_vec.columns)
+    for col in df_ref.columns:
+        if col in ["ClusterNum", "Slice", "Area"]:
+            assert np.array_equal(df_ref[col].values, df_vec[col].values), f"Mismatch in {col}"
+        else:
+            assert np.allclose(df_ref[col].values, df_vec[col].values), f"Mismatch in {col}"
+
+
+def test_vectorized_clustering_latency():
+    """Verify processing speed on high-density frame (~15k clusters) completes well under 100ms."""
+    import time
+    h, w = 500, 500
+    med_dark = np.zeros((h, w), dtype=np.float32)
+    final_mask = np.ones((h, w), dtype=np.float32)
+    frame = np.zeros((h, w), dtype=np.float32)
+
+    # Grid of isolated pixels: every 4th pixel -> (500/4)*(500/4) ~ 15,625 single pixel clusters
+    frame[::4, ::4] = 150.0
+
+    config = ClusterConfig(sig_thresh_low=45.0, sig_thresh_high=1e6, connectivity=8)
+
+    t0 = time.perf_counter()
+    df = process_single_frame_clusters(frame, med_dark, final_mask, config=config, slice_idx=1)
+    duration = time.perf_counter() - t0
+
+    assert len(df) == 15625
+    assert np.all(df["Area"] == 1)
+    assert np.all(df["IntDen"] == 150.0)
+    # Target: < 100ms (0.10s) with vectorized extraction
+    assert duration < 0.10, f"Extraction took {duration:.3f}s, expected < 0.10s"
+
 
 
 # ============================================================================

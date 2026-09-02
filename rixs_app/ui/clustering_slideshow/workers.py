@@ -9,7 +9,9 @@ Includes:
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -48,8 +50,9 @@ class ClusterPipelineSignals(QObject):
 class ClusterPipelineWorker(QRunnable):
     """Background worker executing Stage 2 single-photon cluster extraction.
 
-    Emits per-frame cluster results progressively to enable real-time canvas
-    accumulation on the GUI thread while processing large frame sequences.
+    Processes frames in parallel using a ThreadPoolExecutor while progressively
+    emitting per-frame cluster results to enable real-time canvas accumulation
+    on the GUI thread with cooperative cancellation.
     """
 
     def __init__(
@@ -58,12 +61,14 @@ class ClusterPipelineWorker(QRunnable):
         med_dark: np.ndarray,
         final_mask: np.ndarray,
         config: ClusterConfig = ClusterConfig(),
+        max_workers: int | None = None,
     ) -> None:
         super().__init__()
         self.signal_paths = [Path(p) for p in signal_paths]
         self.med_dark = np.asarray(med_dark, dtype=np.float32)
         self.final_mask = np.asarray(final_mask, dtype=np.float32)
         self.config = config
+        self.max_workers = max_workers or min(8, os.cpu_count() or 4)
         self.signals = ClusterPipelineSignals()
         self._is_canceled = False
         self.setAutoDelete(True)
@@ -77,48 +82,89 @@ class ClusterPipelineWorker(QRunnable):
         """True if cancellation was requested."""
         return self._is_canceled
 
+    def _process_one_frame(self, item: tuple[int, Path]) -> tuple[int, pd.DataFrame]:
+        """Process Stage 2 cluster extraction for a single raw TIFF frame.
+
+        Args:
+            item: Tuple of (1-indexed slice number, file path to frame).
+
+        Returns:
+            Tuple of (slice_idx, extracted clusters DataFrame).
+        """
+        slice_idx, path = item
+        if self._is_canceled:
+            return slice_idx, pd.DataFrame(columns=CLUSTER_COLUMNS)
+
+        raw_frame = tifffile.imread(path)
+        if self._is_canceled:
+            return slice_idx, pd.DataFrame(columns=CLUSTER_COLUMNS)
+
+        frame_df = process_single_frame_clusters(
+            frame=raw_frame,
+            med_dark=self.med_dark,
+            final_mask=self.final_mask,
+            config=self.config,
+            slice_idx=slice_idx,
+        )
+        return slice_idx, frame_df
+
     @Slot()
     def run(self) -> None:
-        """Process frames sequentially and emit per-frame cluster DataFrames."""
+        """Process frames in parallel with ThreadPoolExecutor and emit progressive signals."""
         try:
             total_frames = len(self.signal_paths)
             if total_frames == 0:
                 raise ValueError("No signal frame paths provided to ClusterPipelineWorker.")
 
+            if self._is_canceled:
+                logger.info("ClusterPipelineWorker canceled before starting execution")
+                self.signals.canceled.emit()
+                return
+
             all_dfs: list[pd.DataFrame] = []
             total_clusters = 0
+            completed_frames = 0
 
-            self.signals.progress_msg.emit(f"Starting cluster analysis across {total_frames} frames...")
+            self.signals.progress_msg.emit(
+                f"Starting cluster analysis across {total_frames} frames..."
+            )
 
-            for i, path in enumerate(self.signal_paths):
-                if self._is_canceled:
-                    logger.info("ClusterPipelineWorker canceled at frame %d/%d", i + 1, total_frames)
-                    self.signals.canceled.emit()
-                    return
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                items = [(i + 1, path) for i, path in enumerate(self.signal_paths)]
+                future_to_item = {
+                    executor.submit(self._process_one_frame, item): item for item in items
+                }
 
-                frame_idx = i + 1
-                self.signals.frame_started.emit(frame_idx, total_frames)
+                try:
+                    for future in concurrent.futures.as_completed(future_to_item):
+                        if self._is_canceled:
+                            logger.info("ClusterPipelineWorker canceled during execution")
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            self.signals.canceled.emit()
+                            return
 
-                raw_frame = tifffile.imread(path)
-                frame_df = process_single_frame_clusters(
-                    frame=raw_frame,
-                    med_dark=self.med_dark,
-                    final_mask=self.final_mask,
-                    config=self.config,
-                    slice_idx=frame_idx,
-                )
+                        frame_idx, frame_df = future.result()
+                        completed_frames += 1
 
-                if frame_df is not None and not frame_df.empty:
-                    all_dfs.append(frame_df)
-                    total_clusters += len(frame_df)
+                        if frame_df is not None and not frame_df.empty:
+                            all_dfs.append(frame_df)
+                            total_clusters += len(frame_df)
 
-                self.signals.frame_result.emit(frame_idx, frame_df)
-                self.signals.progress.emit(frame_idx, total_frames, total_clusters)
-                self.signals.progress_msg.emit(
-                    f"Processed frame {frame_idx}/{total_frames} ({total_clusters:,} clusters detected)..."
-                )
+                        self.signals.frame_result.emit(frame_idx, frame_df)
+                        self.signals.progress.emit(completed_frames, total_frames, total_clusters)
+                        self.signals.progress_msg.emit(
+                            f"Extracted {completed_frames}/{total_frames} frames ({total_clusters:,} clusters)..."
+                        )
+                except Exception:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise
+
+            if self._is_canceled:
+                self.signals.canceled.emit()
+                return
 
             if all_dfs:
+                all_dfs.sort(key=lambda d: int(d["Slice"].iloc[0]) if not d.empty else 0)
                 df_all = pd.concat(all_dfs, ignore_index=True)
                 df_all["ClusterNum"] = np.arange(len(df_all), dtype=np.int64)
             else:

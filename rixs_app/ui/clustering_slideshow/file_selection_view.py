@@ -341,19 +341,23 @@ class ClusteringFileSelectionView(QWidget):
         self.sig_low_spin.setSingleStep(5.0)
         s2_grid.addWidget(self.sig_low_spin, 0, 1)
 
-        s2_grid.addWidget(QLabel("Signal Threshold High (ADU):", stage2_box), 1, 0)
+        self._sig_low_auto_lbl = QLabel(stage2_box)
+        self._sig_low_auto_lbl.setWordWrap(True)
+        s2_grid.addWidget(self._sig_low_auto_lbl, 1, 0, 1, 2)
+
+        s2_grid.addWidget(QLabel("Signal Threshold High (ADU):", stage2_box), 2, 0)
         self.sig_high_spin = QDoubleSpinBox(stage2_box)
         self.sig_high_spin.setRange(100.0, 1e7)
         self.sig_high_spin.setValue(1e6)
         self.sig_high_spin.setSingleStep(1000.0)
-        s2_grid.addWidget(self.sig_high_spin, 1, 1)
+        s2_grid.addWidget(self.sig_high_spin, 2, 1)
 
-        s2_grid.addWidget(QLabel("Pixel Connectivity:", stage2_box), 2, 0)
+        s2_grid.addWidget(QLabel("Pixel Connectivity:", stage2_box), 3, 0)
         self.connectivity_spin = QSpinBox(stage2_box)
         self.connectivity_spin.setRange(4, 8)
         self.connectivity_spin.setValue(8)
         self.connectivity_spin.setSingleStep(4)
-        s2_grid.addWidget(self.connectivity_spin, 2, 1)
+        s2_grid.addWidget(self.connectivity_spin, 3, 1)
 
         layout.addWidget(stage2_box)
 
@@ -520,6 +524,11 @@ class ClusteringFileSelectionView(QWidget):
             )
             self._cal_status_text.setStyleSheet("color: #34d399;")
             self._cal_action_btn.setText("⚙ Recalibrate / Remask...")
+            try:
+                _, _, record = dark_mask_store.load_dark_mask(mask_dir=self.cal_dir)
+            except Exception as exc:
+                logger.debug("Failed to load dark mask record for adaptive threshold: %s", exc)
+                record = None
         else:
             theme.set_cal_status_missing(self._cal_banner)
             self._cal_status_icon.setText("⚠️")
@@ -529,6 +538,17 @@ class ClusteringFileSelectionView(QWidget):
             )
             self._cal_status_text.setStyleSheet("color: #f87171;")
             self._cal_action_btn.setText("🔧 Calibrate / Mask Now")
+            record = None
+
+        if record is not None and record.typical_dark_sigma is not None and record.typical_dark_sigma > 0:
+            auto_thresh = round(4.0 * float(record.typical_dark_sigma), 1)
+            self.sig_low_spin.setValue(auto_thresh)
+            self._sig_low_auto_lbl.setText(f"Auto: 4.0σ (dark frame noise σ = {record.typical_dark_sigma:.1f} ADU)")
+            self._sig_low_auto_lbl.setStyleSheet("color: #34d399; font-size: 11px; font-weight: bold;")
+        else:
+            self.sig_low_spin.setValue(45.0)
+            self._sig_low_auto_lbl.setText("⚠️ Calibration lacks dark noise σ, falling back to default 45.0 ADU")
+            self._sig_low_auto_lbl.setStyleSheet("color: #fbbf24; font-size: 11px;")
 
         self._update_launch_state()
         return is_ok

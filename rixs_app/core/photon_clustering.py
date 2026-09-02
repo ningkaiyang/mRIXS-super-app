@@ -149,6 +149,7 @@ class Stage1Result:
     total_pixels: int
     surviving_pixels: int
     suppression_pct: float
+    typical_dark_sigma: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -323,6 +324,18 @@ def compute_dark_diagnostics(
     )
 
 
+def _calc_typical_dark_sigma(s_arr: np.ndarray, final_mask: np.ndarray) -> float:
+    """Calculate typical dark noise sigma from surviving pixels, subsampling large sensors."""
+    total_pixels = final_mask.size
+    if total_pixels > 65536:
+        s_sub = s_arr[::8, ::8]
+        m_sub = final_mask[::8, ::8]
+        v_sub = s_sub[m_sub == 1.0]
+        return float(np.median(v_sub)) if v_sub.size > 0 else 0.0
+    v_pix = s_arr[final_mask == 1.0]
+    return float(np.median(v_pix)) if v_pix.size > 0 else 0.0
+
+
 def apply_dark_thresholds(
     diagnostics: DarkDiagnostics,
     stddev_thresh: float = 40.0,
@@ -371,6 +384,7 @@ def apply_dark_thresholds(
         total_pixels = int(final_mask.size)
         surviving_pixels = int(surviving.value)
         suppression_pct = (1.0 - (surviving_pixels / total_pixels)) * 100.0 if total_pixels > 0 else 0.0
+        typical_dark_sigma = _calc_typical_dark_sigma(s_arr, final_mask)
         return Stage1Result(
             med_dark=diagnostics.med_dark,
             final_mask=final_mask,
@@ -379,6 +393,7 @@ def apply_dark_thresholds(
             total_pixels=total_pixels,
             surviving_pixels=surviving_pixels,
             suppression_pct=suppression_pct,
+            typical_dark_sigma=typical_dark_sigma,
         )
 
     # Pure NumPy fallback
@@ -393,6 +408,7 @@ def apply_dark_thresholds(
     total_pixels = int(final_mask.size)
     surviving_pixels = int(np.count_nonzero(m_final))
     suppression_pct = (1.0 - (surviving_pixels / total_pixels)) * 100.0 if total_pixels > 0 else 0.0
+    typical_dark_sigma = _calc_typical_dark_sigma(s_arr, final_mask)
 
     return Stage1Result(
         med_dark=diagnostics.med_dark,
@@ -402,6 +418,7 @@ def apply_dark_thresholds(
         total_pixels=total_pixels,
         surviving_pixels=surviving_pixels,
         suppression_pct=suppression_pct,
+        typical_dark_sigma=typical_dark_sigma,
     )
 
 
@@ -487,6 +504,10 @@ def process_single_frame_clusters(
     Returns:
         pd.DataFrame matching Results_clusters.xls schema.
     """
+    cols = [
+        "ClusterNum", "Slice", "Area", "Mean", "StdDev", "Min", "Max", "XM", "YM", "Circ.", "IntDen"
+    ]
+
     clean = (frame.astype(np.float32) - med_dark) * final_mask
     clean[clean < config.sig_thresh_low] = 0.0
 
@@ -501,46 +522,80 @@ def process_single_frame_clusters(
 
     if n_labels <= 1:
         # No clusters detected
-        return pd.DataFrame(columns=[
-            "ClusterNum", "Slice", "Area", "Mean", "StdDev", "Min", "Max", "XM", "YM", "Circ.", "IntDen"
-        ])
+        return pd.DataFrame(columns=cols)
 
-    records = []
-    # Label 0 is background; iterate labels 1 to n_labels - 1
-    for label_id in range(1, n_labels):
-        x, y, w, h, area = stats[label_id]
-        if area <= 0:
-            continue
+    # Label 0 is background; evaluate labels 1 to n_labels - 1
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    single_mask = (areas == 1)
+    multi_mask = (areas > 1)
 
-        # Extract local bounding box
-        patch_clean = clean[y:y + h, x:x + w]
-        patch_labels = labels[y:y + h, x:x + w]
-        patch_mask = (patch_labels == label_id)
+    # 1. Vectorized single-pixel cluster extraction (Area == 1, ~98.5% of all clusters)
+    if np.any(single_mask):
+        single_indices = np.where(single_mask)[0]
+        single_label_ids = single_indices + 1
+        xs_single = stats[single_label_ids, cv2.CC_STAT_LEFT]
+        ys_single = stats[single_label_ids, cv2.CC_STAT_TOP]
+        ints_single = clean[ys_single, xs_single].astype(np.float64)
 
-        intensities = patch_clean[patch_mask]
-        int_den = float(np.sum(intensities))
+        valid_single = ints_single > 0.0
+        if not np.all(valid_single):
+            single_label_ids = single_label_ids[valid_single]
+            xs_single = xs_single[valid_single]
+            ys_single = ys_single[valid_single]
+            ints_single = ints_single[valid_single]
 
-        if int_den <= 0.0 or len(intensities) == 0:
-            continue
-
-        mean_val = float(int_den / area)
-        min_val = float(np.min(intensities))
-        max_val = float(np.max(intensities))
-        std_val = float(np.std(intensities)) if area > 1 else 0.0
-
-        # Sub-pixel Center of Mass (XM, YM)
-        local_ys, local_xs = np.where(patch_mask)
-        global_xs = local_xs + x
-        global_ys = local_ys + y
-
-        xm = float(np.sum(global_xs * intensities) / int_den)
-        ym = float(np.sum(global_ys * intensities) / int_den)
-
-        # Circularity: 4 * pi * Area / Perimeter^2
-        if area == 1:
-            circ = 1.0
+        n_single = len(single_label_ids)
+        if n_single > 0:
+            df_single = pd.DataFrame({
+                "_order": single_label_ids,
+                "Slice": np.full(n_single, slice_idx, dtype=np.int64),
+                "Area": np.ones(n_single, dtype=np.int64),
+                "Mean": ints_single,
+                "StdDev": np.zeros(n_single, dtype=np.float64),
+                "Min": ints_single,
+                "Max": ints_single,
+                "XM": xs_single.astype(np.float64),
+                "YM": ys_single.astype(np.float64),
+                "Circ.": np.ones(n_single, dtype=np.float64),
+                "IntDen": ints_single,
+            })
         else:
-            # OpenCV findContours on binary patch
+            df_single = pd.DataFrame()
+    else:
+        df_single = pd.DataFrame()
+
+    # 2. Multi-pixel cluster extraction (Area > 1, ~1.5% of clusters)
+    records_multi = []
+    if np.any(multi_mask):
+        multi_indices = np.where(multi_mask)[0]
+        multi_label_ids = multi_indices + 1
+
+        for label_id in multi_label_ids:
+            x, y, w, h, area = stats[label_id]
+            patch_clean = clean[y:y + h, x:x + w]
+            patch_labels = labels[y:y + h, x:x + w]
+            patch_mask = (patch_labels == label_id)
+
+            intensities = patch_clean[patch_mask]
+            int_den = float(np.sum(intensities))
+
+            if int_den <= 0.0 or len(intensities) == 0:
+                continue
+
+            mean_val = float(int_den / area)
+            min_val = float(np.min(intensities))
+            max_val = float(np.max(intensities))
+            std_val = float(np.std(intensities))
+
+            # Sub-pixel Center of Mass (XM, YM)
+            local_ys, local_xs = np.where(patch_mask)
+            global_xs = local_xs + x
+            global_ys = local_ys + y
+
+            xm = float(np.sum(global_xs * intensities) / int_den)
+            ym = float(np.sum(global_ys * intensities) / int_den)
+
+            # Circularity: 4 * pi * Area / Perimeter^2
             contours, _ = cv2.findContours(
                 patch_mask.astype(np.uint8),
                 cv2.RETR_EXTERNAL,
@@ -555,21 +610,50 @@ def process_single_frame_clusters(
             else:
                 circ = 1.0
 
-        records.append({
-            "ClusterNum": len(records),
-            "Slice": slice_idx,
-            "Area": int(area),
-            "Mean": mean_val,
-            "StdDev": std_val,
-            "Min": min_val,
-            "Max": max_val,
-            "XM": xm,
-            "YM": ym,
-            "Circ.": circ,
-            "IntDen": int_den,
-        })
+            records_multi.append({
+                "_order": label_id,
+                "Slice": int(slice_idx),
+                "Area": int(area),
+                "Mean": mean_val,
+                "StdDev": std_val,
+                "Min": min_val,
+                "Max": max_val,
+                "XM": xm,
+                "YM": ym,
+                "Circ.": circ,
+                "IntDen": int_den,
+            })
 
-    return pd.DataFrame(records)
+    if records_multi:
+        df_multi = pd.DataFrame(records_multi)
+        df_multi["Slice"] = df_multi["Slice"].astype(np.int64)
+        df_multi["Area"] = df_multi["Area"].astype(np.int64)
+        df_multi["Mean"] = df_multi["Mean"].astype(np.float64)
+        df_multi["StdDev"] = df_multi["StdDev"].astype(np.float64)
+        df_multi["Min"] = df_multi["Min"].astype(np.float64)
+        df_multi["Max"] = df_multi["Max"].astype(np.float64)
+        df_multi["XM"] = df_multi["XM"].astype(np.float64)
+        df_multi["YM"] = df_multi["YM"].astype(np.float64)
+        df_multi["Circ."] = df_multi["Circ."].astype(np.float64)
+        df_multi["IntDen"] = df_multi["IntDen"].astype(np.float64)
+    else:
+        df_multi = pd.DataFrame()
+
+    # 3. Combine and restore original label ordering
+    if df_single.empty and df_multi.empty:
+        return pd.DataFrame(columns=cols)
+    elif df_multi.empty:
+        df = df_single.copy()
+    elif df_single.empty:
+        df = df_multi.copy()
+    else:
+        df = pd.concat([df_single, df_multi], ignore_index=True)
+        df.sort_values("_order", inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+    df.drop(columns=["_order"], inplace=True)
+    df.insert(0, "ClusterNum", np.arange(len(df), dtype=np.int64))
+    return df[cols]
 
 
 def process_signal_stack_clusters(

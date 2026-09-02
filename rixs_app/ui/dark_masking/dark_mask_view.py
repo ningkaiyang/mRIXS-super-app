@@ -1057,6 +1057,8 @@ class DarkMaskingView(QWidget):
             suppression_pct=suppression_pct,
             source_dir=source_dir,
             mask_dir=mask_dir,
+            per_pixel_stddev=self._diagnostics.per_pixel_stddev,
+            typical_dark_sigma=getattr(stage1_res, "typical_dark_sigma", None),
         )
 
         pct_active = (surviving / total_pixels) * 100.0 if total_pixels > 0 else 0.0

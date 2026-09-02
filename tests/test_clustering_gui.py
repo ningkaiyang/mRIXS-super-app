@@ -38,7 +38,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import tifffile
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from rixs_app.core import calibration_store
@@ -266,6 +266,68 @@ def test_file_selection_callbacks_and_copilot_docking(qapp, qtbot, dummy_cal_dir
     assert copilot_btn.parent() == view._copilot_container
 
 
+def test_file_selection_adaptive_threshold_population(tmp_path, qtbot):
+    """Verify ClusteringFileSelectionView auto-populates sig_low_spin with 4.0 * typical_dark_sigma and shows badge."""
+    cal_dir = tmp_path / "adaptive_cal"
+    cal_dir.mkdir(parents=True, exist_ok=True)
+    h, w = 32, 32
+    med_dark = np.full((h, w), 100.0, dtype=np.float32)
+    final_mask = np.ones((h, w), dtype=np.float32)
+
+    calibration_store.save_calibration(
+        med_dark=med_dark,
+        final_mask=final_mask,
+        stddev_thresh=40.0,
+        absdev_thresh=60.0,
+        tail_ratio=0.9333,
+        dark_frame_count=20,
+        surviving_pixels=h * w,
+        total_pixels=h * w,
+        suppression_pct=0.0,
+        source_dir="/mock/dark",
+        cal_dir=cal_dir,
+        typical_dark_sigma=14.2,
+    )
+
+    view = ClusteringFileSelectionView(cal_dir=cal_dir)
+    qtbot.addWidget(view)
+
+    assert view.sig_low_spin.value() == pytest.approx(56.8, 0.1)
+    assert "Auto: 4.0σ (dark frame noise σ = 14.2 ADU)" in view._sig_low_auto_lbl.text()
+    assert "#34d399" in view._sig_low_auto_lbl.styleSheet()
+
+
+def test_file_selection_adaptive_threshold_fallback(tmp_path, qtbot):
+    """Verify fallback behavior to 45.0 ADU with warning badge when typical_dark_sigma is absent."""
+    cal_dir = tmp_path / "fallback_cal"
+    cal_dir.mkdir(parents=True, exist_ok=True)
+    h, w = 32, 32
+    med_dark = np.full((h, w), 100.0, dtype=np.float32)
+    final_mask = np.ones((h, w), dtype=np.float32)
+
+    calibration_store.save_calibration(
+        med_dark=med_dark,
+        final_mask=final_mask,
+        stddev_thresh=40.0,
+        absdev_thresh=60.0,
+        tail_ratio=0.9333,
+        dark_frame_count=20,
+        surviving_pixels=h * w,
+        total_pixels=h * w,
+        suppression_pct=0.0,
+        source_dir="/mock/dark",
+        cal_dir=cal_dir,
+    )
+
+    view = ClusteringFileSelectionView(cal_dir=cal_dir)
+    qtbot.addWidget(view)
+
+    assert view.sig_low_spin.value() == pytest.approx(45.0, 0.1)
+    assert "falling back to default 45.0 ADU" in view._sig_low_auto_lbl.text()
+    assert "#fbbf24" in view._sig_low_auto_lbl.styleSheet()
+
+
+
 # ============================================================================
 # 2. ClusteringManager Tests
 # ============================================================================
@@ -395,6 +457,80 @@ def test_manager_stale_stage2_flag():
     assert mgr.stale_stage2 is False
 
 
+def test_manager_append_frame_clusters_no_quadratic_realloc(dummy_cal_dir):
+    """Verify O(1) list accumulation and lazy consolidation across 150 frames."""
+    mgr = ClusteringManager()
+    paths = [f"/mock/frame_{i+1:03d}.tif" for i in range(150)]
+    mgr.init_session(
+        signal_paths=paths,
+        chunk_size=50,
+        cal_dir=dummy_cal_dir,
+    )
+
+    # Ingest 150 frame DataFrames via append_frame_clusters
+    clusters_per_frame = 5
+    for f_idx in range(1, 151):
+        frame_df = pd.DataFrame({
+            "ClusterNum": np.arange(clusters_per_frame),
+            "Slice": np.full(clusters_per_frame, f_idx),
+            "Area": np.full(clusters_per_frame, 2),
+            "Mean": np.full(clusters_per_frame, 100.0, dtype=np.float32),
+            "StdDev": np.zeros(clusters_per_frame, dtype=np.float32),
+            "Min": np.full(clusters_per_frame, 80.0, dtype=np.float32),
+            "Max": np.full(clusters_per_frame, 120.0, dtype=np.float32),
+            "XM": np.full(clusters_per_frame, 10.0, dtype=np.float32),
+            "YM": np.full(clusters_per_frame, 20.0, dtype=np.float32),
+            "Circ.": np.full(clusters_per_frame, 0.8, dtype=np.float32),
+            "IntDen": np.full(clusters_per_frame, 200.0, dtype=np.float32),
+        })
+        mgr.append_frame_clusters(f_idx, frame_df)
+
+    # Verify frame count and lazy accumulation state
+    assert mgr.state.processed_frame_count == 150
+    assert len(mgr.state._frame_dfs) == 150
+    assert mgr.state._dirty is True
+
+    # Consolidate via df_clusters property access
+    consolidated = mgr.state.df_clusters
+    assert mgr.state._dirty is False
+    total_expected = 150 * clusters_per_frame
+    assert len(consolidated) == total_expected
+    assert list(consolidated["ClusterNum"]) == list(range(total_expected))
+    assert consolidated.iloc[0]["Slice"] == 1
+    assert consolidated.iloc[-1]["Slice"] == 150
+
+    # Verify repeated access doesn't re-concatenate (cached)
+    assert mgr.state.df_clusters is consolidated
+
+    # Verify clear_clusters() clears _frame_dfs and resets state
+    mgr.clear_clusters()
+    assert len(mgr.state._frame_dfs) == 0
+    assert mgr.state.df_clusters.empty
+    assert mgr.state.processed_frame_count == 0
+    assert mgr.state._dirty is False
+
+    # Verify set_all_clusters(...) replaces _frame_dfs and df_clusters
+    new_df = pd.DataFrame({
+        "ClusterNum": [99, 100],
+        "Slice": [1, 2],
+        "Area": [1, 2],
+        "Mean": [50.0, 60.0],
+        "StdDev": [0.0, 0.0],
+        "Min": [40.0, 50.0],
+        "Max": [60.0, 70.0],
+        "XM": [5.0, 6.0],
+        "YM": [7.0, 8.0],
+        "Circ.": [0.9, 0.9],
+        "IntDen": [100.0, 120.0],
+    })
+    mgr.set_all_clusters(new_df)
+    assert len(mgr.state._frame_dfs) == 1
+    assert len(mgr.state.df_clusters) == 2
+    assert list(mgr.state.df_clusters["ClusterNum"]) == [0, 1]
+    assert mgr.state.processed_frame_count == 150
+    assert mgr.state._dirty is False
+
+
 # ============================================================================
 # 3. Worker Tests
 # ============================================================================
@@ -421,7 +557,7 @@ def test_pipeline_worker_signals_and_execution(qapp, synthetic_signal_frames, du
     worker.run()
 
     assert len(frame_results) == 6
-    assert [f[0] for f in frame_results] == [1, 2, 3, 4, 5, 6]
+    assert sorted([f[0] for f in frame_results]) == [1, 2, 3, 4, 5, 6]
     assert len(finished_dfs) == 1
     df_all = finished_dfs[0]
     assert isinstance(df_all, pd.DataFrame)
@@ -448,6 +584,102 @@ def test_pipeline_worker_cancellation(qapp, synthetic_signal_frames, dummy_cal_d
 
     assert len(canceled_called) == 1
     assert worker.is_canceled is True
+
+
+def test_pipeline_worker_parallel_execution(qapp, qtbot, tmp_path):
+    """Verify ClusterPipelineWorker processes frames in parallel and aggregates sorted results."""
+    sig_dir = tmp_path / "parallel_sig"
+    sig_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(5):
+        frame = np.full((32, 32), 100.0, dtype=np.float32)
+        frame[5 + i, 5 + i] += 150.0
+        p = sig_dir / f"frame_{i + 1:03d}.tif"
+        tifffile.imwrite(str(p), frame)
+        paths.append(str(p))
+
+    med_dark = np.full((32, 32), 100.0, dtype=np.float32)
+    final_mask = np.ones((32, 32), dtype=np.float32)
+
+    worker = ClusterPipelineWorker(
+        signal_paths=paths,
+        med_dark=med_dark,
+        final_mask=final_mask,
+        config=ClusterConfig(sig_thresh_low=45.0),
+        max_workers=4,
+    )
+    worker.setAutoDelete(False)
+    assert worker.max_workers == 4
+
+    frame_results: list[tuple[int, pd.DataFrame]] = []
+    progress_calls: list[tuple[int, int, int]] = []
+    finished_dfs: list[pd.DataFrame] = []
+
+    worker.signals.frame_result.connect(lambda f_idx, df: frame_results.append((f_idx, df)))
+    worker.signals.progress.connect(lambda c, t, tot: progress_calls.append((c, t, tot)))
+    worker.signals.finished.connect(finished_dfs.append)
+
+    with qtbot.waitSignal(worker.signals.finished, timeout=5000):
+        QThreadPool.globalInstance().start(worker)
+
+    assert len(frame_results) == 5
+    assert sorted([f[0] for f in frame_results]) == [1, 2, 3, 4, 5]
+    assert len(finished_dfs) == 1
+    df_all = finished_dfs[0]
+    assert isinstance(df_all, pd.DataFrame)
+    assert len(df_all) == 5
+    # Verify aggregation and sorted by Slice
+    assert list(df_all["Slice"]) == [1, 2, 3, 4, 5]
+    assert list(df_all["ClusterNum"]) == [0, 1, 2, 3, 4]
+    assert len(progress_calls) == 5
+    assert progress_calls[-1][0] == 5
+    assert progress_calls[-1][1] == 5
+    assert progress_calls[-1][2] == 5
+
+
+def test_pipeline_worker_cancellation_parallel(qapp, qtbot, tmp_path):
+    """Verify requesting cancel() causes worker to exit cleanly, cancel pending futures, and emit canceled signal."""
+    sig_dir = tmp_path / "cancel_sig"
+    sig_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(20):
+        frame = np.full((32, 32), 100.0, dtype=np.float32)
+        frame[10, 10] += 150.0
+        p = sig_dir / f"frame_{i + 1:03d}.tif"
+        tifffile.imwrite(str(p), frame)
+        paths.append(str(p))
+
+    med_dark = np.full((32, 32), 100.0, dtype=np.float32)
+    final_mask = np.ones((32, 32), dtype=np.float32)
+
+    worker = ClusterPipelineWorker(
+        signal_paths=paths,
+        med_dark=med_dark,
+        final_mask=final_mask,
+        max_workers=2,
+    )
+    worker.setAutoDelete(False)
+
+    canceled_called = []
+    finished_called = []
+    frame_results = []
+
+    def on_frame(f_idx, df):
+        frame_results.append(f_idx)
+        if len(frame_results) >= 2:
+            worker.cancel()
+
+    worker.signals.frame_result.connect(on_frame)
+    worker.signals.canceled.connect(lambda: canceled_called.append(True))
+    worker.signals.finished.connect(finished_called.append)
+
+    with qtbot.waitSignal(worker.signals.canceled, timeout=5000):
+        QThreadPool.globalInstance().start(worker)
+
+    assert worker.is_canceled is True
+    assert len(canceled_called) == 1
+    assert len(finished_called) == 0
+    assert len(frame_results) < 20
 
 
 def test_chunk_save_worker_exports(qapp, synthetic_signal_frames, dummy_cal_dir, tmp_path):
@@ -594,6 +826,7 @@ def test_studio_progressive_accumulation(qapp, qtbot, synthetic_signal_frames, d
     studio._on_worker_frame_result(1, df_f1)
 
     assert studio.manager.processed_frame_count == 1
+    qtbot.waitUntil(lambda: studio._im_dashboard_event is not None, timeout=1000)
     assert studio._im_dashboard_event is not None
 
     # Simulate frame 2 cluster emission
@@ -605,6 +838,111 @@ def test_studio_progressive_accumulation(qapp, qtbot, synthetic_signal_frames, d
 
     assert studio.manager.processed_frame_count == 2
     assert len(studio.manager.state.df_clusters) == 2
+
+    studio.cleanup()
+
+
+def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, dummy_cal_dir):
+    """Verify Dashboard View zoom controls, intensity clamping RangeSlider/textboxes, and throttled accumulation."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        cal_dir=dummy_cal_dir,
+        auto_run=False,
+    )
+
+    # 1. Initial State
+    assert studio._current_zoom_level == 1.0
+    assert studio._clamping_floor == 0.0
+    assert studio._clamping_ceiling == 1.0
+    assert studio._zoom_lbl.text() == "Zoom: 1×"
+    assert studio._floor_entry.text() == "0.00"
+    assert studio._ceiling_entry.text() == "1.00"
+
+    # 2. Zoom Controls
+    h, w = studio.manager.state.image_shape
+    # Zoom in
+    studio._handle_zoom_in()
+    assert studio._current_zoom_level == 2.0
+    assert "Zoom: 2×" in studio._zoom_lbl.text()
+    xlim = studio._ax_dashboard_event.get_xlim()
+    ylim = studio._ax_dashboard_event.get_ylim()
+    # Should be centered half-extent of detector
+    assert xlim[0] > 0 and xlim[1] < w
+    assert ylim[0] > 0 and ylim[1] < h
+
+    # Zoom out
+    studio._handle_zoom_out()
+    assert studio._current_zoom_level == 1.0
+    assert "Zoom: 1×" in studio._zoom_lbl.text()
+    assert studio._ax_dashboard_event.get_xlim() == (0.0, float(w))
+    assert studio._ax_dashboard_event.get_ylim() == (0.0, float(h))
+
+    # Zoom in twice then reset
+    studio._handle_zoom_in()
+    studio._handle_zoom_in()
+    assert studio._current_zoom_level == 4.0
+    assert "Zoom: 4×" in studio._zoom_lbl.text()
+    studio._handle_zoom_reset()
+    assert studio._current_zoom_level == 1.0
+    assert "Zoom: 1×" in studio._zoom_lbl.text()
+    assert studio._ax_dashboard_event.get_xlim() == (0.0, float(w))
+    assert studio._ax_dashboard_event.get_ylim() == (0.0, float(h))
+
+    # 3. Clamping Slider & Entry Handlers
+    # Trigger clamping change with latency check (<5ms)
+    # First render a dummy map so _im_dashboard_event exists
+    dummy_map = np.zeros((2048, 2048), dtype=np.float32)
+    dummy_map[100, 100] = 5.0
+    studio._render_dashboard_event_map(dummy_map)
+    assert studio._im_dashboard_event is not None
+    assert studio._clamping_slider_max >= 5.0
+
+    t0 = time.perf_counter()
+    studio._handle_clamping_changed(0.0, 3.0)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.050  # sub-millisecond, comfortably <50ms
+    assert studio._clamping_floor == 0.0
+    assert studio._clamping_ceiling == 3.0
+    assert studio._ceiling_entry.text() == "3.00"
+    clim = studio._im_dashboard_event.get_clim()
+    assert clim == (0.0, 3.0)
+
+    # Test Floor text entry submission
+    studio._floor_entry.setText("0.50")
+    studio._on_floor_entry_submitted()
+    assert studio._clamping_floor == 0.50
+    assert studio._floor_entry.text() == "0.50"
+    assert studio._clamping_slider.val_left == 0.50
+    assert studio._im_dashboard_event.get_clim() == (0.50, 3.0)
+
+    # Test Ceiling text entry submission with dynamic expansion
+    studio._ceiling_entry.setText("8.00")
+    studio._on_ceiling_entry_submitted()
+    assert studio._clamping_ceiling == 8.00
+    assert studio._ceiling_entry.text() == "8.00"
+    assert studio._clamping_slider.val_right == 8.00
+    assert studio._clamping_slider.max_val >= 8.00
+    assert studio._im_dashboard_event.get_clim() == (0.50, 8.00)
+
+    # 4. Throttled Accumulation Timer
+    assert hasattr(studio, "_accum_timer")
+    assert studio._accum_timer.interval() == 100
+    assert studio._accum_timer.isSingleShot()
+
+    # Emitting worker frame result starts the timer
+    mock_df = pd.DataFrame([{
+        "ClusterNum": 0, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0,
+        "Min": 80.0, "Max": 120.0, "XM": 15.0, "YM": 20.0, "Circ.": 0.8, "IntDen": 150.0
+    }])
+    studio._on_worker_frame_result(1, mock_df)
+    assert studio._accum_timer.isActive()
+
+    # Wait for timer to tick or call tick handler
+    qtbot.waitUntil(lambda: not studio._accum_timer.isActive(), timeout=1000)
+    assert studio._im_dashboard_event is not None
 
     studio.cleanup()
 

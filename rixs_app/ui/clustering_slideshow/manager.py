@@ -73,15 +73,79 @@ class ClusteringState:
     med_dark: np.ndarray | None = None
     final_mask: np.ndarray | None = None
     cal_record: CalibrationRecord | None = None
-    df_clusters: pd.DataFrame = field(
-        default_factory=lambda: pd.DataFrame(columns=CLUSTER_COLUMNS)
+    _df_clusters: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=CLUSTER_COLUMNS), repr=False
     )
+    _frame_dfs: list[pd.DataFrame] = field(default_factory=list, repr=False)
+    _dirty: bool = field(default=False, repr=False)
     cluster_config: ClusterConfig = field(default_factory=ClusterConfig)
     recon_config: ReconstructionConfig = field(default_factory=ReconstructionConfig)
     latest_recon: ReconstructionResult | None = None
     processed_frame_count: int = 0
     is_processing: bool = False
     stale_stage2: bool = False
+
+    def __init__(
+        self,
+        signal_paths: list[Path] | None = None,
+        chunk_size: int = 80,
+        image_shape: tuple[int, int] = (2048, 2048),
+        med_dark: np.ndarray | None = None,
+        final_mask: np.ndarray | None = None,
+        cal_record: CalibrationRecord | None = None,
+        df_clusters: pd.DataFrame | None = None,
+        cluster_config: ClusterConfig | None = None,
+        recon_config: ReconstructionConfig | None = None,
+        latest_recon: ReconstructionResult | None = None,
+        processed_frame_count: int = 0,
+        is_processing: bool = False,
+        stale_stage2: bool = False,
+        _df_clusters: pd.DataFrame | None = None,
+        _frame_dfs: list[pd.DataFrame] | None = None,
+        _dirty: bool = False,
+    ) -> None:
+        self.signal_paths = signal_paths if signal_paths is not None else []
+        self.chunk_size = chunk_size
+        self.image_shape = image_shape
+        self.med_dark = med_dark
+        self.final_mask = final_mask
+        self.cal_record = cal_record
+        self.cluster_config = cluster_config if cluster_config is not None else ClusterConfig()
+        self.recon_config = recon_config if recon_config is not None else ReconstructionConfig()
+        self.latest_recon = latest_recon
+        self.processed_frame_count = processed_frame_count
+        self.is_processing = is_processing
+        self.stale_stage2 = stale_stage2
+        self._frame_dfs = _frame_dfs if _frame_dfs is not None else []
+        self._dirty = _dirty
+
+        if df_clusters is not None:
+            self.df_clusters = df_clusters
+        elif _df_clusters is not None:
+            self._df_clusters = _df_clusters
+        else:
+            self._df_clusters = pd.DataFrame(columns=CLUSTER_COLUMNS)
+
+    @property
+    def df_clusters(self) -> pd.DataFrame:
+        if self._dirty:
+            if self._frame_dfs:
+                self._df_clusters = pd.concat(self._frame_dfs, ignore_index=True)
+                self._df_clusters["ClusterNum"] = np.arange(len(self._df_clusters), dtype=np.int64)
+            else:
+                self._df_clusters = pd.DataFrame(columns=CLUSTER_COLUMNS)
+            self._dirty = False
+        return self._df_clusters
+
+    @df_clusters.setter
+    def df_clusters(self, val: pd.DataFrame) -> None:
+        if val is None or val.empty:
+            self._df_clusters = pd.DataFrame(columns=CLUSTER_COLUMNS)
+            self._frame_dfs = []
+        else:
+            self._df_clusters = val
+            self._frame_dfs = [val]
+        self._dirty = False
 
 
 class ClusteringManager:
@@ -173,6 +237,7 @@ class ClusteringManager:
 
     def clear_clusters(self) -> None:
         """Clear extracted clusters and reset progress."""
+        self.state._frame_dfs.clear()
         self.state.df_clusters = pd.DataFrame(columns=CLUSTER_COLUMNS)
         self.state.latest_recon = None
         self.state.processed_frame_count = 0
@@ -187,15 +252,8 @@ class ClusteringManager:
         """
         self.state.processed_frame_count = max(self.state.processed_frame_count, frame_idx)
         if frame_df is not None and not frame_df.empty:
-            if self.state.df_clusters.empty:
-                self.state.df_clusters = frame_df.copy()
-            else:
-                self.state.df_clusters = pd.concat(
-                    [self.state.df_clusters, frame_df], ignore_index=True
-                )
-            self.state.df_clusters["ClusterNum"] = np.arange(
-                len(self.state.df_clusters), dtype=np.int64
-            )
+            self.state._frame_dfs.append(frame_df)
+            self.state._dirty = True
 
     def set_all_clusters(self, df_clusters: pd.DataFrame) -> None:
         """Set the entire cluster cache at once.
@@ -206,10 +264,9 @@ class ClusteringManager:
         if df_clusters is None or df_clusters.empty:
             self.state.df_clusters = pd.DataFrame(columns=CLUSTER_COLUMNS)
         else:
-            self.state.df_clusters = df_clusters.copy().reset_index(drop=True)
-            self.state.df_clusters["ClusterNum"] = np.arange(
-                len(self.state.df_clusters), dtype=np.int64
-            )
+            df = df_clusters.copy().reset_index(drop=True)
+            df["ClusterNum"] = np.arange(len(df), dtype=np.int64)
+            self.state.df_clusters = df
         self.state.processed_frame_count = len(self.state.signal_paths)
         self.state.latest_recon = None
 
@@ -409,7 +466,7 @@ class ClusteringManager:
     @property
     def has_clusters(self) -> bool:
         """True if any clusters are cached in memory."""
-        return not self.state.df_clusters.empty
+        return bool(self.state._frame_dfs) or not self.state._df_clusters.empty
 
     @property
     def stale_stage2(self) -> bool:
