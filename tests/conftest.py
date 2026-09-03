@@ -11,6 +11,13 @@ import os
 # Enforce Qt native offscreen QPA platform before any PySide6 modules or QApplication initialize
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+# Prevent OpenBLAS / MKL / Accelerate / OpenCV thread contention across parallel workers
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import pytest
 from PySide6.QtWidgets import QApplication
 
