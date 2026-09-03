@@ -58,15 +58,16 @@ class TestDiscoverDirectories(unittest.TestCase):
         self.assertIn(str(sub2.resolve()), result)
 
     def test_recursive_skips_default_dirs(self):
-        """Recursive mode: skips 'sum' and 'tif-cache' by default."""
+        """Recursive mode: skips 'sum', 'tif-cache', 'clusters', 'zeroth_order_analysis', and 'denoised' by default."""
         from rixs_app.core.cli_utils import discover_directories
-        self._make_tifs(self.root / 'sum')
-        self._make_tifs(self.root / 'tif-cache')
+        for dname in ['sum', 'tif-cache', 'clusters', 'zeroth_order_analysis', 'denoised']:
+            self._make_tifs(self.root / dname)
+        self._make_tifs(self.root / 'valid_scan')
         result = discover_directories(str(self.root), recursive=True)
-        # Neither 'sum' nor 'tif-cache' should appear in results
         basenames = [os.path.basename(p) for p in result]
-        self.assertNotIn('sum', basenames)
-        self.assertNotIn('tif-cache', basenames)
+        for dname in ['sum', 'tif-cache', 'clusters', 'zeroth_order_analysis', 'denoised']:
+            self.assertNotIn(dname, basenames)
+        self.assertIn('valid_scan', basenames)
 
     def test_recursive_skips_custom_dirs(self):
         """Recursive mode: skips directories listed in skip_dirs parameter."""

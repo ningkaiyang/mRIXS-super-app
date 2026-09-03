@@ -30,7 +30,7 @@ from rixs_app.main import (
     RixsStackedWidget,
     RixsSplitter,
     _IDX_HOME,
-    _IDX_DARK_CAL,
+    _IDX_DARK_MASK,
     _IDX_CLUSTERING_FILES,
     _IDX_CLUSTERING_STUDIO,
     _IDX_SORTING,
@@ -152,7 +152,7 @@ def test_sidebar_toggle_across_all_views(qapp, qtbot):
     dummy_img = np.zeros((10, 10), dtype=np.float32)
     view_switches = [
         ("Home", app_win.show_home, _IDX_HOME),
-        ("Dark Mask", app_win.show_dark_calibration, _IDX_DARK_CAL),
+        ("Dark Mask", app_win.show_dark_masking, _IDX_DARK_MASK),
         ("Clustering Files", app_win.show_clustering_files, _IDX_CLUSTERING_FILES),
         ("Clustering Studio", lambda: app_win.show_clustering_studio(), _IDX_CLUSTERING_STUDIO),
         ("Sorting", app_win.show_sorting, _IDX_SORTING),

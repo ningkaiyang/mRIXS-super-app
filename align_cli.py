@@ -34,9 +34,7 @@ import cv2
 
 # ── Project-internal (core only — no GUI) ────────────────────────────────────
 from rixs_app.core import (
-    natural_sort,
     find_peak_line,
-    find_peak_line_fast,
     compute_line_based_offset,
     phase_correlation_offset,
     ecc_maximization_offset,
@@ -48,7 +46,7 @@ from rixs_app.core import (
     find_best_threshold,
 )
 from rixs_app.core.cli_utils import discover_directories, glob_tifs
-from rixs_app.core.dataset import ZarrSequenceManager, CLIZarrSequenceManager, _frame_key
+from rixs_app.core.dataset import CLIZarrSequenceManager, _frame_key
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +132,7 @@ def process_directory(
     overwrite: bool,
     ephemeral_cache: bool = False,
     save_json: bool = False,
+    output_dir: str = "sum",
 ) -> None:
     """Run the full alignment pipeline on a single directory.
 
@@ -155,6 +154,7 @@ def process_directory(
         ephemeral_cache: If ``True``, delete the ``tif-cache/`` directory
             after processing completes.
         save_json: If ``True``, save computed offsets as a JSON file.
+        output_dir: Output directory name or path (default: ``"sum"``).
     """
     dir_name = os.path.basename(dir_path)
     print(f"\n{'='*60}")
@@ -181,38 +181,15 @@ def process_directory(
     ref_shape = ref_raw.shape
 
     # ── Output directory ─────────────────────────────────────────────────
-    sum_dir = os.path.join(dir_path, "sum")
-    os.makedirs(sum_dir, exist_ok=True)
-
-    # ── Direct (unaligned) sum ───────────────────────────────────────────
-    base_sum_path = os.path.join(sum_dir, "base_sum.tif")
-    if not os.path.exists(base_sum_path) or overwrite:
-        print(f"[{dir_name}] Computing direct sum…")
-
-        def _get_raw(fpath):
-            """Retrieve a raw frame from the Zarr cache or disk.
-
-            Args:
-                fpath: Absolute path to a TIFF file.
-
-            Returns:
-                2-D ``float32`` numpy array.
-            """
-            key = _frame_key(fpath)
-            if key in zarr_manager.zarr_group:
-                return zarr_manager.zarr_group[key][:]
-            raw = tifffile.imread(fpath).astype(np.float32)
-            return np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-
-        direct_sum = generate_direct_sum(tif_files, _get_raw, ref_shape)
-        tifffile.imwrite(base_sum_path, direct_sum)
+    if os.path.isabs(output_dir):
+        sum_dir = output_dir
     else:
-        print(f"[{dir_name}] Direct sum already exists — loading.")
-        direct_sum = tifffile.imread(base_sum_path).astype(np.float32)
+        sum_dir = os.path.join(dir_path, output_dir)
+    os.makedirs(sum_dir, exist_ok=True)
 
     # ── Helper to read a raw frame ───────────────────────────────────────
     def get_raw(fpath):
-        """Retrieve a raw frame for alignment computation.
+        """Retrieve a raw frame for alignment computation and direct sum.
 
         Checks the Zarr group first, falling back to a live TIFF read.
 
@@ -232,6 +209,16 @@ def process_directory(
             print(f"  Error reading {os.path.basename(fpath)}: {e}",
                   file=sys.stderr)
             return None
+
+    # ── Direct (unaligned) sum ───────────────────────────────────────────
+    base_sum_path = os.path.join(sum_dir, "base_sum.tif")
+    if not os.path.exists(base_sum_path) or overwrite:
+        print(f"[{dir_name}] Computing direct sum…")
+        direct_sum = generate_direct_sum(tif_files, get_raw, ref_shape)
+        tifffile.imwrite(base_sum_path, direct_sum)
+    else:
+        print(f"[{dir_name}] Direct sum already exists — loading.")
+        direct_sum = tifffile.imread(base_sum_path).astype(np.float32)
 
     # ── Engine loop ──────────────────────────────────────────────────────
     for engine in engines:
@@ -465,6 +452,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Overwrite existing sum/ output files.",
     )
     parser.add_argument(
+        '-o', '--output-dir',
+        type=str,
+        default='sum',
+        help="Output directory for aligned sums and offsets (default: 'sum').",
+    )
+    parser.add_argument(
         '--json',
         action='store_true',
         help="Save offsets to a JSON file.",
@@ -525,6 +518,7 @@ def main(argv: list[str] | None = None) -> None:
             overwrite=args.overwrite,
             ephemeral_cache=args.ephemeral_cache,
             save_json=args.json,
+            output_dir=args.output_dir,
         )
 
     print("\n✔ All directories processed.")

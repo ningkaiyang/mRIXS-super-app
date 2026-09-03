@@ -418,10 +418,10 @@ def test_zo_display_toggle_buttons(app_window, temp_tif_files, qtbot):
     assert b.fitted_line_button.text() == "Fitted Line: OFF"
     assert b.fitted_line_button.objectName() == "tool_btn"
 
-    # Check compatibility properties on tools_panel
-    assert v.tools_panel.support_points_cb.isChecked() is True
-    assert v.tools_panel.extrapolation_cb.isChecked() is True
-    assert v.tools_panel.fitted_line_cb.isChecked() is False
+    # Check bottom_bar display flags directly
+    assert b.show_support_points is True
+    assert b.show_extrapolation is True
+    assert b.show_fitted_line is False
 
 
 # ---------------------------------------------------------------------------

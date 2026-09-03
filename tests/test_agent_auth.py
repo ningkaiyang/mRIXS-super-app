@@ -53,28 +53,43 @@ class TestFindProjectRoot:
         assert (root / "rixs_app").is_dir()
 
 
+
+# ---------------------------------------------------------------------------
+# Auth env path location
+# ---------------------------------------------------------------------------
+
+
+def test_auth_env_path_location():
+    """Verify _auth_env_path resolves inside rixs_app/appdata/cborg-auth/.env."""
+    from rixs_app.agent.auth import _auth_env_path
+
+    path = _auth_env_path()
+    assert path.name == ".env"
+    assert path.parent.name == "cborg-auth"
+    assert path.parent.parent.name == "appdata"
+    assert "rixs_app" in str(path)
+
+
 # ---------------------------------------------------------------------------
 # API key resolution
 # ---------------------------------------------------------------------------
 
 
 class TestResolveApiKey:
-    """Test the 3-tier API key resolution hierarchy."""
+    """Test the 2-tier API key resolution hierarchy."""
 
-    def test_env_var_takes_priority(self, tmp_path, monkeypatch):
+    def test_env_var_takes_priority(self, monkeypatch):
         """Environment variable should win over dotenv file."""
         monkeypatch.setenv("CBORG_API_KEY", "env-key-123")
         key = resolve_api_key()
         assert key == "env-key-123"
 
     def test_dotenv_fallback(self, tmp_path, monkeypatch):
-        """When env var is absent, the dotenv file should be used."""
+        """When env var is absent, the appdata dotenv file should be used."""
         monkeypatch.delenv("CBORG_API_KEY", raising=False)
-        # Create a temporary dotenv file
-        env_path = tmp_path / "cborg-auth" / ".env"
-        env_path.parent.mkdir()
+        env_path = tmp_path / "appdata" / "cborg-auth" / ".env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
         env_path.write_text("CBORG_API_KEY=dotenv-key-456\n")
-        # Patch the auth env path to point to our temp file
         monkeypatch.setattr(
             "rixs_app.agent.auth._auth_env_path", lambda: env_path
         )
@@ -114,22 +129,23 @@ class TestResolveApiKey:
 
 
 class TestSaveApiKey:
-    """Test API key persistence to dotenv file."""
+    """Test API key persistence to appdata dotenv file."""
 
     def test_creates_directory_and_file(self, tmp_path, monkeypatch):
-        env_path = tmp_path / "cborg-auth" / ".env"
+        env_path = tmp_path / "appdata" / "cborg-auth" / ".env"
         monkeypatch.setattr(
             "rixs_app.agent.auth._auth_env_path", lambda: env_path
         )
         result = save_api_key("test-key-789")
         assert result == env_path
         assert env_path.exists()
+        assert "appdata" in str(result)
         content = env_path.read_text()
         assert "CBORG_API_KEY=test-key-789" in content
 
     def test_overwrites_existing_file(self, tmp_path, monkeypatch):
-        env_path = tmp_path / "cborg-auth" / ".env"
-        env_path.parent.mkdir()
+        env_path = tmp_path / "appdata" / "cborg-auth" / ".env"
+        env_path.parent.mkdir(parents=True, exist_ok=True)
         env_path.write_text("CBORG_API_KEY=old-key\n")
         monkeypatch.setattr(
             "rixs_app.agent.auth._auth_env_path", lambda: env_path
@@ -138,6 +154,16 @@ class TestSaveApiKey:
         content = env_path.read_text()
         assert "new-key-abc" in content
         assert "old-key" not in content
+
+    def test_save_enables_subsequent_resolve(self, tmp_path, monkeypatch):
+        """Saving a key immediately makes it resolvable via resolve_api_key."""
+        monkeypatch.delenv("CBORG_API_KEY", raising=False)
+        env_path = tmp_path / "appdata" / "cborg-auth" / ".env"
+        monkeypatch.setattr(
+            "rixs_app.agent.auth._auth_env_path", lambda: env_path
+        )
+        save_api_key("round-trip-key-123")
+        assert resolve_api_key() == "round-trip-key-123"
 
 
 # ---------------------------------------------------------------------------

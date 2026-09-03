@@ -217,7 +217,7 @@ def test_cli_invalid_arguments(tmp_path):
     assert "Error:" in res.stderr
 
     # Test 3: Negative parameters validation
-    cmd = [sys.executable, "denoise_cli.py", "--input", str(input_path), "--output", str(output_path), "--d", "-1"]
+    cmd = [sys.executable, "denoise_cli.py", "--input", str(input_path), "--output", str(output_path), "--diameter", "-1"]
     res = subprocess.run(cmd, capture_output=True, text=True)
     assert res.returncode != 0
     assert "Error: All numeric options must be non-negative" in res.stderr
@@ -554,7 +554,7 @@ def test_bilateral_option(tmp_path):
         "--input", str(input_path), 
         "--output", str(output_path), 
         "--bilateral", 
-        "--d", "5", 
+        "--diameter", "5", 
         "--sigma-color", "10.0", 
         "--sigma-space", "10.0"
     ]
@@ -671,7 +671,7 @@ def test_invalid_parameters(tmp_path):
         sys.executable, "denoise_cli.py", 
         "--input", str(input_path), 
         "--output", str(output_path), 
-        "--bilateral", "--d", "-5"
+        "--bilateral", "--diameter", "-5"
     ]
     
     with pytest.raises(subprocess.CalledProcessError) as exc_info:

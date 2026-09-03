@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 import numpy as np
+import shiboken6
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
@@ -41,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core import dark_mask_store, calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.cli_utils import glob_tifs
 from rixs_app.core.photon_clustering import (
     DarkDiagnostics,
@@ -205,9 +206,9 @@ class DarkMaskingView(QWidget):
     def _create_left_panel(self) -> QWidget:
         """Build the left ingest panel with clickable drag-drop, file list, and generate button."""
         panel = QFrame(self)
-        panel.setObjectName("dark_cal_left_panel")
+        panel.setObjectName("dark_mask_left_panel")
         panel.setStyleSheet(
-            "QFrame#dark_cal_left_panel { background-color: #16213e; "
+            "QFrame#dark_mask_left_panel { background-color: #16213e; "
             "border: 1px solid #2d3561; border-radius: 10px; }"
         )
 
@@ -334,9 +335,9 @@ class DarkMaskingView(QWidget):
     def _create_right_panel(self) -> QWidget:
         """Build the right panel with dual-axis histograms, threshold sliders, and KPI badges."""
         panel = QFrame(self)
-        panel.setObjectName("dark_cal_right_panel")
+        panel.setObjectName("dark_mask_right_panel")
         panel.setStyleSheet(
-            "QFrame#dark_cal_right_panel { background-color: #16213e; "
+            "QFrame#dark_mask_right_panel { background-color: #16213e; "
             "border: 1px solid #2d3561; border-radius: 10px; }"
         )
 
@@ -1042,8 +1043,6 @@ class DarkMaskingView(QWidget):
 
         source_dir = str(Path(self.dark_paths[0]).parent) if self.dark_paths else "synthetic"
         mask_dir = getattr(dark_mask_store, "DARK_MASK_DIR", None)
-        if hasattr(calibration_store, "DARK_CAL_DIR") and calibration_store.DARK_CAL_DIR != dark_mask_store.DEFAULT_MASK_DIR:
-            mask_dir = calibration_store.DARK_CAL_DIR
 
         record = dark_mask_store.save_dark_mask(
             med_dark=self._diagnostics.med_dark,
@@ -1063,7 +1062,7 @@ class DarkMaskingView(QWidget):
 
         pct_active = (surviving / total_pixels) * 100.0 if total_pixels > 0 else 0.0
         self.save_status_label.setText(
-            f"✓ Saved calibration / dark mask: {pct_active:.2f}% active pixels ({surviving:,} px active)"
+            f"✓ Saved dark mask: {pct_active:.2f}% active pixels ({surviving:,} px active)"
         )
         self.save_status_label.setStyleSheet("color: #34d399; font-weight: bold; font-size: 12px;")
 
@@ -1106,30 +1105,55 @@ class DarkMaskingView(QWidget):
 
     def _on_export_progress(self, current: int, total: int) -> None:
         """Update export button text with live step progress."""
-        self.export_btn.setText(f"⏳ Exporting {current}/{total}...")
+        try:
+            if not shiboken6.isValid(self) or not shiboken6.isValid(self.export_btn):
+                return
+            self.export_btn.setText(f"⏳ Exporting {current}/{total}...")
+        except RuntimeError:
+            pass
 
     def _on_export_msg(self, msg: str) -> None:
         """Update save status label with live export step description."""
-        self.save_status_label.setText(f"Exporting: {msg}")
+        try:
+            if not shiboken6.isValid(self) or not shiboken6.isValid(self.save_status_label):
+                return
+            self.save_status_label.setText(f"Exporting: {msg}")
+        except RuntimeError:
+            pass
 
     def _on_export_result(self, exported: dict, folder_name: str) -> None:
         """Display success notification upon export completion."""
-        self.save_status_label.setText(f"✓ Exported histogram data && plots to {folder_name}/")
-        self.save_status_label.setStyleSheet("color: #34d399; font-weight: bold; font-size: 12px;")
-        logger.info("Successfully exported dark histogram data and plots to %s", folder_name)
+        try:
+            if not shiboken6.isValid(self) or not shiboken6.isValid(self.save_status_label):
+                return
+            self.save_status_label.setText(f"✓ Exported histogram data && plots to {folder_name}/")
+            self.save_status_label.setStyleSheet("color: #34d399; font-weight: bold; font-size: 12px;")
+            logger.info("Successfully exported dark histogram data and plots to %s", folder_name)
+        except RuntimeError:
+            pass
 
     def _on_export_error(self, err: str) -> None:
         """Display error notification if export fails."""
-        logger.error("Failed to export dark diagnostics: %s", err)
-        self.save_status_label.setText(f"✕ Export failed: {err}")
-        self.save_status_label.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 12px;")
+        try:
+            if not shiboken6.isValid(self) or not shiboken6.isValid(self.save_status_label):
+                return
+            logger.error("Failed to export dark diagnostics: %s", err)
+            self.save_status_label.setText(f"✕ Export failed: {err}")
+            self.save_status_label.setStyleSheet("color: #ef4444; font-weight: bold; font-size: 12px;")
+        except RuntimeError:
+            pass
 
     def _on_export_finished(self) -> None:
         """Restore export button text and re-enable action buttons."""
-        self.export_btn.setText("📊 Export Data && Plots")
-        self.export_btn.setEnabled(self._diagnostics is not None)
-        self.save_btn.setEnabled(self._diagnostics is not None)
-        self._export_worker = None
+        try:
+            if not shiboken6.isValid(self) or not shiboken6.isValid(self.export_btn):
+                return
+            self.export_btn.setText("📊 Export Data && Plots")
+            self.export_btn.setEnabled(self._diagnostics is not None)
+            self.save_btn.setEnabled(self._diagnostics is not None)
+            self._export_worker = None
+        except RuntimeError:
+            pass
 
     # ------------------------------------------------------------------
     # Cleanup & Lifecycle
@@ -1139,9 +1163,24 @@ class DarkMaskingView(QWidget):
         """Explicitly dispose of Matplotlib canvas and subplots."""
         if self._current_worker is not None:
             self._current_worker.cancel()
+            try:
+                self._current_worker.signals.progress.disconnect()
+                self._current_worker.signals.result.disconnect()
+                self._current_worker.signals.error.disconnect()
+                self._current_worker.signals.finished.disconnect()
+            except Exception:
+                pass
             self._current_worker = None
         if self._export_worker is not None:
             self._export_worker.cancel()
+            try:
+                self._export_worker.signals.progress.disconnect()
+                self._export_worker.signals.progress_msg.disconnect()
+                self._export_worker.signals.result.disconnect()
+                self._export_worker.signals.error.disconnect()
+                self._export_worker.signals.finished.disconnect()
+            except Exception:
+                pass
             self._export_worker = None
         if hasattr(self, "canvas") and self.canvas is not None:
             self.canvas.cleanup()
@@ -1168,7 +1207,3 @@ class DarkMaskingView(QWidget):
         self._copilot_container_layout.addWidget(btn)
         btn.setParent(self._copilot_container)
         btn.show()
-
-
-# Backward compatibility alias
-DarkCalibrationView = DarkMaskingView

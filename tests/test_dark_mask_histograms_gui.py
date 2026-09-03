@@ -1,11 +1,11 @@
-"""Comprehensive PySide6 GUI unit tests for Detector Dark Frame Calibration Studio.
+"""Comprehensive PySide6 GUI unit tests for Detector Dark Frame Masking Studio.
 
 Covers:
 - DarkDiagnosticsWorker execution, signal emissions, error propagation, and progress.
-- DarkCalibrationView UI initialization, drag-and-drop file/folder ingest, natural ordering.
+- DarkMaskingView UI initialization, drag-and-drop file/folder ingest, natural ordering.
 - Dual log-scale diagnostic histogram rendering, axis dark theme styling.
 - Interactive threshold sliders, live cutlines, and instant KPI recalculation.
-- 1-Click calibration persistence to appdata/dark_calibration/ and manifest verification.
+- 1-Click mask persistence to appdata/dark_masking/ and manifest verification.
 - Navigation back button callback and Co-Pilot button docking.
 - Cleanup and figure disposal.
 """
@@ -25,10 +25,10 @@ import tifffile
 from PySide6.QtCore import QCoreApplication, QEvent, Qt, QThreadPool
 from PySide6.QtWidgets import QApplication, QPushButton, QSlider
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.photon_clustering import DarkDiagnostics, compute_dark_diagnostics
-from rixs_app.ui.dark_calibration.dark_cal_view import DarkCalibrationView
-from rixs_app.ui.dark_calibration.workers import DarkDiagnosticsWorker, WorkerSignals
+from rixs_app.ui.dark_masking.dark_mask_view import DarkMaskingView
+from rixs_app.ui.dark_masking.workers import DarkDiagnosticsWorker, WorkerSignals
 
 
 # ---------------------------------------------------------------------------
@@ -123,9 +123,9 @@ def test_dark_diagnostics_worker_success(qapp, synthetic_dark_frames):
     assert len(finished_called) == 1
 
 
-def test_dark_cal_view_generate_button_and_progress_flow(qapp, qtbot, synthetic_dark_frames):
-    """Verify DarkCalibrationView updates generate button text and progress labels across stages."""
-    view = DarkCalibrationView()
+def test_dark_mask_histograms_generate_button_and_progress_flow(qapp, qtbot, synthetic_dark_frames):
+    """Verify DarkMaskingView updates generate button text and progress labels across stages."""
+    view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
 
@@ -202,9 +202,9 @@ def test_dark_diagnostics_worker_mismatched_shapes(qapp, tmp_path):
 # View Initialization and Layout Tests
 # ---------------------------------------------------------------------------
 
-def test_dark_cal_view_init_state(qapp, qtbot):
-    """Verify DarkCalibrationView initial widget states and default parameters."""
-    view = DarkCalibrationView()
+def test_dark_mask_histograms_init_state(qapp, qtbot):
+    """Verify DarkMaskingView initial widget states and default parameters."""
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     assert view.dark_frame_count == 0
@@ -216,19 +216,19 @@ def test_dark_cal_view_init_state(qapp, qtbot):
     assert "93.33%" in view.tail_ratio_label.text()
 
 
-def test_dark_cal_view_back_navigation(qapp, qtbot):
+def test_dark_mask_histograms_back_navigation(qapp, qtbot):
     """Verify clicking ❮ Back to Home invokes the on_back callback."""
     mock_back = MagicMock()
-    view = DarkCalibrationView(on_back=mock_back)
+    view = DarkMaskingView(on_back=mock_back)
     qtbot.addWidget(view)
 
     view._back_btn.click()
     mock_back.assert_called_once()
 
 
-def test_dark_cal_view_copilot_docking(qapp, qtbot):
+def test_dark_mask_histograms_copilot_docking(qapp, qtbot):
     """Verify Co-Pilot button docking and reparenting in navbar."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     btn1 = QPushButton("🤖 Co-Pilot")
@@ -248,11 +248,11 @@ def test_dark_cal_view_copilot_docking(qapp, qtbot):
 # File Ingestion Tests
 # ---------------------------------------------------------------------------
 
-def test_dark_cal_view_folder_drop(qapp, qtbot, synthetic_dark_frames):
+def test_dark_mask_histograms_folder_drop(qapp, qtbot, synthetic_dark_frames):
     """Verify dropping a folder populates file list and enables generate button."""
     dark_dir = str(Path(synthetic_dark_frames[0]).parent)
 
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_files_dropped([dark_dir])
@@ -263,9 +263,9 @@ def test_dark_cal_view_folder_drop(qapp, qtbot, synthetic_dark_frames):
     assert str(len(synthetic_dark_frames)) in view.frame_count_label.text()
 
 
-def test_dark_cal_view_individual_files_drop(qapp, qtbot, synthetic_dark_frames):
+def test_dark_mask_histograms_individual_files_drop(qapp, qtbot, synthetic_dark_frames):
     """Verify dropping individual file paths populates files in natural order."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     # Pass in reverse order to test natural sorting
@@ -278,14 +278,14 @@ def test_dark_cal_view_individual_files_drop(qapp, qtbot, synthetic_dark_frames)
     assert view.generate_btn.isEnabled()
 
 
-def test_dark_cal_view_empty_and_invalid_drops(qapp, qtbot, tmp_path):
+def test_dark_mask_histograms_empty_and_invalid_drops(qapp, qtbot, tmp_path):
     """Verify dropping empty directory or non-TIFF files leaves view in disabled state."""
     empty_dir = tmp_path / "empty_dir"
     empty_dir.mkdir()
     text_file = tmp_path / "notes.txt"
     text_file.write_text("not a tif")
 
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_files_dropped([str(empty_dir), str(text_file)])
@@ -295,11 +295,11 @@ def test_dark_cal_view_empty_and_invalid_drops(qapp, qtbot, tmp_path):
     assert not view.generate_btn.isEnabled()
 
 
-def test_dark_cal_view_clear_button(qapp, qtbot, synthetic_dark_frames):
+def test_dark_mask_histograms_clear_button(qapp, qtbot, synthetic_dark_frames):
     """Verify clear button resets file list and canvas state."""
     dark_dir = str(Path(synthetic_dark_frames[0]).parent)
 
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_files_dropped([dark_dir])
@@ -316,9 +316,9 @@ def test_dark_cal_view_clear_button(qapp, qtbot, synthetic_dark_frames):
 # Diagnostics & Histogram Interaction Tests
 # ---------------------------------------------------------------------------
 
-def test_dark_cal_view_diagnostics_ready_and_histograms(qapp, qtbot, populated_diagnostics):
+def test_dark_mask_histograms_diagnostics_ready_and_histograms(qapp, qtbot, populated_diagnostics):
     """Verify receiving DarkDiagnostics draws log-scale histograms and updates cutlines."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_diagnostics_ready(populated_diagnostics)
@@ -332,9 +332,9 @@ def test_dark_cal_view_diagnostics_ready_and_histograms(qapp, qtbot, populated_d
     assert view.ax_res.get_yscale() == "log"
 
 
-def test_dark_cal_view_slider_changes_and_kpi_updates(qapp, qtbot, populated_diagnostics):
+def test_dark_mask_histograms_slider_changes_and_kpi_updates(qapp, qtbot, populated_diagnostics):
     """Verify slider adjustments dynamically recalculate survival percentages."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_diagnostics_ready(populated_diagnostics)
@@ -360,9 +360,9 @@ def test_dark_cal_view_slider_changes_and_kpi_updates(qapp, qtbot, populated_dia
     assert "100.00%" in view.final_mask_kpi_label.text()
 
 
-def test_dark_cal_view_slider_zero_boundary(qapp, qtbot, populated_diagnostics):
+def test_dark_mask_histograms_slider_zero_boundary(qapp, qtbot, populated_diagnostics):
     """Verify 0 threshold boundary rejects all pixels without crashing."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_diagnostics_ready(populated_diagnostics)
@@ -379,11 +379,11 @@ def test_dark_cal_view_slider_zero_boundary(qapp, qtbot, populated_diagnostics):
 # Worker Integration via GUI
 # ---------------------------------------------------------------------------
 
-def test_dark_cal_view_generate_clicked_worker_lifecycle(qapp, qtbot, synthetic_dark_frames):
+def test_dark_mask_histograms_generate_clicked_worker_lifecycle(qapp, qtbot, synthetic_dark_frames):
     """Verify clicking generate button runs worker and updates view upon completion."""
     dark_dir = str(Path(synthetic_dark_frames[0]).parent)
 
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_files_dropped([dark_dir])
@@ -401,9 +401,9 @@ def test_dark_cal_view_generate_clicked_worker_lifecycle(qapp, qtbot, synthetic_
     assert view._current_worker is None
 
 
-def test_dark_cal_view_worker_error_handling(qapp, qtbot):
+def test_dark_mask_histograms_worker_error_handling(qapp, qtbot):
     """Verify worker error displays formatted message in UI without crashing."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_worker_error("Simulated I/O failure")
@@ -414,12 +414,12 @@ def test_dark_cal_view_worker_error_handling(qapp, qtbot):
 # Calibration Persistence Tests
 # ---------------------------------------------------------------------------
 
-def test_dark_cal_view_save_calibration(qapp, qtbot, synthetic_dark_frames, tmp_path):
-    """Verify 1-click save calibration writes valid TIFFs and manifest to calibration store."""
-    cal_store_dir = tmp_path / "appdata" / "dark_calibration"
+def test_dark_mask_histograms_save_mask(qapp, qtbot, synthetic_dark_frames, tmp_path):
+    """Verify 1-click save mask writes valid TIFFs and manifest to mask store."""
+    mask_store_dir = tmp_path / "appdata" / "dark_masking"
 
-    with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", cal_store_dir):
-        view = DarkCalibrationView()
+    with patch("rixs_app.core.dark_mask_store.DARK_MASK_DIR", mask_store_dir):
+        view = DarkMaskingView()
         qtbot.addWidget(view)
 
         view._on_files_dropped(synthetic_dark_frames)
@@ -433,24 +433,24 @@ def test_dark_cal_view_save_calibration(qapp, qtbot, synthetic_dark_frames, tmp_
         view.save_btn.click()
 
         # Check persistence
-        assert calibration_store.has_calibration(cal_dir=cal_store_dir)
-        med_dark, mask, record = calibration_store.load_calibration(cal_dir=cal_store_dir)
+        assert dark_mask_store.has_dark_mask(mask_dir=mask_store_dir)
+        med_dark, mask, record = dark_mask_store.load_dark_mask(mask_dir=mask_store_dir)
 
         assert med_dark.shape == (48, 48)
         assert mask.shape == (48, 48)
         assert record.dark_frame_count == len(synthetic_dark_frames)
         assert record.stddev_thresh == 40.0
         assert record.absdev_thresh == 60.0
-        assert "Saved calibration" in view.save_status_label.text()
+        assert "Saved dark mask" in view.save_status_label.text()
 
 
 # ---------------------------------------------------------------------------
 # Cleanup & Disposal Tests
 # ---------------------------------------------------------------------------
 
-def test_dark_cal_view_cleanup_and_close(qapp, qtbot, populated_diagnostics):
+def test_dark_mask_histograms_cleanup_and_close(qapp, qtbot, populated_diagnostics):
     """Verify cleanup and closeEvent properly tear down Matplotlib figures."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
 
     view._on_diagnostics_ready(populated_diagnostics)
@@ -461,9 +461,9 @@ def test_dark_cal_view_cleanup_and_close(qapp, qtbot, populated_diagnostics):
     view.close()
 
 
-def test_dark_cal_canvas_hide_show_repaint(qapp, qtbot, populated_diagnostics):
-    """Verify hiding and showing DarkCalibrationView keeps canvas alive and able to draw."""
-    view = DarkCalibrationView()
+def test_dark_mask_canvas_hide_show_repaint(qapp, qtbot, populated_diagnostics):
+    """Verify hiding and showing DarkMaskingView keeps canvas alive and able to draw."""
+    view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
 
@@ -487,27 +487,27 @@ def test_dark_cal_canvas_hide_show_repaint(qapp, qtbot, populated_diagnostics):
     view.close()
 
 
-def test_dark_cal_navigation_stack_transition(qapp, qtbot):
-    """Verify RixsApp stacked navigation Home -> Dark Cal -> Home -> Dark Cal keeps canvas valid."""
+def test_dark_mask_navigation_stack_transition(qapp, qtbot):
+    """Verify RixsApp stacked navigation Home -> Dark Mask -> Home -> Dark Mask keeps canvas valid."""
     from rixs_app.main import RixsApp
     app_window = RixsApp(show_window=False)
     qtbot.addWidget(app_window)
 
     assert app_window._stack.currentIndex() == 0  # Home
 
-    # Navigate to Dark Cal
-    app_window.show_dark_calibration()
+    # Navigate to Dark Masking
+    app_window.show_dark_masking()
     assert app_window._stack.currentIndex() == 1
-    assert getattr(app_window.dark_cal_view.canvas, "_destroyed", False) is False
+    assert getattr(app_window.dark_mask_view.canvas, "_destroyed", False) is False
 
     # Navigate back to Home
     app_window.show_home()
     assert app_window._stack.currentIndex() == 0
 
-    # Navigate to Dark Cal again
-    app_window.show_dark_calibration()
+    # Navigate to Dark Masking again
+    app_window.show_dark_masking()
     assert app_window._stack.currentIndex() == 1
-    assert getattr(app_window.dark_cal_view.canvas, "_destroyed", False) is False
+    assert getattr(app_window.dark_mask_view.canvas, "_destroyed", False) is False
 
     app_window.close()
 
@@ -518,7 +518,7 @@ def test_dark_cal_navigation_stack_transition(qapp, qtbot):
 
 def test_adversarial_rapid_slider_updates(qapp, qtbot, populated_diagnostics):
     """Stress test rapid slider movements on StdDev and Residual sliders with KPI parity."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
 
@@ -558,7 +558,7 @@ def test_adversarial_rapid_slider_updates(qapp, qtbot, populated_diagnostics):
 
 def test_adversarial_slider_extreme_and_negative_inputs(qapp, qtbot, populated_diagnostics):
     """Stress test boundary, negative, and extreme out-of-range slider inputs."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
     view._on_diagnostics_ready(populated_diagnostics)
@@ -576,7 +576,7 @@ def test_adversarial_slider_extreme_and_negative_inputs(qapp, qtbot, populated_d
 
 def test_adversarial_concurrent_worker_triggers(qapp, qtbot, synthetic_dark_frames):
     """Test rapid-fire triggering of generate histograms worker."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
 
@@ -595,7 +595,7 @@ def test_adversarial_concurrent_worker_triggers(qapp, qtbot, synthetic_dark_fram
 
 def test_adversarial_clear_and_cleanup_during_active_worker(qapp, qtbot, synthetic_dark_frames):
     """Verify calling clear_files() or cleanup() while worker is running is safe."""
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     qtbot.addWidget(view)
     view.show()
 
@@ -619,8 +619,8 @@ def test_adversarial_zero_surviving_pixels_calibration_save(qapp, qtbot, populat
     """Stress test 0 surviving pixels (100% rejection) atomic persistence and loading."""
     cal_store_dir = tmp_path / "appdata" / "zero_surviving_cal"
 
-    with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", cal_store_dir):
-        view = DarkCalibrationView()
+    with patch("rixs_app.core.dark_mask_store.DARK_MASK_DIR", cal_store_dir):
+        view = DarkMaskingView()
         qtbot.addWidget(view)
         view.show()
 
@@ -636,23 +636,23 @@ def test_adversarial_zero_surviving_pixels_calibration_save(qapp, qtbot, populat
         qapp.processEvents()
 
         assert "0.00% active pixels" in view.save_status_label.text()
-        assert calibration_store.has_calibration(cal_dir=cal_store_dir)
+        assert dark_mask_store.has_dark_mask(mask_dir=cal_store_dir)
 
-        med_dark, mask, record = calibration_store.load_calibration(cal_dir=cal_store_dir)
+        med_dark, mask, record = dark_mask_store.load_dark_mask(mask_dir=cal_store_dir)
         assert record.surviving_pixels == 0
         assert record.suppression_pct == 100.0
         assert np.count_nonzero(mask) == 0
 
-        summary = calibration_store.get_calibration_summary(cal_dir=cal_store_dir)
+        summary = dark_mask_store.get_mask_summary(mask_dir=cal_store_dir)
         assert "0.00% pixels active" in summary
 
 
 def test_adversarial_view_memory_lifecycle_and_gc(qapp, qtbot, populated_diagnostics):
-    """Instantiate and destroy DarkCalibrationView objects; verify garbage collection."""
+    """Instantiate and destroy DarkMaskingView objects; verify garbage collection."""
     refs = []
 
     for i in range(10):
-        view = DarkCalibrationView()
+        view = DarkMaskingView()
         btn = QPushButton(f"Co-Pilot {i}")
         view.set_copilot_button(btn)
         view._on_diagnostics_ready(populated_diagnostics)

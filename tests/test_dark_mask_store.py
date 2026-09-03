@@ -13,7 +13,6 @@ import tifffile
 from rixs_app.core.dark_mask_store import (
     DEFAULT_MASK_DIR,
     DarkMaskRecord,
-    CalibrationRecord,
     clear_dark_mask,
     get_mask_summary,
     get_dark_mask_dir,
@@ -21,11 +20,6 @@ from rixs_app.core.dark_mask_store import (
     has_dark_mask,
     load_dark_mask,
     save_dark_mask,
-    has_calibration,
-    load_calibration,
-    save_calibration,
-    get_calibration_summary,
-    clear_calibration,
 )
 
 
@@ -59,15 +53,13 @@ def test_dark_mask_record_schema_and_dict_conversion():
 
     reconstructed = DarkMaskRecord.from_dict(d)
     assert reconstructed == record
-    assert CalibrationRecord == DarkMaskRecord
 
 
 def test_has_dark_mask_empty_and_nonexistent_dir(temp_mask_dir: Path):
     """Verify has_dark_mask returns False for non-existent and empty directories."""
     assert has_dark_mask(temp_mask_dir / "does_not_exist") is False
     assert has_dark_mask(temp_mask_dir) is False
-    assert has_dark_mask(store_dir=temp_mask_dir) is False
-    assert has_calibration(temp_mask_dir) is False
+    assert has_dark_mask(mask_dir=temp_mask_dir) is False
 
 
 def test_has_dark_mask_partial_files(temp_mask_dir: Path):
@@ -101,7 +93,6 @@ def test_has_dark_mask_partial_files(temp_mask_dir: Path):
     # Case C: All exist -> True
     tifffile.imwrite(mask_path, np.ones((10, 10), dtype=np.float32))
     assert has_dark_mask(temp_mask_dir) is True
-    assert has_calibration(temp_mask_dir) is True
 
 
 def test_save_and_load_dark_mask_roundtrip(temp_mask_dir: Path):
@@ -140,16 +131,10 @@ def test_save_and_load_dark_mask_roundtrip(temp_mask_dir: Path):
     assert loaded_record.surviving_pixels == int(np.sum(final_mask))
     assert loaded_record.source_dir == "/data/dark_scans/scan_001"
 
-    # Backward compatibility functions
-    b_med, b_mask, b_record = load_calibration(temp_mask_dir)
-    assert np.array_equal(b_med, loaded_med)
-    assert np.array_equal(b_mask, loaded_mask)
-
 
 def test_get_mask_summary(temp_mask_dir: Path):
     """Verify get_mask_summary format and None on uninitialized store."""
     assert get_mask_summary(temp_mask_dir) is None
-    assert get_calibration_summary(temp_mask_dir) is None
 
     h, w = 100, 100
     med_dark = np.zeros((h, w), dtype=np.float32)

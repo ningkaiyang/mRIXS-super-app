@@ -733,8 +733,9 @@ QLabel#squircle_card_badge {{
     padding: 2px 6px;
 }}
 
-/* ── Dark Calibration Status Banners & Badges ────────────── */
-QFrame#cal_status_ok, QLabel#cal_status_ok {{
+/* ── Dark Mask Status Banners & Badges ───────────────────── */
+QFrame#cal_status_ok, QLabel#cal_status_ok,
+QFrame#mask_status_ok, QLabel#mask_status_ok {{
     background-color: rgba(5, 150, 105, 0.15);
     border: 1px solid #059669;
     color: #34d399;
@@ -743,7 +744,8 @@ QFrame#cal_status_ok, QLabel#cal_status_ok {{
     font-weight: bold;
 }}
 
-QFrame#cal_status_missing, QLabel#cal_status_missing {{
+QFrame#cal_status_missing, QLabel#cal_status_missing,
+QFrame#mask_status_missing, QLabel#mask_status_missing {{
     background-color: rgba(225, 29, 72, 0.15);
     border: 1px solid #e11d48;
     color: #f87171;
@@ -880,15 +882,25 @@ def set_squircle_card(frame) -> None:
 
 
 def set_cal_status_ok(widget) -> None:
-    """Mark *widget* with green verified dark calibration status styling."""
-    widget.setObjectName("cal_status_ok")
+    """Mark *widget* with green verified dark mask status styling."""
+    set_mask_status_ok(widget)
+
+
+def set_cal_status_missing(widget) -> None:
+    """Mark *widget* with red unmasked status styling."""
+    set_mask_status_missing(widget)
+
+
+def set_mask_status_ok(widget) -> None:
+    """Mark *widget* with green verified dark mask status styling."""
+    widget.setObjectName("mask_status_ok")
     widget.style().unpolish(widget)
     widget.style().polish(widget)
 
 
-def set_cal_status_missing(widget) -> None:
-    """Mark *widget* with red uncalibrated status styling."""
-    widget.setObjectName("cal_status_missing")
+def set_mask_status_missing(widget) -> None:
+    """Mark *widget* with red unmasked status styling."""
+    widget.setObjectName("mask_status_missing")
     widget.style().unpolish(widget)
     widget.style().polish(widget)
 

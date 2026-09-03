@@ -30,7 +30,7 @@ import tifffile
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QPushButton, QStackedWidget, QWidget
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.alignment import phase_correlation_offset
 from rixs_app.core.cli_utils import glob_tifs
 from rixs_app.core.photon_clustering import (
@@ -53,7 +53,7 @@ from rixs_app.core.zeroth_order import run_zeroth_order_pipeline
 from rixs_app.ui.clustering_slideshow.file_selection_view import ClusteringFileSelectionView
 from rixs_app.ui.clustering_slideshow.manager import ClusteringManager
 from rixs_app.ui.clustering_slideshow.studio_view import ClusteringStudioView
-from rixs_app.ui.dark_calibration.dark_cal_view import DarkCalibrationView
+from rixs_app.ui.dark_masking.dark_mask_view import DarkMaskingView
 from rixs_app.ui.home_launchpad import HomeLaunchpadView
 from rixs_app.ui.sorting_view import SortingView, find_matching_scan_txt
 
@@ -140,11 +140,11 @@ def create_beamline_signal_dataset(
 # Section 1: Realistic Beamline Scenarios
 # ============================================================================
 
-def test_scenario_1_beamline_dark_calibration_and_clustering_lifecycle(tmp_path: Path):
-    """Scenario 1: Complete ALS beamline dark calibration & single-photon clustering lifecycle."""
+def test_scenario_1_beamline_dark_masking_and_clustering_lifecycle(tmp_path: Path):
+    """Scenario 1: Complete ALS beamline dark masking & single-photon clustering lifecycle."""
     raw_darks_dir = tmp_path / "raw_darks"
     raw_signals_dir = tmp_path / "raw_signals"
-    cal_store_dir = tmp_path / "appdata" / "dark_calibration"
+    cal_store_dir = tmp_path / "appdata" / "dark_masking"
     clusters_out_dir = tmp_path / "clusters_output"
 
     raw_darks_dir.mkdir(parents=True, exist_ok=True)
@@ -159,7 +159,7 @@ def test_scenario_1_beamline_dark_calibration_and_clustering_lifecycle(tmp_path:
     diag = compute_dark_diagnostics(dark_paths, tail_pct=0.9333)
     stage1 = apply_dark_thresholds(diag, stddev_thresh=40.0, absdev_thresh=60.0, tail_ratio=0.9333)
 
-    record = calibration_store.save_calibration(
+    record = dark_mask_store.save_dark_mask(
         med_dark=stage1.med_dark,
         final_mask=stage1.final_mask,
         stddev_thresh=40.0,
@@ -171,12 +171,12 @@ def test_scenario_1_beamline_dark_calibration_and_clustering_lifecycle(tmp_path:
         suppression_pct=stage1.suppression_pct,
         source_dir=raw_darks_dir,
         date="2026-08-28T12:00:00",
-        cal_dir=cal_store_dir,
+        mask_dir=cal_store_dir,
     )
-    assert calibration_store.has_calibration(cal_dir=cal_store_dir)
+    assert dark_mask_store.has_dark_mask(mask_dir=cal_store_dir)
 
     # Stage 2: Signal Frame Clustering
-    med_dark, final_mask, _ = calibration_store.load_calibration(cal_dir=cal_store_dir)
+    med_dark, final_mask, _ = dark_mask_store.load_dark_mask(mask_dir=cal_store_dir)
     cluster_cfg = ClusterConfig(sig_thresh_low=45.0, sig_thresh_high=1e6, connectivity=8)
     df_clusters = process_signal_stack_clusters(
         signal_paths=signal_paths,
@@ -227,15 +227,15 @@ def test_scenario_3_corrupted_calibration_detection_and_recovery(tmp_path: Path)
     cal_dir.mkdir(parents=True, exist_ok=True)
 
     # Write corrupt JSON manifest
-    (cal_dir / "calibration_meta.json").write_text("{CORRUPTED_JSON_FILE")
-    assert not calibration_store.has_calibration(cal_dir=cal_dir)
+    (cal_dir / "mask_meta.json").write_text("{CORRUPTED_JSON_FILE")
+    assert not dark_mask_store.has_dark_mask(mask_dir=cal_dir)
 
     # Re-calibration recovery
     dark_paths = create_beamline_dark_dataset(tmp_path / "darks", n_frames=10, shape=(32, 32))
     diag = compute_dark_diagnostics(dark_paths)
     stage1 = apply_dark_thresholds(diag)
 
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=stage1.med_dark,
         final_mask=stage1.final_mask,
         stddev_thresh=40.0,
@@ -246,11 +246,11 @@ def test_scenario_3_corrupted_calibration_detection_and_recovery(tmp_path: Path)
         total_pixels=stage1.total_pixels,
         suppression_pct=stage1.suppression_pct,
         source_dir=tmp_path / "darks",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
     )
 
-    assert calibration_store.has_calibration(cal_dir=cal_dir)
-    med_dark, mask, record = calibration_store.load_calibration(cal_dir=cal_dir)
+    assert dark_mask_store.has_dark_mask(mask_dir=cal_dir)
+    med_dark, mask, record = dark_mask_store.load_dark_mask(mask_dir=cal_dir)
     assert med_dark.shape == (32, 32)
     assert record.surviving_pixels > 0
 
@@ -263,7 +263,7 @@ def test_scenario_4_high_throughput_progressive_streaming_and_chunked_accumulati
     dark_paths = create_beamline_dark_dataset(tmp_path / "darks_stream", n_frames=10, shape=(32, 32))
     diag = compute_dark_diagnostics(dark_paths)
     stage1 = apply_dark_thresholds(diag)
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=stage1.med_dark,
         final_mask=stage1.final_mask,
         stddev_thresh=40.0,
@@ -274,17 +274,17 @@ def test_scenario_4_high_throughput_progressive_streaming_and_chunked_accumulati
         total_pixels=stage1.total_pixels,
         suppression_pct=stage1.suppression_pct,
         source_dir=tmp_path / "darks_stream",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
     )
 
     signal_paths = create_beamline_signal_dataset(tmp_path / "signals_stream", n_frames=20, shape=(32, 32))
     mgr = ClusteringManager()
-    mgr.init_session(signal_paths=signal_paths, chunk_size=5, cal_dir=cal_dir)
+    mgr.init_session(signal_paths=signal_paths, chunk_size=5, mask_dir=cal_dir)
 
     assert mgr.total_frames == 20
     assert mgr.total_chunks == 4
 
-    med_dark, final_mask, _ = calibration_store.load_calibration(cal_dir=cal_dir)
+    med_dark, final_mask, _ = dark_mask_store.load_dark_mask(mask_dir=cal_dir)
     cfg = ClusterConfig()
 
     for idx, path in enumerate(signal_paths):
@@ -312,14 +312,14 @@ def test_interaction_home_launchpad_status_badging(qapp, tmp_path: Path):
     view = HomeLaunchpadView()
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(calibration_store, "DARK_CAL_DIR", cal_dir)
-        view.refresh_calibration_status()
-        badge_text = view._card_dark_cal._badge_label.text()
+        mp.setattr(dark_mask_store, "DARK_MASK_DIR", cal_dir)
+        view.refresh_mask_status()
+        badge_text = view._card_dark_mask._badge_label.text()
         assert "No Mask" in badge_text or "Not calibrated" in badge_text
 
         med = np.full((32, 32), 100.0, dtype=np.float32)
         mask = np.ones((32, 32), dtype=np.float32)
-        calibration_store.save_calibration(
+        dark_mask_store.save_dark_mask(
             med_dark=med,
             final_mask=mask,
             stddev_thresh=40.0,
@@ -331,13 +331,13 @@ def test_interaction_home_launchpad_status_badging(qapp, tmp_path: Path):
             suppression_pct=0.39,
             source_dir="/source",
             date="2026-08-28T12:00:00",
-            cal_dir=cal_dir,
+            mask_dir=cal_dir,
         )
 
-        view.refresh_calibration_status()
-        badge_text = view._card_dark_cal._badge_label.text()
+        view.refresh_mask_status()
+        badge_text = view._card_dark_mask._badge_label.text()
         assert "Mask Generated" in badge_text or "Calibrated" in badge_text
-        assert "cal_status_ok" == view._card_dark_cal._badge_label.objectName()
+        assert "mask_status_ok" == view._card_dark_mask._badge_label.objectName()
 
 
 def test_interaction_clustering_file_selection_banner(qapp, tmp_path: Path):
@@ -345,13 +345,13 @@ def test_interaction_clustering_file_selection_banner(qapp, tmp_path: Path):
     empty_cal_dir = tmp_path / "empty_cal"
     empty_cal_dir.mkdir(parents=True, exist_ok=True)
 
-    view_uncal = ClusteringFileSelectionView(cal_dir=empty_cal_dir)
-    assert "No Dark Calibration Found" in view_uncal._cal_status_text.text()
+    view_uncal = ClusteringFileSelectionView(mask_dir=empty_cal_dir)
+    assert "No Dark Mask Found" in view_uncal._mask_status_text.text()
     assert not view_uncal.launch_btn.isEnabled()
 
     valid_cal_dir = tmp_path / "valid_cal"
     valid_cal_dir.mkdir(parents=True, exist_ok=True)
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=np.zeros((32, 32), dtype=np.float32),
         final_mask=np.ones((32, 32), dtype=np.float32),
         stddev_thresh=40.0,
@@ -362,11 +362,11 @@ def test_interaction_clustering_file_selection_banner(qapp, tmp_path: Path):
         total_pixels=1024,
         suppression_pct=0.0,
         source_dir="/source",
-        cal_dir=valid_cal_dir,
+        mask_dir=valid_cal_dir,
     )
 
-    view_cal = ClusteringFileSelectionView(cal_dir=valid_cal_dir)
-    assert "Dark Calibration Verified" in view_cal._cal_status_text.text()
+    view_cal = ClusteringFileSelectionView(mask_dir=valid_cal_dir)
+    assert "Dark Mask Verified" in view_cal._mask_status_text.text()
     view_cal.load_files(["/fake/frame_1.tif"])
     assert view_cal.launch_btn.isEnabled()
 
@@ -412,10 +412,10 @@ def test_interaction_8_view_navigation_routing_and_copilot_docking(qapp):
     assert app_window._stack.currentIndex() == 0
     assert app_window.home_view.isAncestorOf(app_window._sidebar_toggle)
 
-    # 2. Navigate to Dark Calibration (Index 1)
-    app_window.show_dark_calibration()
+    # 2. Navigate to Dark Masking (Index 1)
+    app_window.show_dark_masking()
     assert app_window._stack.currentIndex() == 1
-    assert app_window.dark_cal_view.isAncestorOf(app_window._sidebar_toggle)
+    assert app_window.dark_mask_view.isAncestorOf(app_window._sidebar_toggle)
 
     # 3. Navigate to Clustering File Selection (Index 2)
     app_window.show_clustering_files()

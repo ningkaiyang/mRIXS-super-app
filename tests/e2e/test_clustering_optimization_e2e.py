@@ -23,7 +23,7 @@ import pytest
 import tifffile
 from PySide6.QtWidgets import QApplication
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.photon_clustering import (
     ClusterConfig,
     process_single_frame_clusters,
@@ -57,7 +57,7 @@ def synthetic_20_frames(tmp_path):
     """Generate 20 synthetic frames with dark calibration for portable testing."""
     sig_dir = tmp_path / "synthetic_sig"
     sig_dir.mkdir(parents=True, exist_ok=True)
-    cal_dir = tmp_path / "dark_cal"
+    cal_dir = tmp_path / "dark_mask"
     cal_dir.mkdir(parents=True, exist_ok=True)
 
     h, w = 128, 128
@@ -65,7 +65,7 @@ def synthetic_20_frames(tmp_path):
     final_mask = np.ones((h, w), dtype=np.float32)
     final_mask[0, 0] = 0.0
 
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=med_dark,
         final_mask=final_mask,
         stddev_thresh=40.0,
@@ -77,7 +77,7 @@ def synthetic_20_frames(tmp_path):
         suppression_pct=1.0 / (h * w) * 100.0,
         source_dir="/mock/dark/frames",
         date="2026-08-28T12:00:00",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
     )
 
     paths: list[str] = []
@@ -187,7 +187,7 @@ def test_e2e_real_dataset_pipeline_performance(qtbot):
     studio.load_session(
         signal_paths=[str(p) for p in real_files],
         chunk_size=10,
-        cal_dir=REAL_CAL_DIR,
+        mask_dir=REAL_CAL_DIR,
         auto_run=False,
     )
 
@@ -277,7 +277,7 @@ def test_e2e_synthetic_dataset_pipeline_performance(qtbot, synthetic_20_frames):
     studio.load_session(
         signal_paths=paths,
         chunk_size=5,
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
         auto_run=False,
     )
 
@@ -329,7 +329,7 @@ def test_e2e_streaming_nonblocking_responsiveness(qtbot, synthetic_20_frames):
     studio.load_session(
         signal_paths=paths,
         chunk_size=5,
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
         auto_run=False,
     )
 

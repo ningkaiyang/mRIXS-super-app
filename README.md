@@ -198,7 +198,7 @@ The application includes an integrated, asynchronous AI Co-Pilot agent connected
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │ CborgAgentEngine (AsyncOpenAI / CBORG API)                            │  │
 │  │  • Multi-turn streaming chat                                          │  │
-│  │  • Multi-tier API key resolution (.env, ~/.cborg_api_key, Env, UI)    │  │
+│  │  • Multi-tier API key resolution (Env, appdata/cborg-auth/.env, UI)   │  │
 │  │  • Approval Barriers (asyncio.Event for destructive / CLI actions)    │  │
 │  │  • ToolRegistry dispatch (Auto JSON schemas from Python type hints)   │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
@@ -210,10 +210,9 @@ The application includes an integrated, asynchronous AI Co-Pilot agent connected
 - **Approval-Gated Tool Calling:** Destructive actions (CLI runs, calibrations, disk modifications) present an interactive UI approval card (`Approve` / `Reject` with feedback) before executing.
 - **Subprocess Log Streaming:** Subprocess stdout/stderr streams directly to the Co-Pilot chat transcript.
 - **Multi-Tier API Key Resolution:**
-  1. Local project `.env` file (`CBORG_API_KEY=...`)
-  2. User home directory configuration file (`~/.cborg_api_key`)
-  3. Shell environment variable (`export CBORG_API_KEY=...`)
-  4. In-app Setup Wizard modal with keychain persistence.
+  1. Shell environment variable (`export CBORG_API_KEY=...`)
+  2. Application persistent data file (`rixs_app/appdata/cborg-auth/.env`)
+  3. In-app Setup Wizard modal
 
 ### Built-in Agent Tools
 

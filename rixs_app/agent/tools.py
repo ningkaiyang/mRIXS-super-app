@@ -177,6 +177,19 @@ def _find_project_root() -> Path:
     return _find_root()
 
 
+# Canonical 8-view stack indices mapping matching rixs_app.main
+_STACK_VIEW_NAMES: dict[int, str] = {
+    0: "HomeLaunchpadView",
+    1: "DarkMaskingView",
+    2: "ClusteringFileSelectionView",
+    3: "ClusteringStudioView",
+    4: "SortingView",
+    5: "SlideshowView",
+    6: "ExportComparisonView",
+    7: "ZerothOrderSlideshowView",
+}
+
+
 def _register_tools(registry: ToolRegistry) -> None:
     """Register all V1 tools on the given registry."""
 
@@ -321,11 +334,16 @@ def _register_tools(registry: ToolRegistry) -> None:
 
     @registry.tool(
         "get_cli_help",
-        "Get the --help output for a project CLI tool. Always call this before constructing CLI commands.",
+        "Get the --help output for a project CLI tool (align_cli.py, cluster_cli.py, zeroth_order_cli.py, denoise_cli.py). Always call this before constructing CLI commands.",
         requires_approval=False,
     )
     def get_cli_help(cli_script: str) -> str:
-        allowed_scripts = {"align_cli.py", "zeroth_order_cli.py", "denoise_cli.py"}
+        allowed_scripts = {
+            "align_cli.py",
+            "cluster_cli.py",
+            "zeroth_order_cli.py",
+            "denoise_cli.py",
+        }
         if cli_script not in allowed_scripts:
             return f"Error: Unknown script '{cli_script}'. Allowed: {', '.join(sorted(allowed_scripts))}"
 
@@ -336,7 +354,7 @@ def _register_tools(registry: ToolRegistry) -> None:
 
         try:
             result = subprocess.run(
-                ["python3", str(script_path), "--help"],
+                [sys.executable, str(script_path), "--help"],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -563,7 +581,7 @@ def _register_tools(registry: ToolRegistry) -> None:
 
     @registry.tool(
         "cli_runner",
-        "Advanced fallback to execute a project CLI command (align_cli.py, zeroth_order_cli.py, or denoise_cli.py) from a command string. Prefer structured tools (run_spatial_alignment, run_zeroth_order_calibration, run_image_denoising) when possible.",
+        "Advanced fallback to execute a project CLI command (align_cli.py, cluster_cli.py, zeroth_order_cli.py, or denoise_cli.py) from a command string. Prefer structured tools (run_spatial_alignment, run_zeroth_order_calibration, run_image_denoising) when possible.",
         requires_approval=True,
     )
     async def cli_runner(command: str) -> str:
@@ -581,7 +599,12 @@ def _register_tools(registry: ToolRegistry) -> None:
             return "Error: Empty command string."
 
         # Find the target script in the tokens
-        allowed_scripts = {"align_cli.py", "zeroth_order_cli.py", "denoise_cli.py"}
+        allowed_scripts = {
+            "align_cli.py",
+            "cluster_cli.py",
+            "zeroth_order_cli.py",
+            "denoise_cli.py",
+        }
         script_idx = -1
         script_name = ""
 
@@ -629,42 +652,128 @@ def _register_tools(registry: ToolRegistry) -> None:
             stack = main_window._stack
             current_idx = stack.currentIndex()
 
-            view_names = {
-                0: "SortingView",
-                1: "SlideshowView",
-                2: "ExportComparisonView",
-                3: "ZerothOrderSlideshowView",
-            }
-            state["active_view"] = view_names.get(current_idx, f"unknown_{current_idx}")
+            state["active_view"] = _STACK_VIEW_NAMES.get(current_idx, f"unknown_{current_idx}")
 
-            if current_idx == 0:  # SortingView
-                sv = main_window.sorting_view
-                if hasattr(sv, "file_list"):
+            if current_idx == 0:  # HomeLaunchpadView
+                state["details"]["info"] = "Home Launchpad Hub"
+
+            elif current_idx == 1:  # DarkMaskingView
+                dv = getattr(main_window, "dark_mask_view", None)
+                if dv is not None:
+                    paths = getattr(dv, "dark_paths", [])
+                    count = getattr(dv, "dark_frame_count", len(paths) if paths else 0)
+                    state["details"]["file_count"] = count
+                    if paths:
+                        state["details"]["first_file"] = paths[0]
+                        state["details"]["directory"] = str(Path(paths[0]).parent)
+                    if hasattr(dv, "_stddev_thresh"):
+                        state["details"]["stddev_thresh"] = dv._stddev_thresh
+                    if hasattr(dv, "_absdev_thresh"):
+                        state["details"]["absdev_thresh"] = dv._absdev_thresh
+                    if hasattr(dv, "_diagnostics"):
+                        state["details"]["has_diagnostics"] = dv._diagnostics is not None
+
+            elif current_idx == 2:  # ClusteringFileSelectionView
+                cfv = getattr(main_window, "clustering_file_view", None)
+                if cfv is not None:
+                    paths = getattr(cfv, "signal_paths", [])
+                    state["details"]["file_count"] = len(paths)
+                    if paths:
+                        state["details"]["first_file"] = paths[0]
+                        state["details"]["directory"] = str(Path(paths[0]).parent)
+                    if hasattr(cfv, "chunk_size"):
+                        state["details"]["chunk_size"] = cfv.chunk_size
+                    if hasattr(cfv, "_has_valid_cal"):
+                        state["details"]["has_valid_cal"] = cfv._has_valid_cal
+
+            elif current_idx == 3:  # ClusteringStudioView
+                csv = getattr(main_window, "clustering_studio_view", None)
+                if csv is not None:
+                    mgr = getattr(csv, "manager", None)
+                    if mgr is not None:
+                        state["details"]["file_count"] = getattr(mgr, "total_frames", 0)
+                        state["details"]["total_chunks"] = getattr(mgr, "total_chunks", 0)
+                        m_state = getattr(mgr, "state", None)
+                        if m_state is not None:
+                            sig_paths = getattr(m_state, "signal_paths", [])
+                            if sig_paths:
+                                state["details"]["first_file"] = sig_paths[0]
+                                state["details"]["directory"] = str(Path(sig_paths[0]).parent)
+                            state["details"]["is_processing"] = getattr(m_state, "is_processing", False)
+                            df_clusters = getattr(m_state, "df_clusters", None)
+                            if df_clusters is not None:
+                                state["details"]["cluster_count"] = len(df_clusters)
+                    if hasattr(csv, "_current_frame_idx"):
+                        state["details"]["current_frame"] = csv._current_frame_idx
+                    if hasattr(csv, "_current_chunk_idx"):
+                        state["details"]["current_chunk"] = csv._current_chunk_idx
+                    if hasattr(csv, "active_mode"):
+                        state["details"]["active_mode"] = csv.active_mode
+
+            elif current_idx == 4:  # SortingView
+                sv = getattr(main_window, "sorting_view", None)
+                if sv is not None and hasattr(sv, "file_list"):
                     state["details"]["file_count"] = len(sv.file_list)
                     if sv.file_list:
                         state["details"]["first_file"] = sv.file_list[0]
                         state["details"]["directory"] = str(Path(sv.file_list[0]).parent)
 
-            elif current_idx == 1:  # SlideshowView
-                sv = main_window.slideshow_view
-                if hasattr(sv, "_manager") and sv._manager:
-                    mgr = sv._manager
-                    state["details"]["file_count"] = getattr(mgr, "_n_frames", 0)
-                    state["details"]["current_frame"] = getattr(mgr, "_current_idx", 0)
-                    directory = getattr(mgr, "_directory", "")
-                    if directory:
-                        state["details"]["directory"] = str(directory)
+            elif current_idx == 5:  # SlideshowView
+                sv = getattr(main_window, "slideshow_view", None)
+                if sv is not None:
+                    mgr = getattr(sv, "_manager", None) or getattr(sv, "manager", None)
+                    if mgr is not None:
+                        file_list = getattr(mgr, "file_list", None)
+                        if isinstance(file_list, (list, tuple)):
+                            state["details"]["file_count"] = len(file_list)
+                        else:
+                            n = getattr(mgr, "_n_frames", None)
+                            if isinstance(n, int):
+                                state["details"]["file_count"] = n
 
-            elif current_idx == 3:  # ZerothOrderSlideshowView
-                zv = main_window.zeroth_order_view
-                if hasattr(zv, "_manager") and zv._manager:
-                    mgr = zv._manager
-                    state["details"]["file_count"] = getattr(mgr, "_n_frames", 0)
-                    state["details"]["current_frame"] = getattr(mgr, "_current_idx", 0)
-                    directory = getattr(mgr, "_directory", "")
-                    if directory:
-                        state["details"]["directory"] = str(directory)
-                    state["details"]["has_scan_log"] = getattr(mgr, "_txt_path", None) is not None
+                        cf = getattr(mgr, "_current_idx", None)
+                        if not isinstance(cf, int):
+                            cf = getattr(mgr, "current_idx", None)
+                        if isinstance(cf, int):
+                            state["details"]["current_frame"] = cf
+
+                        directory = getattr(mgr, "_directory", None) or getattr(mgr, "directory", None)
+                        if isinstance(directory, (str, Path)):
+                            state["details"]["directory"] = str(directory)
+
+            elif current_idx == 6:  # ExportComparisonView
+                ev = getattr(main_window, "export_comparison_view", None)
+                if ev is not None:
+                    state["details"]["has_aligned_sum"] = getattr(ev, "aligned_sum", None) is not None
+                    save_dir = getattr(ev, "default_save_dir", "")
+                    if isinstance(save_dir, (str, Path)) and str(save_dir):
+                        state["details"]["directory"] = str(save_dir)
+
+            elif current_idx == 7:  # ZerothOrderSlideshowView
+                zv = getattr(main_window, "zeroth_order_view", None)
+                if zv is not None:
+                    mgr = getattr(zv, "_manager", None) or getattr(zv, "manager", None)
+                    if mgr is not None:
+                        file_list = getattr(mgr, "file_list", None)
+                        if isinstance(file_list, (list, tuple)):
+                            state["details"]["file_count"] = len(file_list)
+                        else:
+                            n = getattr(mgr, "_n_frames", None)
+                            if isinstance(n, int):
+                                state["details"]["file_count"] = n
+
+                        cf = getattr(mgr, "_current_idx", None)
+                        if not isinstance(cf, int):
+                            cf = getattr(mgr, "current_idx", None)
+                        if isinstance(cf, int):
+                            state["details"]["current_frame"] = cf
+
+                        directory = getattr(mgr, "_directory", None) or getattr(mgr, "directory", None)
+                        if isinstance(directory, (str, Path)):
+                            state["details"]["directory"] = str(directory)
+
+                        txt = getattr(mgr, "_txt_path", None) or getattr(mgr, "txt_path", None)
+                        state["details"]["has_scan_log"] = txt is not None
 
             return json.dumps(state, indent=2)
         except Exception as e:
@@ -686,10 +795,13 @@ def _register_tools(registry: ToolRegistry) -> None:
             if param_lower == "frame_index":
                 idx = int(value)
                 current = main_window._stack.currentIndex()
-                if current == 1 and hasattr(main_window.slideshow_view, "next_frame"):
+                active_view = _STACK_VIEW_NAMES.get(current, "")
+                if active_view == "SlideshowView" and hasattr(main_window, "slideshow_view") and hasattr(main_window.slideshow_view, "next_frame"):
                     # Navigate to specific frame by going to first and then stepping
                     return f"Frame navigation to index {idx} requested (manual stepping required)."
-                elif current == 3 and hasattr(main_window.zeroth_order_view, "next_frame"):
+                elif active_view == "ZerothOrderSlideshowView" and hasattr(main_window, "zeroth_order_view") and hasattr(main_window.zeroth_order_view, "next_frame"):
+                    return f"Frame navigation to index {idx} requested (manual stepping required)."
+                elif active_view == "ClusteringStudioView" and hasattr(main_window, "clustering_studio_view"):
                     return f"Frame navigation to index {idx} requested (manual stepping required)."
                 else:
                     return "Error: No active slideshow view."

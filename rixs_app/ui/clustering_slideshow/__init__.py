@@ -1,7 +1,7 @@
 """Single-Photon Clustering Studio & Slideshow UI Package.
 
 Exposes:
-- ClusteringFileSelectionView: Signal TIFF file selection with dark calibration verification banner.
+- ClusteringFileSelectionView: Signal TIFF file selection with dark mask verification banner.
 - ClusteringStudioView: 3-mode studio (Dashboard, Frame Inspector, Chunk Inspector).
 - ClusteringManager & ClusteringState: In-memory session manager with <50ms filtering.
 - ClusterPipelineWorker & ChunkSaveWorker: Background asynchronous workers.

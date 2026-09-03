@@ -127,11 +127,6 @@ class ZerothOrderControlPanel(QFrame):
 
         outer.addWidget(cards_row)
 
-        # Hidden / legacy metadata label for full backward compatibility
-        self.metadata_label = QLabel()
-        self.metadata_label.setVisible(False)
-        outer.addWidget(self.metadata_label)
-
         # Frame slider row
         slider_row = QFrame()
         slider_row.setStyleSheet("background: transparent; border: none;")
@@ -263,26 +258,3 @@ class ZerothOrderControlPanel(QFrame):
                 "border-radius: 4px; padding: 1px 5px; font-size: 10px; font-weight: bold;"
             )
             self.score_sub_label.setText("No valid Gaussian fit")
-
-        # Synchronize legacy HTML metadata label
-        fwhm_str = f"{fwhm_px:.2f} px" if fwhm_px is not None else "—"
-        if fwhm_mev is not None and fwhm_mev > 0 and fwhm_px is not None:
-            fwhm_str += f" ({fwhm_mev:.1f} meV)"
-        score_str = f"{score:.4f}" if score is not None else "—"
-        sep = "&nbsp;&nbsp;<span style='color: #4c5d73;'>|</span>&nbsp;&nbsp;"
-        html = (
-            f"<div style='font-size: 17px; font-weight: 500;'>"
-            f"<span style='color: #88aacc;'>Filename:</span> "
-            f"<b style='color: #ffffff;'>{filename}</b>"
-            f"{sep}"
-            f"<span style='color: #88aacc;'>{motor_name}:</span> "
-            f"<b style='color: #38bdf8;'>{motor_val}</b>"
-            f"{sep}"
-            f"<span style='color: #88aacc;'>FWHM:</span> "
-            f"<b style='color: #fbbf24;'>{fwhm_str}</b>"
-            f"{sep}"
-            f"<span style='color: #88aacc;'>Score:</span> "
-            f"<b style='color: #4ade80;'>{score_str}</b>"
-            f"</div>"
-        )
-        self.metadata_label.setText(html)

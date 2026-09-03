@@ -4,13 +4,13 @@
 Provides 4 execution subcommands:
 1. dark-mask: Stage 1 temporal dark median and 2-tier noise mask generation.
 2. cluster:   Stage 2 8-connected component cluster analysis on raw signal frames.
-3. reconstruct: Stage 3 event map filtering and super-resolution 2D reconstruction from TSV/XLS.
+3. reconstruct: Stage 3 event map filtering and super-resolution 2D reconstruction from TSV.
 4. full:      End-to-end chained execution of Stages 1, 2, and 3.
 
 Usage Examples:
     python cluster_cli.py dark-mask -d /path/to/dark -o /path/to/out
     python cluster_cli.py cluster -s /path/to/signal --dark-tif /path/to/MED_Dark.tif --mask-tif /path/to/Final_Mask.tif
-    python cluster_cli.py reconstruct -c /path/to/Results_clusters.xls --intden-low 120 --intden-high 320
+    python cluster_cli.py reconstruct -c /path/to/Results_clusters.tsv --intden-low 120 --intden-high 320
     python cluster_cli.py full -d /path/to/dark -s /path/to/signal --intden-low 120 --intden-high 320
 """
 
@@ -82,18 +82,16 @@ def run_dark_mask(args: argparse.Namespace) -> int:
     result = compute_dark_mask(dark_files, config=config)
     elapsed = time.perf_counter() - t0
 
-    label = args.label or "Dark"
-    med_path = output_dir / f"MED_{label}.tif"
-    mask_path = output_dir / f"Final_Mask_{label}.tif"
-    med_std = output_dir / "MED_Dark.tif"
-    mask_std = output_dir / "Final_Mask.tif"
+    label = args.label
+    if label and label != "Dark":
+        med_path = output_dir / f"MED_{label}.tif"
+        mask_path = output_dir / f"Final_Mask_{label}.tif"
+    else:
+        med_path = output_dir / "MED_Dark.tif"
+        mask_path = output_dir / "Final_Mask.tif"
 
     tifffile.imwrite(med_path, result.med_dark)
     tifffile.imwrite(mask_path, result.final_mask)
-    if med_path != med_std:
-        tifffile.imwrite(med_std, result.med_dark)
-    if mask_path != mask_std:
-        tifffile.imwrite(mask_std, result.final_mask)
 
     print(f"Stage 1 complete in {elapsed:.2f}s ({len(dark_files) / max(elapsed, 1e-6):.1f} fps).")
     print(f"  Surviving active pixels: {result.surviving_pixels:,} / {result.total_pixels:,}")
@@ -117,8 +115,8 @@ def run_cluster(args: argparse.Namespace) -> int:
         output_dir = signal_dir / "clusters"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dark_path_str = getattr(args, "dark_tif", None) or getattr(args, "med_dark", None)
-    mask_path_str = getattr(args, "mask_tif", None) or getattr(args, "final_mask", None)
+    dark_path_str = getattr(args, "dark_tif", None)
+    mask_path_str = getattr(args, "mask_tif", None)
 
     if not dark_path_str:
         candidate_dark = output_dir / "MED_Dark.tif"
@@ -178,9 +176,9 @@ def run_cluster(args: argparse.Namespace) -> int:
     )
     elapsed = time.perf_counter() - t0
 
-    out_name = args.output_name or "Results_clusters.xls"
+    out_name = args.output_name or "Results_clusters.tsv"
     out_path = output_dir / out_name
-    # Save as Tab-Separated Values (TSV) matching ImageJ .xls format
+    # Save as Tab-Separated Values (TSV)
     df_clusters.to_csv(out_path, sep="\t", index=False)
 
     print(f"Stage 2 complete in {elapsed:.2f}s ({len(signal_files) / max(elapsed, 1e-6):.1f} fps).")
@@ -192,7 +190,7 @@ def run_cluster(args: argparse.Namespace) -> int:
 
 def run_reconstruct(args: argparse.Namespace) -> int:
     """Execute Stage 3 photon event map reconstruction from cluster results."""
-    clusters_path = Path(args.clusters_xls)
+    clusters_path = Path(getattr(args, "clusters_file", None) or getattr(args, "clusters_xls", None))
     if not clusters_path.is_file():
         print(f"Error: Cluster results spreadsheet not found: {clusters_path}", file=sys.stderr)
         return 1
@@ -205,10 +203,7 @@ def run_reconstruct(args: argparse.Namespace) -> int:
 
     # Load TSV / CSV
     sep = "\t" if clusters_path.suffix.lower() in [".xls", ".tsv"] else ","
-    try:
-        df_clusters = pd.read_csv(clusters_path, sep=sep)
-    except Exception:
-        df_clusters = pd.read_csv(clusters_path, sep=r"\s+")
+    df_clusters = pd.read_csv(clusters_path, sep=sep)
 
     print("========================================")
     print("Stage 3: Photon Event Map Reconstruction")
@@ -241,10 +236,8 @@ def run_reconstruct(args: argparse.Namespace) -> int:
 
     map_name = args.output_name or "Photon_Event_Map.tif"
     map_path = output_dir / map_name
-    map_total_path = output_dir / "Photon_Event_Map_total.tif"
 
     tifffile.imwrite(map_path, result.event_map)
-    tifffile.imwrite(map_total_path, result.event_map)
 
     hist_path = output_dir / "IntDen_histogram.png"
     export_intden_histogram(
@@ -322,18 +315,16 @@ def run_full(args: argparse.Namespace) -> int:
     stage1_res = compute_dark_mask(dark_files, config=dark_config)
     t1 = time.perf_counter()
 
-    label = args.label or "Dark"
-    med_path = output_dir / f"MED_{label}.tif"
-    mask_path = output_dir / f"Final_Mask_{label}.tif"
-    med_std = output_dir / "MED_Dark.tif"
-    mask_std = output_dir / "Final_Mask.tif"
-    mask_dark = output_dir / "Final_Mask_Dark.tif"
+    label = args.label
+    if label and label != "Dark":
+        med_path = output_dir / f"MED_{label}.tif"
+        mask_path = output_dir / f"Final_Mask_{label}.tif"
+    else:
+        med_path = output_dir / "MED_Dark.tif"
+        mask_path = output_dir / "Final_Mask.tif"
 
     tifffile.imwrite(med_path, stage1_res.med_dark)
     tifffile.imwrite(mask_path, stage1_res.final_mask)
-    tifffile.imwrite(med_std, stage1_res.med_dark)
-    tifffile.imwrite(mask_std, stage1_res.final_mask)
-    tifffile.imwrite(mask_dark, stage1_res.final_mask)
 
     print(f"✓ Stage 1 complete in {t1 - t0:.2f}s: {stage1_res.surviving_pixels:,} surviving active pixels.")
 
@@ -351,8 +342,8 @@ def run_full(args: argparse.Namespace) -> int:
     )
     t2 = time.perf_counter()
 
-    cluster_xls = output_dir / "Results_clusters.xls"
-    df_clusters.to_csv(cluster_xls, sep="\t", index=False)
+    cluster_tsv = output_dir / "Results_clusters.tsv"
+    df_clusters.to_csv(cluster_tsv, sep="\t", index=False)
     print(f"✓ Stage 2 complete in {t2 - t1:.2f}s: {len(df_clusters):,} clusters found across {len(signal_files)} frames.")
 
     # 3. Stage 3
@@ -370,9 +361,7 @@ def run_full(args: argparse.Namespace) -> int:
     t3 = time.perf_counter()
 
     map_path = output_dir / (args.output_name or "Photon_Event_Map.tif")
-    map_total = output_dir / "Photon_Event_Map_total.tif"
     tifffile.imwrite(map_path, recon_res.event_map)
-    tifffile.imwrite(map_total, recon_res.event_map)
 
     hist_path = output_dir / "IntDen_histogram.png"
     export_intden_histogram(
@@ -417,23 +406,23 @@ def main() -> None:
     p_dark.add_argument("--label", default="Dark", help="Output filename label tag")
     p_dark.add_argument("--stddev-thresh", type=float, default=40.0, help="StdDev threshold (ADU)")
     p_dark.add_argument("--absdev-thresh", type=float, default=60.0, help="AbsDev excursion threshold (ADU)")
-    p_dark.add_argument("--tail-thresh-ratio", "--tail-ratio", dest="tail_thresh_ratio", type=float, default=0.9333, help="Fraction of required stable frames")
+    p_dark.add_argument("--tail-thresh-ratio", type=float, default=0.9333, help="Fraction of required stable frames")
     p_dark.add_argument("--max-frames", type=int, default=0, help="Max dark frames to process (0 = all)")
 
     # --- Subcommand: cluster ---
     p_clust = subparsers.add_parser("cluster", help="Stage 2: Run 8-connected cluster analysis on signal frames")
     p_clust.add_argument("--signal-dir", "-s", required=True, help="Folder containing raw signal TIFF frames")
-    p_clust.add_argument("--dark-tif", "--med-dark", dest="dark_tif", default=None, help="Path to precomputed MED_Dark.tif")
-    p_clust.add_argument("--mask-tif", "--final-mask", dest="mask_tif", default=None, help="Path to precomputed Final_Mask.tif")
-    p_clust.add_argument("--output-dir", "-o", default=None, help="Directory to save Results_clusters.xls")
-    p_clust.add_argument("--output-name", default="Results_clusters.xls", help="Cluster spreadsheet filename")
+    p_clust.add_argument("--dark-tif", default=None, help="Path to precomputed MED_Dark.tif")
+    p_clust.add_argument("--mask-tif", default=None, help="Path to precomputed Final_Mask.tif")
+    p_clust.add_argument("--output-dir", "-o", default=None, help="Directory to save Results_clusters.tsv")
+    p_clust.add_argument("--output-name", default="Results_clusters.tsv", help="Cluster spreadsheet filename")
     p_clust.add_argument("--sig-thresh-low", type=float, default=45.0, help="Signal noise floor cutoff (ADU)")
     p_clust.add_argument("--sig-thresh-high", type=float, default=1e6, help="Signal ceiling threshold (ADU)")
     p_clust.add_argument("--chunk-size", type=int, default=0, help="Chunk frame size")
 
     # --- Subcommand: reconstruct ---
     p_recon = subparsers.add_parser("reconstruct", help="Stage 3: Reconstruct 2D event map from cluster spreadsheet")
-    p_recon.add_argument("--clusters-xls", "-c", required=True, help="Path to Results_clusters.xls")
+    p_recon.add_argument("--clusters-file", "--clusters-tsv", "--clusters-xls", "-c", dest="clusters_file", required=True, help="Path to Results_clusters.tsv")
     p_recon.add_argument("--signal-dir", "-s", default=None, help="Optional signal directory for detector shape")
     p_recon.add_argument("--output-dir", "-o", default=None, help="Directory to save Photon_Event_Map.tif")
     p_recon.add_argument("--output-name", default="Photon_Event_Map.tif", help="Output 2D TIFF map filename")
@@ -455,7 +444,7 @@ def main() -> None:
     p_full.add_argument("--output-name", default="Photon_Event_Map.tif", help="Final event map filename")
     p_full.add_argument("--stddev-thresh", type=float, default=40.0, help="StdDev threshold (ADU)")
     p_full.add_argument("--absdev-thresh", type=float, default=60.0, help="AbsDev excursion threshold (ADU)")
-    p_full.add_argument("--tail-thresh-ratio", "--tail-ratio", dest="tail_thresh_ratio", type=float, default=0.9333, help="Fraction of required stable frames")
+    p_full.add_argument("--tail-thresh-ratio", type=float, default=0.9333, help="Fraction of required stable frames")
     p_full.add_argument("--max-frames", type=int, default=0, help="Max dark frames to process (0 = all)")
     p_full.add_argument("--sig-thresh-low", type=float, default=45.0, help="Signal noise floor cutoff (ADU)")
     p_full.add_argument("--sig-thresh-high", type=float, default=1e6, help="Signal ceiling threshold (ADU)")

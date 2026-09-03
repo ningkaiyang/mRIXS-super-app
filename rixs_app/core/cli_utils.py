@@ -8,48 +8,9 @@ shared logic here avoids duplication and keeps the CLI scripts thin.
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
 import numpy as np
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Filename parsing
-# ─────────────────────────────────────────────────────────────────────────────
-
-def extract_frame_index(filename: str) -> int:
-    """Extract the integer frame index from a TIFF filename.
-
-    Applies three parsing strategies in priority order:
-
-    1. **CMOS/Detector pattern**: Matches ``CMOS<sep>Detector<sep><N>`` where
-       ``<sep>`` is any combination of spaces, tabs, underscores, or hyphens.
-    2. **Frame pattern**: Matches ``frame<sep><N>``.
-    3. **Trailing digits fallback**: Returns the last integer token found in
-       the filename stem (without extension).
-
-    Args:
-        filename: Basename of a TIFF file (with or without directory path).
-
-    Returns:
-        Integer frame index extracted from *filename*.
-
-    Raises:
-        ValueError: If no digit sequence can be found in *filename*.
-    """
-    match = re.search(r'CMOS[\s_-]+?Detector[\s_-]+?(-?\d+)', filename, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-    match = re.search(r'frame[\s_-]+?(-?\d+)', filename, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-
-    name_without_ext, _ = os.path.splitext(filename)
-    digits = re.findall(r'-?\d+', name_without_ext)
-    if digits:
-        return int(digits[-1])
-    raise ValueError(f'No digit index found in filename: {filename}')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,15 +52,16 @@ def discover_directories(
         root_dir: Absolute or relative path to the root scan directory.
         recursive: If ``True``, recurse into all subdirectories.
         skip_dirs: Set of lowercase directory names to skip during traversal
-            (e.g. ``{'sum', 'tif-cache', 'zeroth_order_analysis'}``).  Defaults
-            to ``{'sum', 'tif-cache'}`` when ``None``.
+            (e.g. ``{'sum', 'tif-cache', 'clusters', 'zeroth_order_analysis', 'denoised'}``).
+            Defaults to ``{'sum', 'tif-cache', 'clusters', 'zeroth_order_analysis', 'denoised'}``
+            when ``None``.
 
     Returns:
         Sorted list of absolute directory path strings that contain sufficient
         TIF files and are not inside a skipped subdirectory.
     """
     if skip_dirs is None:
-        skip_dirs = {'sum', 'tif-cache'}
+        skip_dirs = {'sum', 'tif-cache', 'clusters', 'zeroth_order_analysis', 'denoised'}
 
     root = Path(root_dir).resolve()
     result: list[str] = []
@@ -114,8 +76,6 @@ def discover_directories(
             dp = Path(dirpath).resolve()
             if dp == root:
                 continue  # already checked above
-            if dp.name.lower() in skip_dirs:
-                continue
             if _has_tif_files(dp):
                 result.append(str(dp))
 

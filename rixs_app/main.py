@@ -22,7 +22,7 @@ from rixs_app.ui.theme import FULL_QSS, PALETTE, set_tool_btn, set_copilot_btn, 
 
 
 from rixs_app.ui.home_launchpad import HomeLaunchpadView
-from rixs_app.ui.dark_masking.dark_mask_view import DarkMaskingView, DarkCalibrationView
+from rixs_app.ui.dark_masking.dark_mask_view import DarkMaskingView
 from rixs_app.ui.clustering_slideshow.file_selection_view import ClusteringFileSelectionView
 from rixs_app.ui.clustering_slideshow.studio_view import ClusteringStudioView
 from rixs_app.ui.sorting_view import SortingView
@@ -33,7 +33,7 @@ from rixs_app.ui.zeroth_order_slideshow.slideshow_view import ZerothOrderSlidesh
 
 # View indices in the QStackedWidget
 _IDX_HOME = 0
-_IDX_DARK_CAL = 1
+_IDX_DARK_MASK = 1
 _IDX_CLUSTERING_FILES = 2
 _IDX_CLUSTERING_STUDIO = 3
 _IDX_SORTING = 4
@@ -44,7 +44,7 @@ _IDX_ZEROTH_ORDER = 7
 # View name map for GUI context
 _VIEW_NAMES = {
     _IDX_HOME: "HomeLaunchpadView",
-    _IDX_DARK_CAL: "DarkMaskingView",
+    _IDX_DARK_MASK: "DarkMaskingView",
     _IDX_CLUSTERING_FILES: "ClusteringFileSelectionView",
     _IDX_CLUSTERING_STUDIO: "ClusteringStudioView",
     _IDX_SORTING: "SortingView",
@@ -129,26 +129,21 @@ class RixsApp(QMainWindow):
 
         # Build views
         self.home_view = HomeLaunchpadView(
-            on_dark_calibration=self.show_dark_calibration,
+            on_dark_masking=self.show_dark_masking,
             on_clustering=self.show_clustering_files,
             on_alignment=self.show_sorting,
             on_zeroth_order=self.show_sorting,
         )
-        self.home_launchpad_view = self.home_view
 
         self.dark_mask_view = DarkMaskingView(
             on_back=self.show_home,
         )
-        self.dark_cal_view = self.dark_mask_view
-        self.dark_calibration_view = self.dark_mask_view
-        self.dark_masking_view = self.dark_mask_view
 
         self.clustering_file_view = ClusteringFileSelectionView(
             on_back=self.show_home,
             on_launch_studio=self.show_clustering_studio,
-            on_navigate_dark_cal=self.show_dark_calibration,
+            on_navigate_dark_mask=self.show_dark_masking,
         )
-        self.clustering_file_selection_view = self.clustering_file_view
 
         self.clustering_studio_view = ClusteringStudioView(
             on_back=self.show_home,
@@ -174,7 +169,7 @@ class RixsApp(QMainWindow):
         )
 
         self._stack.insertWidget(_IDX_HOME, self.home_view)
-        self._stack.insertWidget(_IDX_DARK_CAL, self.dark_cal_view)
+        self._stack.insertWidget(_IDX_DARK_MASK, self.dark_mask_view)
         self._stack.insertWidget(_IDX_CLUSTERING_FILES, self.clustering_file_view)
         self._stack.insertWidget(_IDX_CLUSTERING_STUDIO, self.clustering_studio_view)
         self._stack.insertWidget(_IDX_SORTING, self.sorting_view)
@@ -333,8 +328,8 @@ class RixsApp(QMainWindow):
         btn = self._sidebar_toggle
         if idx == _IDX_HOME:
             self.home_view.set_copilot_button(btn)
-        elif idx == _IDX_DARK_CAL:
-            self.dark_cal_view.set_copilot_button(btn)
+        elif idx == _IDX_DARK_MASK:
+            self.dark_mask_view.set_copilot_button(btn)
         elif idx == _IDX_CLUSTERING_FILES:
             self.clustering_file_view.set_copilot_button(btn)
         elif idx == _IDX_CLUSTERING_STUDIO:
@@ -407,8 +402,8 @@ class RixsApp(QMainWindow):
         try:
             if current_idx == _IDX_HOME:
                 pass
-            elif current_idx == _IDX_DARK_CAL:
-                dv = self.dark_cal_view
+            elif current_idx == _IDX_DARK_MASK:
+                dv = self.dark_mask_view
                 parts.append(f"Frames={dv.dark_frame_count}")
             elif current_idx == _IDX_CLUSTERING_FILES:
                 cf = self.clustering_file_view
@@ -451,20 +446,18 @@ class RixsApp(QMainWindow):
     def show_home(self) -> None:
         """Display the Home Launchpad dashboard."""
         self._stack.setCurrentIndex(_IDX_HOME)
-        if hasattr(self, "home_view") and hasattr(self.home_view, "refresh_calibration_status"):
-            self.home_view.refresh_calibration_status()
+        if hasattr(self, "home_view") and hasattr(self.home_view, "refresh_mask_status"):
+            self.home_view.refresh_mask_status()
 
-    def show_dark_calibration(self) -> None:
+    def show_dark_masking(self) -> None:
         """Display the Dark Image & Pixel Masking Studio view."""
-        self._stack.setCurrentIndex(_IDX_DARK_CAL)
-
-    show_dark_masking = show_dark_calibration
+        self._stack.setCurrentIndex(_IDX_DARK_MASK)
 
     def show_clustering_files(self) -> None:
         """Display the Single-Photon Clustering file selection view."""
         self._stack.setCurrentIndex(_IDX_CLUSTERING_FILES)
-        if hasattr(self, "clustering_file_view") and hasattr(self.clustering_file_view, "refresh_calibration_status"):
-            self.clustering_file_view.refresh_calibration_status()
+        if hasattr(self, "clustering_file_view") and hasattr(self.clustering_file_view, "refresh_mask_status"):
+            self.clustering_file_view.refresh_mask_status()
 
     def show_clustering_studio(
         self,
@@ -600,45 +593,11 @@ class RixsApp(QMainWindow):
             self.setFocus()
         super().mousePressEvent(event)
 
-    def layout(self):
-        """Return layout with wrapper ensuring added child widgets are reparented and visible."""
-        lay = super().layout()
-        if lay is None:
-            return None
-
-        class _LayoutWrapper:
-            def __init__(self, target, parent):
-                self._target = target
-                self._parent = parent
-
-            def addWidget(self, widget):  # noqa: N802
-                try:
-                    widget.setParent(self._parent)
-                    widget.show()
-                    if hasattr(QApplication, "setActiveWindow"):
-                        import warnings
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore", DeprecationWarning)
-                            QApplication.setActiveWindow(self._parent)
-                except Exception:
-                    pass
-                return self._target.addWidget(widget)
-
-            def __getattr__(self, name):
-                return getattr(self._target, name)
-
-        return _LayoutWrapper(lay, self)
-
     def showEvent(self, event) -> None:  # noqa: N802
         """Ensure window is active upon display (especially in offscreen/headless test runners)."""
         super().showEvent(event)
         try:
             self.activateWindow()
-            if hasattr(QApplication, "setActiveWindow"):
-                import warnings
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", DeprecationWarning)
-                    QApplication.setActiveWindow(self)
         except Exception:
             pass
 
@@ -666,7 +625,7 @@ class RixsApp(QMainWindow):
             event: The ``QCloseEvent``.
         """
         # Teardown Matplotlib canvases and view resources
-        for view_name in ('zeroth_order_view', 'slideshow_view', 'export_comparison_view', 'dark_cal_view', 'clustering_studio_view'):
+        for view_name in ('zeroth_order_view', 'slideshow_view', 'export_comparison_view', 'dark_mask_view', 'clustering_studio_view'):
             view = getattr(self, view_name, None)
             if view is not None:
                 if hasattr(view, 'cleanup'):

@@ -86,9 +86,11 @@ def test_cli_full_pipeline_subcommand(cli_test_data):
 
     # Check generated files
     assert (cli_test_data["output_dir"] / "MED_Dark.tif").exists()
-    assert (cli_test_data["output_dir"] / "Final_Mask_Dark.tif").exists()
-    assert (cli_test_data["output_dir"] / "Results_clusters.xls").exists()
+    assert (cli_test_data["output_dir"] / "Final_Mask.tif").exists()
+    assert not (cli_test_data["output_dir"] / "Final_Mask_Dark.tif").exists()
+    assert (cli_test_data["output_dir"] / "Results_clusters.tsv").exists()
     assert (cli_test_data["output_dir"] / "Photon_Event_Map.tif").exists()
+    assert not (cli_test_data["output_dir"] / "Photon_Event_Map_total.tif").exists()
     assert (cli_test_data["output_dir"] / "IntDen_histogram.png").exists()
 
 
@@ -108,16 +110,18 @@ def test_cli_full_auto_default_output_dir(cli_test_data):
     assert res.returncode == 0
     assert expected_out.exists()
     assert (expected_out / "MED_Dark.tif").exists()
-    assert (expected_out / "Final_Mask_Dark.tif").exists()
-    assert (expected_out / "Results_clusters.xls").exists()
+    assert (expected_out / "Final_Mask.tif").exists()
+    assert not (expected_out / "Final_Mask_Dark.tif").exists()
+    assert (expected_out / "Results_clusters.tsv").exists()
     assert (expected_out / "Photon_Event_Map.tif").exists()
+    assert not (expected_out / "Photon_Event_Map_total.tif").exists()
     assert (expected_out / "IntDen_histogram.png").exists()
 
 
 def test_cli_cluster_auto_default_output_dir(cli_test_data):
     """Verify 'cluster' subcommand automatically saves to <signal_dir>/clusters/ when --output-dir is omitted."""
     med_path = cli_test_data["root"] / "MED_Dark.tif"
-    mask_path = cli_test_data["root"] / "Final_Mask_Dark.tif"
+    mask_path = cli_test_data["root"] / "Final_Mask.tif"
     tifffile.imwrite(med_path, np.full((32, 32), 500.0, dtype=np.float32))
     tifffile.imwrite(mask_path, np.ones((32, 32), dtype=np.float32))
 
@@ -133,11 +137,11 @@ def test_cli_cluster_auto_default_output_dir(cli_test_data):
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
     assert res.returncode == 0
     expected_out = cli_test_data["signal_dir"] / "clusters"
-    assert (expected_out / "Results_clusters.xls").exists()
+    assert (expected_out / "Results_clusters.tsv").exists()
 
 
 def test_cli_reconstruct_subcommand(cli_test_data):
-    """Test 'reconstruct' subcommand from pre-existing Results_clusters.xls."""
+    """Test 'reconstruct' subcommand from pre-existing Results_clusters.tsv."""
     # First generate cluster file via full run
     subprocess.run([
         sys.executable, "cluster_cli.py", "full",
@@ -146,7 +150,7 @@ def test_cli_reconstruct_subcommand(cli_test_data):
         "--output-dir", str(cli_test_data["output_dir"]),
     ], check=True)
 
-    clusters_xls = cli_test_data["output_dir"] / "Results_clusters.xls"
+    clusters_tsv = cli_test_data["output_dir"] / "Results_clusters.tsv"
     recon_out = cli_test_data["output_dir"] / "recon_test"
     recon_out.mkdir()
 
@@ -155,7 +159,7 @@ def test_cli_reconstruct_subcommand(cli_test_data):
         "-u",
         "cluster_cli.py",
         "reconstruct",
-        "--clusters-xls", str(clusters_xls),
+        "--clusters-tsv", str(clusters_tsv),
         "--output-dir", str(recon_out),
         "--intden-low", "150.0",
         "--intden-high", "300.0",
@@ -164,6 +168,7 @@ def test_cli_reconstruct_subcommand(cli_test_data):
     res = subprocess.run(cmd, capture_output=True, text=True)
     assert res.returncode == 0
     assert (recon_out / "Photon_Event_Map.tif").exists()
+    assert not (recon_out / "Photon_Event_Map_total.tif").exists()
     assert (recon_out / "IntDen_histogram.png").exists()
 
 
@@ -176,17 +181,18 @@ def test_cli_reconstruct_auto_default_output_dir(cli_test_data):
         "--output-dir", str(cli_test_data["output_dir"]),
     ], check=True)
 
-    clusters_xls = cli_test_data["output_dir"] / "Results_clusters.xls"
+    clusters_tsv = cli_test_data["output_dir"] / "Results_clusters.tsv"
     cmd = [
         sys.executable,
         "-u",
         "cluster_cli.py",
         "reconstruct",
-        "--clusters-xls", str(clusters_xls),
+        "--clusters-tsv", str(clusters_tsv),
     ]
     res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
     assert res.returncode == 0
     assert (cli_test_data["output_dir"] / "Photon_Event_Map.tif").exists()
+    assert not (cli_test_data["output_dir"] / "Photon_Event_Map_total.tif").exists()
     assert (cli_test_data["output_dir"] / "IntDen_histogram.png").exists()
 
 
@@ -243,3 +249,76 @@ def test_cli_unbuffered_stdout_streaming(cli_test_data):
     assert any("Stage 1" in l for l in lines)
     assert any("Stage 2" in l for l in lines)
     assert any("Stage 3" in l for l in lines)
+
+
+def test_cli_dead_flag_aliases_rejected(cli_test_data):
+    """Verify legacy flag aliases --tail-ratio, --med-dark, --final-mask are rejected."""
+    # 1. --tail-ratio in dark-mask
+    cmd1 = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "dark-mask",
+        "--dark-dir", str(cli_test_data["dark_dir"]),
+        "--tail-ratio", "0.95",
+    ]
+    res1 = subprocess.run(cmd1, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res1.returncode != 0
+    assert "unrecognized arguments: --tail-ratio" in res1.stderr
+
+    # 2. --med-dark in cluster
+    cmd2 = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "cluster",
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+        "--med-dark", "some_path.tif",
+    ]
+    res2 = subprocess.run(cmd2, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res2.returncode != 0
+    assert "unrecognized arguments: --med-dark" in res2.stderr
+
+    # 3. --final-mask in cluster
+    cmd3 = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "cluster",
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+        "--final-mask", "some_path.tif",
+    ]
+    res3 = subprocess.run(cmd3, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res3.returncode != 0
+    assert "unrecognized arguments: --final-mask" in res3.stderr
+
+
+def test_cli_reconstruct_legacy_xls_backwards_compatibility(cli_test_data):
+    """Verify 'reconstruct' subcommand can read legacy .xls file and accept --clusters-xls flag."""
+    subprocess.run([
+        sys.executable, "cluster_cli.py", "full",
+        "--dark-dir", str(cli_test_data["dark_dir"]),
+        "--signal-dir", str(cli_test_data["signal_dir"]),
+        "--output-dir", str(cli_test_data["output_dir"]),
+    ], check=True)
+
+    tsv_path = cli_test_data["output_dir"] / "Results_clusters.tsv"
+    legacy_xls_path = cli_test_data["output_dir"] / "Legacy_Results_clusters.xls"
+    legacy_xls_path.write_text(tsv_path.read_text())
+
+    recon_out = cli_test_data["output_dir"] / "recon_legacy"
+    recon_out.mkdir()
+
+    cmd = [
+        sys.executable,
+        "-u",
+        "cluster_cli.py",
+        "reconstruct",
+        "--clusters-xls", str(legacy_xls_path),
+        "--output-dir", str(recon_out),
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+    assert res.returncode == 0
+    assert (recon_out / "Photon_Event_Map.tif").exists()
+    assert not (recon_out / "Photon_Event_Map_total.tif").exists()
+

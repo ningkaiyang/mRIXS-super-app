@@ -1,11 +1,11 @@
 """Single-Photon Clustering File Selection and Ingestion View.
 
 Provides:
-- Dark calibration verification banner (Green OK with metrics vs Red missing with Calibrate link).
+- Dark mask verification banner (Green OK with metrics vs Red missing with Mask link).
 - Drag-and-drop signal TIFF folder and file ingest with natural numerical sorting.
 - Chunk size configuration spinbox (default 80, range 20-1000) with live chunk count feedback.
 - Advanced parameter configuration for Stage 2 cluster extraction and Stage 3 filtering.
-- Launch validation enforcing presence of TIFF frames and active dark calibration.
+- Launch validation enforcing presence of TIFF frames and active dark mask.
 - Navigation navbar with ❮ Back to Home button and Co-Pilot docking.
 """
 
@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core import dark_mask_store, calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.cli_utils import glob_tifs
 from rixs_app.core.photon_clustering import ClusterConfig, ReconstructionConfig
 from rixs_app.core.utils import natural_sort
@@ -92,8 +92,8 @@ class ClusteringFileSelectionView(QWidget):
         parent: Optional parent QWidget.
         on_back: Callback when user clicks '❮ Back to Home'.
         on_launch_studio: Callback when launching studio with (signal_paths, chunk_size, cluster_cfg, recon_cfg).
-        on_navigate_dark_cal: Callback when user clicks 'Calibrate Now' / 'Recalibrate'.
-        cal_dir: Optional custom storage directory for dark calibrations.
+        on_navigate_dark_mask: Callback when user clicks 'Mask Now' / 'Remask'.
+        mask_dir: Optional custom storage directory for dark masks.
     """
 
     def __init__(
@@ -101,24 +101,24 @@ class ClusteringFileSelectionView(QWidget):
         parent: QWidget | None = None,
         on_back: Callable[[], None] | None = None,
         on_launch_studio: Callable[[list[str], int, ClusterConfig, ReconstructionConfig], None] | None = None,
-        on_navigate_dark_cal: Callable[[], None] | None = None,
-        cal_dir: Path | str | None = None,
+        on_navigate_dark_mask: Callable[[], None] | None = None,
+        mask_dir: Path | str | None = None,
     ) -> None:
         super().__init__(parent)
         self.on_back = on_back
         self.on_launch_studio = on_launch_studio
-        self.on_navigate_dark_cal = on_navigate_dark_cal
-        self.cal_dir = cal_dir
+        self.on_navigate_dark_mask = on_navigate_dark_mask
+        self.mask_dir = mask_dir
 
         self.signal_paths: list[str] = []
         self._copilot_btn: QPushButton | None = None
-        self._has_valid_cal: bool = False
+        self._has_valid_mask: bool = False
 
         self._init_ui()
-        self._status_banner = self._cal_banner
+        self._status_banner = self._mask_banner
         self._launch_btn = self.launch_btn
         self._chunk_spinbox = self.chunk_size_spin
-        self.refresh_calibration_status()
+        self.refresh_mask_status()
 
     @property
     def chunk_size(self) -> int:
@@ -138,9 +138,9 @@ class ClusteringFileSelectionView(QWidget):
         navbar = self._create_navbar()
         main_layout.addWidget(navbar)
 
-        # 2. Dark Calibration Status Banner
-        self._cal_banner = self._create_cal_banner()
-        main_layout.addWidget(self._cal_banner)
+        # 2. Dark Mask Status Banner
+        self._mask_banner = self._create_mask_banner()
+        main_layout.addWidget(self._mask_banner)
 
         # 3. Main Content Split / Columns (Scrollable Area)
         scroll_area = QScrollArea(self)
@@ -192,26 +192,26 @@ class ClusteringFileSelectionView(QWidget):
 
         return navbar
 
-    def _create_cal_banner(self) -> QFrame:
+    def _create_mask_banner(self) -> QFrame:
         banner = QFrame(self)
-        banner.setObjectName("cal_status_ok")
+        banner.setObjectName("mask_status_ok")
         layout = QHBoxLayout(banner)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(12)
 
-        self._cal_status_icon = QLabel("✓", banner)
-        self._cal_status_icon.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(self._cal_status_icon)
+        self._mask_status_icon = QLabel("✓", banner)
+        self._mask_status_icon.setStyleSheet("font-size: 18px; font-weight: bold;")
+        layout.addWidget(self._mask_status_icon)
 
-        self._cal_status_text = QLabel(banner)
-        self._cal_status_text.setWordWrap(True)
-        self._cal_status_text.setStyleSheet("font-size: 13px;")
-        layout.addWidget(self._cal_status_text, stretch=1)
+        self._mask_status_text = QLabel(banner)
+        self._mask_status_text.setWordWrap(True)
+        self._mask_status_text.setStyleSheet("font-size: 13px;")
+        layout.addWidget(self._mask_status_text, stretch=1)
 
-        self._cal_action_btn = QPushButton(banner)
-        theme.set_tool_btn(self._cal_action_btn)
-        self._cal_action_btn.clicked.connect(self._handle_cal_action_clicked)
-        layout.addWidget(self._cal_action_btn)
+        self._mask_action_btn = QPushButton(banner)
+        theme.set_tool_btn(self._mask_action_btn)
+        self._mask_action_btn.clicked.connect(self._handle_mask_action_clicked)
+        layout.addWidget(self._mask_action_btn)
 
         return banner
 
@@ -501,43 +501,38 @@ class ClusteringFileSelectionView(QWidget):
     # Calibration Verification & Status
     # ------------------------------------------------------------------
 
-    def refresh_calibration_status(self) -> bool:
-        """Check calibration/mask store and update banner styling and launch readiness.
+    def refresh_mask_status(self) -> bool:
+        """Check mask store and update banner styling and launch readiness.
 
         Returns:
-            True if valid dark calibration/mask is active; False otherwise.
+            True if valid dark mask is active; False otherwise.
         """
-        is_ok = calibration_store.has_calibration(cal_dir=self.cal_dir)
-        if not is_ok:
-            is_ok = dark_mask_store.has_dark_mask(mask_dir=self.cal_dir)
-        self._has_valid_cal = is_ok
+        is_ok = dark_mask_store.has_dark_mask(mask_dir=self.mask_dir)
+        self._has_valid_mask = is_ok
         if is_ok:
-            summary = calibration_store.get_calibration_summary(cal_dir=self.cal_dir)
-            if not summary:
-                summary = dark_mask_store.get_mask_summary(mask_dir=self.cal_dir)
-            summary = summary or "Dark Mask Active"
-            theme.set_cal_status_ok(self._cal_banner)
-            self._cal_status_icon.setText("✓")
-            self._cal_status_icon.setStyleSheet("font-size: 18px; font-weight: bold; color: #34d399;")
-            self._cal_status_text.setText(
-                f"<b>Dark Calibration Verified (Dark Mask Active):</b> {summary}. Ready for single-photon clustering."
+            summary = dark_mask_store.get_mask_summary(mask_dir=self.mask_dir) or "Dark Mask Active"
+            theme.set_mask_status_ok(self._mask_banner)
+            self._mask_status_icon.setText("✓")
+            self._mask_status_icon.setStyleSheet("font-size: 18px; font-weight: bold; color: #34d399;")
+            self._mask_status_text.setText(
+                f"<b>Dark Mask Verified:</b> {summary}. Ready for single-photon clustering."
             )
-            self._cal_status_text.setStyleSheet("color: #34d399;")
-            self._cal_action_btn.setText("⚙ Recalibrate / Remask...")
+            self._mask_status_text.setStyleSheet("color: #34d399;")
+            self._mask_action_btn.setText("⚙ Remask...")
             try:
-                _, _, record = dark_mask_store.load_dark_mask(mask_dir=self.cal_dir)
+                _, _, record = dark_mask_store.load_dark_mask(mask_dir=self.mask_dir)
             except Exception as exc:
                 logger.debug("Failed to load dark mask record for adaptive threshold: %s", exc)
                 record = None
         else:
-            theme.set_cal_status_missing(self._cal_banner)
-            self._cal_status_icon.setText("⚠️")
-            self._cal_status_icon.setStyleSheet("font-size: 18px; font-weight: bold; color: #f87171;")
-            self._cal_status_text.setText(
-                "<b>No Dark Calibration Found (No Dark Mask):</b> Detector dark baseline and bad-pixel mask are required."
+            theme.set_mask_status_missing(self._mask_banner)
+            self._mask_status_icon.setText("⚠️")
+            self._mask_status_icon.setStyleSheet("font-size: 18px; font-weight: bold; color: #f87171;")
+            self._mask_status_text.setText(
+                "<b>No Dark Mask Found:</b> Detector dark baseline and bad-pixel mask are required."
             )
-            self._cal_status_text.setStyleSheet("color: #f87171;")
-            self._cal_action_btn.setText("🔧 Calibrate / Mask Now")
+            self._mask_status_text.setStyleSheet("color: #f87171;")
+            self._mask_action_btn.setText("🔧 Generate Mask Now")
             record = None
 
         if record is not None and record.typical_dark_sigma is not None and record.typical_dark_sigma > 0:
@@ -565,16 +560,16 @@ class ClusteringFileSelectionView(QWidget):
             )
 
     def _update_launch_state(self) -> None:
-        has_cal = calibration_store.has_calibration(cal_dir=self.cal_dir)
+        has_mask = dark_mask_store.has_dark_mask(mask_dir=self.mask_dir)
         has_files = len(self.signal_paths) > 0
 
-        can_launch = has_cal and has_files
+        can_launch = has_mask and has_files
         self.launch_btn.setEnabled(can_launch)
 
-        if not has_cal and not has_files:
-            self._launch_hint_lbl.setText("Load signal TIFF frames and run dark calibration to launch.")
-        elif not has_cal:
-            self._launch_hint_lbl.setText("Dark calibration required before launching studio.")
+        if not has_mask and not has_files:
+            self._launch_hint_lbl.setText("Load signal TIFF frames and generate dark mask to launch.")
+        elif not has_mask:
+            self._launch_hint_lbl.setText("Dark mask required before launching studio.")
         elif not has_files:
             self._launch_hint_lbl.setText("Load at least one signal TIFF frame to proceed.")
         else:
@@ -603,9 +598,9 @@ class ClusteringFileSelectionView(QWidget):
         if self.on_back is not None:
             self.on_back()
 
-    def _handle_cal_action_clicked(self) -> None:
-        if self.on_navigate_dark_cal is not None:
-            self.on_navigate_dark_cal()
+    def _handle_mask_action_clicked(self) -> None:
+        if self.on_navigate_dark_mask is not None:
+            self.on_navigate_dark_mask()
 
     def _handle_launch_clicked(self) -> None:
         if not self.signal_paths:

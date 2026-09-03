@@ -41,7 +41,7 @@ import tifffile
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import QApplication, QPushButton
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.photon_clustering import (
     ClusterConfig,
     ReconstructionConfig,
@@ -79,9 +79,9 @@ def qapp():
 
 
 @pytest.fixture
-def dummy_cal_dir(tmp_path):
-    """Create a mock dark calibration store directory with valid calibration files."""
-    cal_dir = tmp_path / "dark_cal"
+def dummy_mask_dir(tmp_path):
+    """Create a mock dark mask store directory with valid mask files."""
+    cal_dir = tmp_path / "dark_mask"
     cal_dir.mkdir(parents=True, exist_ok=True)
 
     h, w = 64, 64
@@ -90,7 +90,7 @@ def dummy_cal_dir(tmp_path):
     # Mask out top-left pixel
     final_mask[0, 0] = 0.0
 
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=med_dark,
         final_mask=final_mask,
         stddev_thresh=40.0,
@@ -102,7 +102,7 @@ def dummy_cal_dir(tmp_path):
         suppression_pct=1.0 / (h * w) * 100.0,
         source_dir="/mock/dark/frames",
         date="2026-08-28T12:00:00",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
     )
 
     return cal_dir
@@ -168,13 +168,13 @@ def benchmark_dataframe():
 # 1. ClusteringFileSelectionView Tests
 # ============================================================================
 
-def test_file_selection_banner_verified(qapp, qtbot, dummy_cal_dir):
-    """Verify banner shows green OK and summary when dark calibration is present."""
-    view = ClusteringFileSelectionView(cal_dir=dummy_cal_dir)
+def test_file_selection_banner_verified(qapp, qtbot, dummy_mask_dir):
+    """Verify banner shows green OK and summary when dark mask is present."""
+    view = ClusteringFileSelectionView(mask_dir=dummy_mask_dir)
     qtbot.addWidget(view)
 
-    assert "Dark Calibration Verified" in view._cal_status_text.text()
-    assert view._cal_status_icon.text() == "✓"
+    assert "Dark Mask Verified" in view._mask_status_text.text()
+    assert view._mask_status_icon.text() == "✓"
     assert view.launch_btn.isEnabled() is False  # No files loaded yet
 
     view.load_files(["/fake/path/frame_1.tif"])
@@ -182,15 +182,15 @@ def test_file_selection_banner_verified(qapp, qtbot, dummy_cal_dir):
 
 
 def test_file_selection_banner_missing(qapp, qtbot, tmp_path):
-    """Verify banner shows red missing and disables launch when dark calibration is absent."""
+    """Verify banner shows red missing and disables launch when dark mask is absent."""
     empty_cal_dir = tmp_path / "empty_cal"
     empty_cal_dir.mkdir()
 
-    view = ClusteringFileSelectionView(cal_dir=empty_cal_dir)
+    view = ClusteringFileSelectionView(mask_dir=empty_cal_dir)
     qtbot.addWidget(view)
 
-    assert "No Dark Calibration Found" in view._cal_status_text.text()
-    assert view._cal_status_icon.text() == "⚠️"
+    assert "No Dark Mask Found" in view._mask_status_text.text()
+    assert view._mask_status_icon.text() == "⚠️"
     assert view.launch_btn.isEnabled() is False
 
     # Even with files, launch is disabled
@@ -198,7 +198,7 @@ def test_file_selection_banner_missing(qapp, qtbot, tmp_path):
     assert view.launch_btn.isEnabled() is False
 
 
-def test_file_selection_ingest_and_natural_sorting(qapp, qtbot, tmp_path, dummy_cal_dir):
+def test_file_selection_ingest_and_natural_sorting(qapp, qtbot, tmp_path, dummy_mask_dir):
     """Verify folder loading, file ingest, natural sorting, and chunk calculation."""
     folder = tmp_path / "test_frames"
     folder.mkdir()
@@ -207,7 +207,7 @@ def test_file_selection_ingest_and_natural_sorting(qapp, qtbot, tmp_path, dummy_
     for name in file_names:
         tifffile.imwrite(str(folder / name), np.zeros((10, 10), dtype=np.float32))
 
-    view = ClusteringFileSelectionView(cal_dir=dummy_cal_dir)
+    view = ClusteringFileSelectionView(mask_dir=dummy_mask_dir)
     qtbot.addWidget(view)
     loaded = view.load_folder(folder)
 
@@ -227,16 +227,16 @@ def test_file_selection_ingest_and_natural_sorting(qapp, qtbot, tmp_path, dummy_
     assert "No Signal TIFF Files Loaded" in view._file_count_lbl.text()
 
 
-def test_file_selection_callbacks_and_copilot_docking(qapp, qtbot, dummy_cal_dir):
+def test_file_selection_callbacks_and_copilot_docking(qapp, qtbot, dummy_mask_dir):
     """Verify callbacks for back navigation, calibrate link, launch studio, and Co-Pilot docking."""
     mock_back = MagicMock()
     mock_cal = MagicMock()
     mock_launch = MagicMock()
 
     view = ClusteringFileSelectionView(
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         on_back=mock_back,
-        on_navigate_dark_cal=mock_cal,
+        on_navigate_dark_mask=mock_cal,
         on_launch_studio=mock_launch,
     )
     qtbot.addWidget(view)
@@ -245,8 +245,8 @@ def test_file_selection_callbacks_and_copilot_docking(qapp, qtbot, dummy_cal_dir
     view._back_btn.click()
     mock_back.assert_called_once()
 
-    # 2. Calibrate button
-    view._cal_action_btn.click()
+    # 2. Calibrate/Mask button
+    view._mask_action_btn.click()
     mock_cal.assert_called_once()
 
     # 3. Launch button
@@ -274,7 +274,7 @@ def test_file_selection_adaptive_threshold_population(tmp_path, qtbot):
     med_dark = np.full((h, w), 100.0, dtype=np.float32)
     final_mask = np.ones((h, w), dtype=np.float32)
 
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=med_dark,
         final_mask=final_mask,
         stddev_thresh=40.0,
@@ -285,11 +285,11 @@ def test_file_selection_adaptive_threshold_population(tmp_path, qtbot):
         total_pixels=h * w,
         suppression_pct=0.0,
         source_dir="/mock/dark",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
         typical_dark_sigma=14.2,
     )
 
-    view = ClusteringFileSelectionView(cal_dir=cal_dir)
+    view = ClusteringFileSelectionView(mask_dir=cal_dir)
     qtbot.addWidget(view)
 
     assert view.sig_low_spin.value() == pytest.approx(56.8, 0.1)
@@ -305,7 +305,7 @@ def test_file_selection_adaptive_threshold_fallback(tmp_path, qtbot):
     med_dark = np.full((h, w), 100.0, dtype=np.float32)
     final_mask = np.ones((h, w), dtype=np.float32)
 
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=med_dark,
         final_mask=final_mask,
         stddev_thresh=40.0,
@@ -316,10 +316,10 @@ def test_file_selection_adaptive_threshold_fallback(tmp_path, qtbot):
         total_pixels=h * w,
         suppression_pct=0.0,
         source_dir="/mock/dark",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
     )
 
-    view = ClusteringFileSelectionView(cal_dir=cal_dir)
+    view = ClusteringFileSelectionView(mask_dir=cal_dir)
     qtbot.addWidget(view)
 
     assert view.sig_low_spin.value() == pytest.approx(45.0, 0.1)
@@ -332,13 +332,13 @@ def test_file_selection_adaptive_threshold_fallback(tmp_path, qtbot):
 # 2. ClusteringManager Tests
 # ============================================================================
 
-def test_manager_init_and_state(dummy_cal_dir, synthetic_signal_frames):
+def test_manager_init_and_state(dummy_mask_dir, synthetic_signal_frames):
     """Verify ClusteringManager session initialization and state encapsulation."""
     mgr = ClusteringManager()
     mgr.init_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
     )
 
     assert mgr.total_frames == 6
@@ -350,7 +350,7 @@ def test_manager_init_and_state(dummy_cal_dir, synthetic_signal_frames):
     assert mgr.has_clusters is False
 
 
-def test_manager_chunk_frame_ranges(dummy_cal_dir):
+def test_manager_chunk_frame_ranges(dummy_mask_dir):
     """Verify chunk frame partition ranges for various chunk sizes."""
     mgr = ClusteringManager()
     paths = [f"/fake/frame_{i+1:03d}.tif" for i in range(160)]
@@ -367,13 +367,13 @@ def test_manager_chunk_frame_ranges(dummy_cal_dir):
     assert ranges_200 == [(1, 80), (81, 160), (161, 200)]
 
 
-def test_manager_progressive_append_and_queries(dummy_cal_dir, synthetic_signal_frames):
+def test_manager_progressive_append_and_queries(dummy_mask_dir, synthetic_signal_frames):
     """Verify append_frame_clusters, get_frame_clusters, get_chunk_clusters, and frame dark subtraction."""
     mgr = ClusteringManager()
     mgr.init_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
     )
 
     # Create dummy clusters for frame 1 and frame 2
@@ -457,14 +457,14 @@ def test_manager_stale_stage2_flag():
     assert mgr.stale_stage2 is False
 
 
-def test_manager_append_frame_clusters_no_quadratic_realloc(dummy_cal_dir):
+def test_manager_append_frame_clusters_no_quadratic_realloc(dummy_mask_dir):
     """Verify O(1) list accumulation and lazy consolidation across 150 frames."""
     mgr = ClusteringManager()
     paths = [f"/mock/frame_{i+1:03d}.tif" for i in range(150)]
     mgr.init_session(
         signal_paths=paths,
         chunk_size=50,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
     )
 
     # Ingest 150 frame DataFrames via append_frame_clusters
@@ -535,9 +535,9 @@ def test_manager_append_frame_clusters_no_quadratic_realloc(dummy_cal_dir):
 # 3. Worker Tests
 # ============================================================================
 
-def test_pipeline_worker_signals_and_execution(qapp, synthetic_signal_frames, dummy_cal_dir):
+def test_pipeline_worker_signals_and_execution(qapp, synthetic_signal_frames, dummy_mask_dir):
     """Verify ClusterPipelineWorker processes frames sequentially and emits progressive signals."""
-    med_dark, final_mask, _ = calibration_store.load_calibration(cal_dir=dummy_cal_dir)
+    med_dark, final_mask, _ = dark_mask_store.load_dark_mask(mask_dir=dummy_mask_dir)
 
     worker = ClusterPipelineWorker(
         signal_paths=synthetic_signal_frames,
@@ -566,9 +566,9 @@ def test_pipeline_worker_signals_and_execution(qapp, synthetic_signal_frames, du
     assert len(progress_calls) == 6
 
 
-def test_pipeline_worker_cancellation(qapp, synthetic_signal_frames, dummy_cal_dir):
+def test_pipeline_worker_cancellation(qapp, synthetic_signal_frames, dummy_mask_dir):
     """Verify ClusterPipelineWorker stops immediately when cancel() is requested."""
-    med_dark, final_mask, _ = calibration_store.load_calibration(cal_dir=dummy_cal_dir)
+    med_dark, final_mask, _ = dark_mask_store.load_dark_mask(mask_dir=dummy_mask_dir)
 
     worker = ClusterPipelineWorker(
         signal_paths=synthetic_signal_frames,
@@ -682,13 +682,13 @@ def test_pipeline_worker_cancellation_parallel(qapp, qtbot, tmp_path):
     assert len(frame_results) < 20
 
 
-def test_chunk_save_worker_exports(qapp, synthetic_signal_frames, dummy_cal_dir, tmp_path):
+def test_chunk_save_worker_exports(qapp, synthetic_signal_frames, dummy_mask_dir, tmp_path):
     """Verify ChunkSaveWorker exports per-chunk TIFFs, total TIFF, TSV spreadsheet, and histogram."""
     mgr = ClusteringManager()
     mgr.init_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
     )
 
     # Inject mock clusters
@@ -739,14 +739,14 @@ def test_chunk_save_worker_exports(qapp, synthetic_signal_frames, dummy_cal_dir,
 # 4. ClusteringStudioView Tests
 # ============================================================================
 
-def test_studio_initialization_and_mode_switching(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_initialization_and_mode_switching(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify studio initializes correctly and switches smoothly across all 3 modes."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -771,14 +771,14 @@ def test_studio_initialization_and_mode_switching(qapp, qtbot, synthetic_signal_
     studio.cleanup()
 
 
-def test_studio_kpi_cards_synchronization(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_kpi_cards_synchronization(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify 4 KPI cards update contextually depending on the active studio mode."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -807,14 +807,14 @@ def test_studio_kpi_cards_synchronization(qapp, qtbot, synthetic_signal_frames, 
     studio.cleanup()
 
 
-def test_studio_progressive_accumulation(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_progressive_accumulation(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify progressive accumulation slot updates 2D event map and histogram live."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -842,14 +842,14 @@ def test_studio_progressive_accumulation(qapp, qtbot, synthetic_signal_frames, d
     studio.cleanup()
 
 
-def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify Dashboard View zoom controls, intensity clamping RangeSlider/textboxes, and throttled accumulation."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -947,14 +947,14 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
     studio.cleanup()
 
 
-def test_studio_rangeslider_cutlines_and_instant_release(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_rangeslider_cutlines_and_instant_release(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify RangeSlider drag moves cutlines and release triggers instant in-memory filtering."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -982,14 +982,14 @@ def test_studio_rangeslider_cutlines_and_instant_release(qapp, qtbot, synthetic_
     studio.cleanup()
 
 
-def test_studio_frame_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_frame_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify Frame Inspector renders dark-subtracted frame, green/red boxes, cyan centroids, and scrubs."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1029,14 +1029,14 @@ def test_studio_frame_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_s
     studio.cleanup()
 
 
-def test_studio_chunk_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_chunk_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify Chunk Inspector renders chunk event map, colormap change, and chunk scrubbing."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1065,14 +1065,14 @@ def test_studio_chunk_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_s
     studio.cleanup()
 
 
-def test_studio_stale_warning_and_rerun(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_stale_warning_and_rerun(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify stale parameter warning banner visibility and re-run trigger."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1091,14 +1091,14 @@ def test_studio_stale_warning_and_rerun(qapp, qtbot, synthetic_signal_frames, du
     studio.cleanup()
 
 
-def test_studio_copilot_docking_and_cleanup(qapp, qtbot, synthetic_signal_frames, dummy_cal_dir):
+def test_studio_copilot_docking_and_cleanup(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
     """Verify Co-Pilot docking and Matplotlib teardown on cleanup."""
     studio = ClusteringStudioView()
     qtbot.addWidget(studio)
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1118,14 +1118,14 @@ def test_studio_copilot_docking_and_cleanup(qapp, qtbot, synthetic_signal_frames
 # 5. Consolidated Adversarial & Stress Tests
 # ============================================================================
 
-def test_adversarial_progressive_accumulation_bursts(qapp, dummy_cal_dir):
+def test_adversarial_progressive_accumulation_bursts(qapp, dummy_mask_dir):
     """Simulate rapid-fire frame emissions arriving in a high burst."""
     studio = ClusteringStudioView()
     paths = [f"/fake/burst_frame_{i+1:04d}.tif" for i in range(50)]
     studio.load_session(
         signal_paths=paths,
         chunk_size=10,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1158,13 +1158,13 @@ def test_adversarial_progressive_accumulation_bursts(qapp, dummy_cal_dir):
     studio.cleanup()
 
 
-def test_adversarial_rapid_mode_switching(qapp, dummy_cal_dir, synthetic_signal_frames):
+def test_adversarial_rapid_mode_switching(qapp, dummy_mask_dir, synthetic_signal_frames):
     """Stress test switching between Dashboard, Frame Inspector, and Chunk Inspector."""
     studio = ClusteringStudioView()
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1204,13 +1204,13 @@ def test_adversarial_rapid_mode_switching(qapp, dummy_cal_dir, synthetic_signal_
     studio.cleanup()
 
 
-def test_adversarial_worker_cancellation_lifecycle(qapp, dummy_cal_dir, synthetic_signal_frames):
+def test_adversarial_worker_cancellation_lifecycle(qapp, dummy_mask_dir, synthetic_signal_frames):
     """Test studio cancel button and slot handling when extraction is running."""
     studio = ClusteringStudioView()
     studio.load_session(
         signal_paths=synthetic_signal_frames,
         chunk_size=3,
-        cal_dir=dummy_cal_dir,
+        mask_dir=dummy_mask_dir,
         auto_run=False,
     )
 
@@ -1230,7 +1230,7 @@ def test_adversarial_worker_cancellation_lifecycle(qapp, dummy_cal_dir, syntheti
     studio.cleanup()
 
 
-def test_adversarial_chunk_partition_boundaries(dummy_cal_dir):
+def test_adversarial_chunk_partition_boundaries(dummy_mask_dir):
     """Verify chunk partitioning with chunk_size=1, chunk_size > total_frames, and 0 frames."""
     mgr = ClusteringManager()
 

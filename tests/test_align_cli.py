@@ -254,6 +254,35 @@ class TestProcessDirectory:
         args_json = _parse_args(['-d', '/some/dir', '--json'])
         assert args_json.json is True
 
+    def test_parse_args_output_dir(self):
+        """Verify that -o / --output-dir is parsed correctly and defaults to 'sum'."""
+        args_default = _parse_args(['-d', '/some/dir'])
+        assert args_default.output_dir == 'sum'
+
+        args_custom_short = _parse_args(['-d', '/some/dir', '-o', 'custom_out'])
+        assert args_custom_short.output_dir == 'custom_out'
+
+        args_custom_long = _parse_args(['-d', '/some/dir', '--output-dir', '/abs/custom'])
+        assert args_custom_long.output_dir == '/abs/custom'
+
+    def test_process_directory_custom_output_dir(self, tmp_path):
+        """Verify process_directory respects custom relative and absolute output_dir."""
+        _populate_dir(tmp_path, n_frames=3, shift_step=1)
+        custom_relative = "custom_align_out"
+        process_directory(
+            dir_path=str(tmp_path),
+            engines=['ECC'],
+            threshold='99.9',
+            save_png=False,
+            overwrite=True,
+            ephemeral_cache=True,
+            output_dir=custom_relative,
+        )
+        custom_dir = tmp_path / custom_relative
+        assert custom_dir.is_dir()
+        assert (custom_dir / "base_sum.tif").exists()
+        assert (custom_dir / "aligned_sum_ECC.tif").exists()
+
 
 class TestPCA:
     """Tests for PCA engine and auto-threshold."""

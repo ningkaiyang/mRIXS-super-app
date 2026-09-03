@@ -62,18 +62,6 @@ def denoise_image(
     img = img.astype(np.float32)
     img = np.nan_to_num(img, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Check if this is a real large RIXS scan frame (2048x3840)
-    if img.shape == (2048, 3840):
-        is_raw = np.min(img) < -1.0
-        if is_raw:
-            raw_std = np.std(img)
-
-            # Scan 003848 has raw_std > 500.0, optimal preprocessing has despike=False, bilateral=False
-            if raw_std > 500.0:
-                if clip:
-                    img = np.clip(img, 0.0, None)
-                return img.astype(np.float32)
-
     # a. Clipping
     if clip:
         img = np.clip(img, 0.0, None)

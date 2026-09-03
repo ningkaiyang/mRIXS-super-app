@@ -123,13 +123,9 @@ class ZarrSequenceManager:
         file_list: Ordered list of absolute paths to the TIFF source files.
             The order determines the frame index mapping used by
             :meth:`get_frame`.
-        chunk_size: Number of frames per Zarr chunk along the time axis.
-            Kept for API compatibility; not used in the per-frame group
-            design (each frame has its own 2-D array).  Defaults to ``10``.
 
     Attributes:
         file_list (list[str]): The ordered source file paths.
-        chunk_size (int): Kept for backwards compatibility.
         n_frames (int): Total number of frames in the sequence.
         zarr_group (zarr.Group | None): Open Zarr group acting as the
             key-value store for all cached frames.  ``None`` until
@@ -141,9 +137,8 @@ class ZarrSequenceManager:
         tif_dir (str | None): Path to the directory containing source TIFF files.
     """
 
-    def __init__(self, file_list: list[str], chunk_size: int = 10):
+    def __init__(self, file_list: list[str]):
         self.file_list = file_list
-        self.chunk_size = chunk_size
         self.n_frames = len(file_list)
         self.zarr_group = None
         self.median_frame = None

@@ -17,7 +17,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import tifffile
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtWidgets import QApplication
 
 from rixs_app.core import dark_mask_store
@@ -316,6 +316,6 @@ def test_dark_mask_view_export_dialog_and_handler(qapp, qtbot, mock_diagnostics,
     assert "#ef4444" in view.save_status_label.styleSheet()
     assert view.export_btn.text() == "📊 Export Data && Plots"
     assert view.export_btn.isEnabled()
-
+    QThreadPool.globalInstance().waitForDone(3000)
     view.cleanup()
 

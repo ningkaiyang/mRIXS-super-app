@@ -909,18 +909,8 @@ class SlideshowView(QWidget):
             self._poll_timer.stop()
 
     # ------------------------------------------------------------------
-    # Backwards-compat properties (for existing unit tests)
+    # Manager Proxy Properties
     # ------------------------------------------------------------------
-
-    @property
-    def drift_badge(self):
-        """Alias for drift_pill badge label."""
-        return self.drift_pill
-
-    @property
-    def canvas(self):
-        """Alias for canvas_panel (backwards compat)."""
-        return self.canvas_panel
 
     @property
     def current_idx(self) -> int:

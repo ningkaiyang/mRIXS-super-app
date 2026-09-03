@@ -2,7 +2,7 @@
 
 Key resolution order:
   1. ``os.environ["CBORG_API_KEY"]`` (supports CI/CD overrides).
-  2. ``{project_root}/cborg-auth/.env`` via ``python-dotenv``.
+  2. ``rixs_app/appdata/cborg-auth/.env`` via ``python-dotenv``.
   3. ``None`` — triggers the first-time setup wizard.
 
 Connection testing issues ``GET /v1/models`` against the CBORG endpoint
@@ -23,7 +23,13 @@ if TYPE_CHECKING:
 CBORG_BASE_URL = "https://api.cborg.lbl.gov/v1"
 CBORG_DEFAULT_MODEL = "lbl/cborg-coder-max"
 
-# Relative path from the project root to the auth directory
+# Base package directory: rixs_app/
+_PACKAGE_DIR = Path(__file__).resolve().parent.parent
+
+# Application persistent data directory: rixs_app/appdata/
+_APPDATA_DIR = _PACKAGE_DIR / "appdata"
+
+# Auth subdirectory and filename
 _AUTH_DIR_NAME = "cborg-auth"
 _ENV_FILE_NAME = ".env"
 
@@ -54,8 +60,8 @@ def _find_project_root() -> Path:
 
 
 def _auth_env_path() -> Path:
-    """Return the absolute path to ``cborg-auth/.env``."""
-    return _find_project_root() / _AUTH_DIR_NAME / _ENV_FILE_NAME
+    """Return the canonical path to ``rixs_app/appdata/cborg-auth/.env``."""
+    return _APPDATA_DIR / _AUTH_DIR_NAME / _ENV_FILE_NAME
 
 
 def resolve_api_key() -> str | None:
@@ -63,7 +69,7 @@ def resolve_api_key() -> str | None:
 
     Resolution order:
       1. Environment variable ``CBORG_API_KEY``.
-      2. Dotenv file at ``{project_root}/cborg-auth/.env``.
+      2. Dotenv file at ``rixs_app/appdata/cborg-auth/.env``.
       3. ``None`` if no key is found.
 
     Returns:
@@ -74,7 +80,7 @@ def resolve_api_key() -> str | None:
     if env_key and env_key.strip():
         return env_key.strip()
 
-    # 2. Dotenv file
+    # 2. Dotenv file in appdata
     try:
         env_path = _auth_env_path()
         if env_path.is_file():
@@ -92,9 +98,10 @@ def resolve_api_key() -> str | None:
 
 
 def save_api_key(key: str) -> Path:
-    """Persist the API key to ``cborg-auth/.env``.
+    """Persist the API key to ``rixs_app/appdata/cborg-auth/.env``.
 
-    Creates the ``cborg-auth/`` directory if it does not exist.
+    Creates the ``rixs_app/appdata/cborg-auth/`` directory if it does not exist,
+    strips whitespace, and sets secure file permissions (0o600).
 
     Args:
         key: The CBORG API key to save.
@@ -102,9 +109,18 @@ def save_api_key(key: str) -> Path:
     Returns:
         The path to the written ``.env`` file.
     """
+    clean_key = key.strip()
     env_path = _auth_env_path()
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text(f"CBORG_API_KEY={key}\n", encoding="utf-8")
+    try:
+        env_path.parent.chmod(0o700)
+    except OSError:
+        pass
+    env_path.write_text(f"CBORG_API_KEY={clean_key}\n", encoding="utf-8")
+    try:
+        env_path.chmod(0o600)
+    except OSError:
+        pass
     return env_path
 
 

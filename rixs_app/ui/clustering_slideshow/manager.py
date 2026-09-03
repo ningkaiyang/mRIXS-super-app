@@ -2,7 +2,7 @@
 
 Manages:
 - In-memory DataFrame cache of detected photon clusters across all frames.
-- Cached dark calibration products (MED_Dark, Final_Mask, CalibrationRecord).
+- Cached dark mask products (MED_Dark, Final_Mask, DarkMaskRecord).
 - Instant in-memory Stage 3 filtering (<50ms benchmarked) without disk I/O.
 - Chunk and frame level cluster queries and event map reconstructions.
 - Stale parameter tracking.
@@ -21,8 +21,8 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-from rixs_app.core import calibration_store
-from rixs_app.core.calibration_store import CalibrationRecord
+from rixs_app.core import dark_mask_store
+from rixs_app.core.dark_mask_store import DarkMaskRecord
 from rixs_app.core.photon_clustering import (
     ClusterConfig,
     ReconstructionConfig,
@@ -57,7 +57,7 @@ class ClusteringState:
         image_shape: Height and width (H, W) of detector frames.
         med_dark: 2D float32 temporal median dark baseline array.
         final_mask: 2D float32 binary detector mask array.
-        cal_record: Metadata manifest of loaded dark calibration.
+        mask_record: Metadata manifest of loaded dark mask.
         df_clusters: In-memory pandas DataFrame storing all extracted photon clusters.
         cluster_config: Parameters used for Stage 2 connected component extraction.
         recon_config: Parameters used for Stage 3 single-photon filtering.
@@ -72,7 +72,7 @@ class ClusteringState:
     image_shape: tuple[int, int] = (2048, 2048)
     med_dark: np.ndarray | None = None
     final_mask: np.ndarray | None = None
-    cal_record: CalibrationRecord | None = None
+    mask_record: DarkMaskRecord | None = None
     _df_clusters: pd.DataFrame = field(
         default_factory=lambda: pd.DataFrame(columns=CLUSTER_COLUMNS), repr=False
     )
@@ -92,7 +92,7 @@ class ClusteringState:
         image_shape: tuple[int, int] = (2048, 2048),
         med_dark: np.ndarray | None = None,
         final_mask: np.ndarray | None = None,
-        cal_record: CalibrationRecord | None = None,
+        mask_record: DarkMaskRecord | None = None,
         df_clusters: pd.DataFrame | None = None,
         cluster_config: ClusterConfig | None = None,
         recon_config: ReconstructionConfig | None = None,
@@ -109,7 +109,7 @@ class ClusteringState:
         self.image_shape = image_shape
         self.med_dark = med_dark
         self.final_mask = final_mask
-        self.cal_record = cal_record
+        self.mask_record = mask_record
         self.cluster_config = cluster_config if cluster_config is not None else ClusterConfig()
         self.recon_config = recon_config if recon_config is not None else ReconstructionConfig()
         self.latest_recon = latest_recon
@@ -161,7 +161,7 @@ class ClusteringManager:
         chunk_size: int = 80,
         cluster_config: ClusterConfig | None = None,
         recon_config: ReconstructionConfig | None = None,
-        cal_dir: Path | str | None = None,
+        mask_dir: Path | str | None = None,
     ) -> None:
         self.state = ClusteringState()
         if signal_paths is not None:
@@ -170,7 +170,7 @@ class ClusteringManager:
                 chunk_size=chunk_size,
                 cluster_config=cluster_config,
                 recon_config=recon_config,
-                cal_dir=cal_dir,
+                mask_dir=mask_dir,
             )
 
     def init_session(
@@ -179,24 +179,24 @@ class ClusteringManager:
         chunk_size: int = 80,
         cluster_config: ClusterConfig | None = None,
         recon_config: ReconstructionConfig | None = None,
-        cal_dir: Path | str | None = None,
+        mask_dir: Path | str | None = None,
     ) -> None:
-        """Initialize a new clustering session and load dark calibration products.
+        """Initialize a new clustering session and load dark mask products.
 
         Args:
             signal_paths: Sequence of filepaths to raw signal TIFF frames.
             chunk_size: Number of frames per chunk (default 80).
             cluster_config: Optional Stage 2 cluster configuration.
             recon_config: Optional Stage 3 reconstruction configuration.
-            cal_dir: Optional custom dark calibration directory.
+            mask_dir: Optional custom dark mask directory.
 
         Raises:
-            FileNotFoundError: If dark calibration files are missing.
+            FileNotFoundError: If dark mask files are missing.
             ValueError: If signal_paths is empty.
         """
         paths = [Path(p) for p in signal_paths]
 
-        med_dark, final_mask, record = calibration_store.load_calibration(cal_dir=cal_dir)
+        med_dark, final_mask, record = dark_mask_store.load_dark_mask(mask_dir=mask_dir)
 
         # Inspect detector dimensions from calibration array
         image_shape = (int(med_dark.shape[0]), int(med_dark.shape[1]))
@@ -207,7 +207,7 @@ class ClusteringManager:
             image_shape=image_shape,
             med_dark=med_dark,
             final_mask=final_mask,
-            cal_record=record,
+            mask_record=record,
             df_clusters=pd.DataFrame(columns=CLUSTER_COLUMNS),
             cluster_config=cluster_config if cluster_config is not None else ClusterConfig(),
             recon_config=recon_config if recon_config is not None else ReconstructionConfig(),
@@ -217,22 +217,22 @@ class ClusteringManager:
             stale_stage2=False,
         )
 
-    def set_calibration(
+    def set_mask(
         self,
         med_dark: np.ndarray,
         final_mask: np.ndarray,
-        cal_record: CalibrationRecord | None = None,
+        mask_record: DarkMaskRecord | None = None,
     ) -> None:
-        """Directly inject dark calibration products into the current state."""
+        """Directly inject dark mask products into the current state."""
         med_arr = np.asarray(med_dark, dtype=np.float32)
         mask_arr = np.asarray(final_mask, dtype=np.float32)
         if med_arr.shape != mask_arr.shape:
             raise ValueError(
-                f"Calibration shape mismatch: med_dark {med_arr.shape} != final_mask {mask_arr.shape}"
+                f"Mask shape mismatch: med_dark {med_arr.shape} != final_mask {mask_arr.shape}"
             )
         self.state.med_dark = med_arr
         self.state.final_mask = mask_arr
-        self.state.cal_record = cal_record
+        self.state.mask_record = mask_record
         self.state.image_shape = (int(med_arr.shape[0]), int(med_arr.shape[1]))
 
     def clear_clusters(self) -> None:

@@ -146,18 +146,6 @@ def test_rangeslider_pick_targets(slider):
     assert slider._pick_target(slider.width()) is None
 
 
-def test_rangeslider_pick_handle_legacy_shim(slider):
-    slider.configure_range(0.0, 100.0)
-    slider.set_values(25.0, 75.0)
-    xl = slider._x_for_val(25.0)
-    xr = slider._x_for_val(75.0)
-    mid_x = (xl + xr) // 2
-
-    assert slider._pick_handle(xl) == "left"
-    assert slider._pick_handle(xr) == "right"
-    assert slider._pick_handle(mid_x) is None
-
-
 # ---------------------------------------------------------------------------
 # Interactive Left / Right Handle Dragging Tests
 # ---------------------------------------------------------------------------
@@ -214,7 +202,7 @@ def test_rangeslider_drag_right_handle(slider, qtbot):
     cy = slider.height() // 2
 
     command_mock = MagicMock()
-    slider._command = command_mock
+    slider.range_changed.connect(command_mock)
 
     # Press on right handle
     press_ev = make_mouse_event(

@@ -73,7 +73,8 @@ class ZerothOrderToolsPanel(QFrame):
         self.floor_entry.installEventFilter(self)
         layout.addWidget(self.floor_entry)
 
-        self.range_slider = RangeSlider(self, command=self.controller.handle_slicing_change)
+        self.range_slider = RangeSlider(self)
+        self.range_slider.range_changed.connect(self.controller.handle_slicing_change)
         self.range_slider.slider_released.connect(self.controller.handle_slicing_release)
         self.range_slider.setMinimumWidth(120)
         layout.addWidget(self.range_slider, stretch=1)
@@ -116,37 +117,6 @@ class ZerothOrderToolsPanel(QFrame):
         if hasattr(self.controller, "setFocus"):
             self.controller.setFocus()
         super().mousePressEvent(event)
-
-    # ------------------------------------------------------------------
-    # Compatibility properties for legacy code/tests
-    # ------------------------------------------------------------------
-
-    @property
-    def support_points_cb(self):
-        """Backwards compatibility proxy object for support points toggle."""
-        panel = self
-        class _Proxy:
-            def isChecked(self):
-                return panel.controller.bottom_bar.show_support_points
-        return _Proxy()
-
-    @property
-    def extrapolation_cb(self):
-        """Backwards compatibility proxy object for extrapolation toggle."""
-        panel = self
-        class _Proxy:
-            def isChecked(self):
-                return panel.controller.bottom_bar.show_extrapolation
-        return _Proxy()
-
-    @property
-    def fitted_line_cb(self):
-        """Backwards compatibility proxy object for fitted line toggle."""
-        panel = self
-        class _Proxy:
-            def isChecked(self):
-                return panel.controller.bottom_bar.show_fitted_line
-        return _Proxy()
 
     # ------------------------------------------------------------------
     # Public sync API

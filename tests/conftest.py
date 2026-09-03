@@ -46,7 +46,7 @@ def cleanup_app(app_win, qapp=None, qtbot=None) -> None:
     app_win.deleteLater()
     for attr in (
         "home_view",
-        "dark_cal_view",
+        "dark_mask_view",
         "clustering_files_view",
         "clustering_studio_view",
         "sorting_view",

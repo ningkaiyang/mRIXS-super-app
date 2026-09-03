@@ -1,12 +1,12 @@
 """Home Launchpad Hub view for RIXS Super-App.
 
 Provides an iOS-inspired 2x2 squircle grid dashboard directing users to:
-1. Detector Dark Frame Calibration (Amber #fbbf24)
+1. Dark Image & Pixel Masking (Amber #fbbf24)
 2. Zeroth-Order Mirror Pitch Calibration (Teal #14b8a6)
 3. Single-Photon Event Clustering (Blue #3b82f6)
 4. Spatial Drift Alignment & Stacking (Green #059669)
 
-Features dynamic dark calibration status badging and Co-Pilot button docking.
+Features dynamic dark mask status badging and Co-Pilot button docking.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core import dark_mask_store, calibration_store
+from rixs_app.core import dark_mask_store
 
 
 class SquircleCard(QFrame):
@@ -113,9 +113,9 @@ class SquircleCard(QFrame):
         self._badge_label.setText(text)
         self._badge_label.show()
         if is_ok:
-            self._badge_label.setObjectName("cal_status_ok")
+            self._badge_label.setObjectName("mask_status_ok")
         else:
-            self._badge_label.setObjectName("cal_status_missing")
+            self._badge_label.setObjectName("mask_status_missing")
         self._badge_label.style().unpolish(self._badge_label)
         self._badge_label.style().polish(self._badge_label)
 
@@ -134,7 +134,7 @@ class HomeLaunchpadView(QWidget):
 
     Args:
         parent: Optional parent QWidget.
-        on_dark_calibration: Callback for Card 1 (Dark Image & Pixel Masking).
+        on_dark_masking: Callback for Card 1 (Dark Image & Pixel Masking).
         on_zeroth_order: Callback for Card 2 (Zeroth-Order Calibration).
         on_clustering: Callback for Card 3 (Single-Photon Event Clustering).
         on_alignment: Callback for Card 4 (Spatial Drift Alignment).
@@ -143,14 +143,14 @@ class HomeLaunchpadView(QWidget):
     def __init__(
         self,
         parent: QWidget | None = None,
-        on_dark_calibration: Callable[[], None] | None = None,
+        on_dark_masking: Callable[[], None] | None = None,
         on_zeroth_order: Callable[[], None] | None = None,
         on_clustering: Callable[[], None] | None = None,
         on_alignment: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("home_launchpad_view")
-        self.on_dark_calibration = on_dark_calibration
+        self.on_dark_masking = on_dark_masking
         self.on_zeroth_order = on_zeroth_order
         self.on_clustering = on_clustering
         self.on_alignment = on_alignment
@@ -158,7 +158,7 @@ class HomeLaunchpadView(QWidget):
         self._copilot_btn: QPushButton | None = None
 
         self._init_ui()
-        self.refresh_calibration_status()
+        self.refresh_mask_status()
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -201,14 +201,14 @@ class HomeLaunchpadView(QWidget):
         self._grid_layout.setSpacing(20)
 
         # 1. Dark Image & Pixel Masking (Amber #fbbf24)
-        self._card_dark_cal = SquircleCard(
+        self._card_dark_mask = SquircleCard(
             title="Dark Image & Pixel Masking",
             subtitle="⚠️ No Mask Generated — Run dark masking first",
             icon="🛡️",
             accent_color="#fbbf24",
             badge_text="⚠️ No Mask",
             badge_ok=False,
-            callback=self._handle_dark_calibration,
+            callback=self._handle_dark_masking,
             parent=self,
         )
 
@@ -249,7 +249,7 @@ class HomeLaunchpadView(QWidget):
         )
 
         # Add to 2x2 grid
-        self._grid_layout.addWidget(self._card_dark_cal, 0, 0)
+        self._grid_layout.addWidget(self._card_dark_mask, 0, 0)
         self._grid_layout.addWidget(self._card_zeroth_order, 0, 1)
         self._grid_layout.addWidget(self._card_clustering, 1, 0)
         self._grid_layout.addWidget(self._card_alignment, 1, 1)
@@ -257,9 +257,9 @@ class HomeLaunchpadView(QWidget):
         main_layout.addWidget(grid_container)
         main_layout.addStretch(1)
 
-    def _handle_dark_calibration(self) -> None:
-        if self.on_dark_calibration is not None:
-            self.on_dark_calibration()
+    def _handle_dark_masking(self) -> None:
+        if self.on_dark_masking is not None:
+            self.on_dark_masking()
 
     def _handle_zeroth_order(self) -> None:
         if self.on_zeroth_order is not None:
@@ -273,27 +273,22 @@ class HomeLaunchpadView(QWidget):
         if self.on_alignment is not None:
             self.on_alignment()
 
-    def refresh_calibration_status(self) -> None:
-        """Query dark_mask_store/calibration_store and dynamically update the Dark Mask card subtitle and badge."""
+    def refresh_mask_status(self) -> None:
+        """Query dark_mask_store and dynamically update the Dark Mask card subtitle and badge."""
         summary = None
         try:
-            cal_dir = getattr(calibration_store, "DARK_CAL_DIR", None)
-            mask_dir = getattr(dark_mask_store, "DARK_MASK_DIR", None)
-            if cal_dir is not None:
-                summary = calibration_store.get_calibration_summary(cal_dir=cal_dir)
-            elif mask_dir is not None:
-                summary = dark_mask_store.get_mask_summary(mask_dir=mask_dir)
+            summary = dark_mask_store.get_mask_summary()
         except Exception:
             summary = None
 
         if summary:
-            self._card_dark_cal.set_subtitle(summary)
-            self._card_dark_cal.set_badge("✓ Mask Generated", is_ok=True)
+            self._card_dark_mask.set_subtitle(summary)
+            self._card_dark_mask.set_badge("✓ Mask Generated", is_ok=True)
         else:
-            self._card_dark_cal.set_subtitle(
+            self._card_dark_mask.set_subtitle(
                 "⚠️ No Mask Generated — Run dark masking first"
             )
-            self._card_dark_cal.set_badge("⚠️ No Mask", is_ok=False)
+            self._card_dark_mask.set_badge("⚠️ No Mask", is_ok=False)
 
     def set_copilot_button(self, btn: QPushButton) -> None:
         """Dock the Co-Pilot toggle button into the header row."""

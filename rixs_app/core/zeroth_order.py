@@ -46,8 +46,8 @@ def run_zeroth_order_pipeline(
     scanner = V8RightSideScanner()
     det_result = scanner.detect(prepared, det_config)
 
-    # Build legacy dict for GUI (original coords)
-    line_result = _detection_result_to_legacy_dict(det_result, prepared)
+    # Build pipeline dict for GUI (original coords)
+    line_result = _detection_result_to_pipeline_dict(det_result, prepared)
 
     # Run evaluator in cropped coords
     evaluator = ZerothOrderEvaluator()
@@ -127,10 +127,10 @@ def run_zeroth_order_pipeline(
 
 
 
-def _detection_result_to_legacy_dict(result, prepared) -> dict:
-    """Convert a LineDetectionResult and PreparedFrame to the legacy pipeline dict format.
+def _detection_result_to_pipeline_dict(result, prepared) -> dict:
+    """Convert a LineDetectionResult and PreparedFrame to the pipeline dict format.
 
-    All coordinates are mapped to original (uncropped) image space for backward compatibility.
+    All coordinates are mapped to original (uncropped) image space.
     """
     ct = prepared.crop_transform
     h_orig, w_orig = ct.original_shape

@@ -95,9 +95,10 @@ def test_drift_pill_severe_drift_state(slideshow):
     assert "#e11d48" in style
 
 
-def test_drift_badge_property_alias(slideshow):
-    """drift_badge property is an alias for drift_pill."""
-    assert slideshow.drift_badge is slideshow.drift_pill
+def test_drift_pill_and_canvas_panel_canonical(slideshow):
+    """Verify canonical drift_pill and canvas_panel are present."""
+    assert slideshow.drift_pill is not None
+    assert slideshow.canvas_panel is not None
 
 
 def test_drift_pill_updates_on_frame_offset(slideshow):

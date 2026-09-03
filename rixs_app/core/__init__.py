@@ -35,7 +35,7 @@ from .image_processing import (
 )
 from .preprocessing import denoise_image, prepare_frame, PreprocessingConfig, CropTransform, PreparedFrame
 from .zeroth_order import evaluate_zeroth_order, run_zeroth_order_pipeline
-from .cli_utils import discover_directories, glob_tifs, export_focus_curve, extract_frame_index
+from .cli_utils import discover_directories, glob_tifs, export_focus_curve
 from .photon_clustering import (
     DarkDiagnostics,
     DarkMaskConfig,
@@ -54,6 +54,7 @@ from .photon_clustering import (
     export_dark_diagnostics_data,
     export_dark_diagnostics_plots,
 )
+from . import dark_mask_store
 from .dark_mask_store import (
     DEFAULT_MASK_DIR,
     DARK_MASK_DIR,
@@ -65,16 +66,6 @@ from .dark_mask_store import (
     clear_dark_mask,
     get_dark_mask_dir,
     get_meta_file_path,
-    # Backward compatibility aliases
-    DEFAULT_CALIBRATION_DIR,
-    DARK_CAL_DIR,
-    CalibrationRecord,
-    has_calibration,
-    load_calibration,
-    save_calibration,
-    get_calibration_summary,
-    clear_calibration,
-    get_dark_cal_dir,
 )
 
 __all__ = [
@@ -104,7 +95,6 @@ __all__ = [
     "discover_directories",
     "glob_tifs",
     "export_focus_curve",
-    "extract_frame_index",
     "DarkDiagnostics",
     "DarkMaskConfig",
     "ClusterConfig",
@@ -121,15 +111,16 @@ __all__ = [
     "export_dark_diagnostics",
     "export_dark_diagnostics_data",
     "export_dark_diagnostics_plots",
-    "DEFAULT_CALIBRATION_DIR",
-    "DARK_CAL_DIR",
-    "CalibrationRecord",
-    "has_calibration",
-    "load_calibration",
-    "save_calibration",
-    "get_calibration_summary",
-    "clear_calibration",
-    "get_dark_cal_dir",
+    "DEFAULT_MASK_DIR",
+    "DARK_MASK_DIR",
+    "DarkMaskRecord",
+    "get_dark_mask_dir",
+    "has_dark_mask",
+    "load_dark_mask",
+    "save_dark_mask",
+    "get_mask_summary",
+    "clear_dark_mask",
+    "dark_mask_store",
     "get_meta_file_path",
 ]
 

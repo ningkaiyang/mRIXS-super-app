@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.ui.home_launchpad import HomeLaunchpadView, SquircleCard
 from rixs_app.ui.theme import DARK_STYLE, FULL_QSS
 
@@ -44,16 +44,16 @@ def qapp():
 
 
 @pytest.fixture
-def mock_cal_dir(tmp_path: Path):
-    """Create a temporary directory with a valid calibration manifest and TIFFs."""
-    cal_dir = tmp_path / "mock_cal"
-    cal_dir.mkdir(parents=True, exist_ok=True)
+def mock_mask_dir(tmp_path: Path):
+    """Create a temporary directory with a valid mask manifest and TIFFs."""
+    mask_dir = tmp_path / "mock_mask"
+    mask_dir.mkdir(parents=True, exist_ok=True)
     import numpy as np
 
     med = np.full((100, 100), 25.0, dtype=np.float32)
     mask = np.ones((100, 100), dtype=np.float32)
 
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=med,
         final_mask=mask,
         stddev_thresh=40.0,
@@ -63,11 +63,11 @@ def mock_cal_dir(tmp_path: Path):
         surviving_pixels=9950,
         total_pixels=10000,
         suppression_pct=0.5,
-        source_dir=str(tmp_path / "raw_dark"),
+        source_dir=str(tmp_path / "raw"),
         date="2026-08-28T12:00:00",
-        cal_dir=cal_dir,
+        mask_dir=mask_dir,
     )
-    return cal_dir
+    return mask_dir
 
 
 # ===========================================================================
@@ -84,12 +84,12 @@ def test_home_launchpad_initialization_and_cards(qapp, qtbot):
     cards = view.findChildren(QFrame, "squircle_card")
     assert len(cards) == 4, f"Expected 4 squircle cards, found {len(cards)}"
 
-    assert hasattr(view, "_card_dark_cal")
+    assert hasattr(view, "_card_dark_mask")
     assert hasattr(view, "_card_zeroth_order")
     assert hasattr(view, "_card_clustering")
     assert hasattr(view, "_card_alignment")
 
-    assert view._card_dark_cal in cards
+    assert view._card_dark_mask in cards
     assert view._card_zeroth_order in cards
     assert view._card_clustering in cards
     assert view._card_alignment in cards
@@ -141,7 +141,7 @@ def test_navigation_callbacks_triggered_on_mouse_press(qapp, qtbot):
     mock_align = MagicMock()
 
     view = HomeLaunchpadView(
-        on_dark_calibration=mock_dark,
+        on_dark_masking=mock_dark,
         on_zeroth_order=mock_zo,
         on_clustering=mock_clust,
         on_alignment=mock_align,
@@ -149,7 +149,7 @@ def test_navigation_callbacks_triggered_on_mouse_press(qapp, qtbot):
     qtbot.addWidget(view)
     view.show()
 
-    view._card_dark_cal.mousePressEvent()
+    view._card_dark_mask.mousePressEvent()
     assert mock_dark.call_count == 1
 
     view._card_zeroth_order.mousePressEvent()
@@ -168,13 +168,13 @@ def test_qtbot_mouse_click_on_cards(qapp, qtbot):
     mock_clust = MagicMock()
 
     view = HomeLaunchpadView(
-        on_dark_calibration=mock_dark,
+        on_dark_masking=mock_dark,
         on_clustering=mock_clust,
     )
     qtbot.addWidget(view)
     view.show()
 
-    qtbot.mouseClick(view._card_dark_cal, Qt.LeftButton)
+    qtbot.mouseClick(view._card_dark_mask, Qt.LeftButton)
     assert mock_dark.call_count == 1
 
     qtbot.mouseClick(view._card_clustering, Qt.LeftButton)
@@ -184,7 +184,7 @@ def test_qtbot_mouse_click_on_cards(qapp, qtbot):
 def test_none_callbacks_resilience(qapp, qtbot):
     """Verify clicking cards when callbacks are None does not raise TypeError or crash."""
     view = HomeLaunchpadView(
-        on_dark_calibration=None,
+        on_dark_masking=None,
         on_zeroth_order=None,
         on_clustering=None,
         on_alignment=None,
@@ -201,47 +201,47 @@ def test_none_callbacks_resilience(qapp, qtbot):
 # 3. Dynamic Dark Calibration Status Badging
 # ===========================================================================
 
-def test_refresh_calibration_status_with_valid_calibration(qapp, qtbot, mock_cal_dir):
-    """Verify refresh_calibration_status displays date and active pixel percentage when calibrated."""
-    with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", mock_cal_dir):
+def test_refresh_mask_status_with_valid_mask(qapp, qtbot, mock_mask_dir):
+    """Verify refresh_mask_status displays date and active pixel percentage when masked."""
+    with patch("rixs_app.core.dark_mask_store.DARK_MASK_DIR", mock_mask_dir):
         view = HomeLaunchpadView()
         qtbot.addWidget(view)
         view.show()
-        view.refresh_calibration_status()
+        view.refresh_mask_status()
 
-        labels = view._card_dark_cal.findChildren(QLabel)
+        labels = view._card_dark_mask.findChildren(QLabel)
         texts = [lbl.text() for lbl in labels]
         assert any("2026-08-28" in t for t in texts)
         assert any("99.50%" in t or "active" in t for t in texts)
         assert any("Mask Generated" in t or "Calibrated" in t for t in texts)
 
 
-def test_refresh_calibration_status_uncalibrated(qapp, qtbot, tmp_path):
-    """Verify refresh_calibration_status displays '⚠️ No Mask' badge when uncalibrated."""
+def test_refresh_mask_status_uncalibrated(qapp, qtbot, tmp_path):
+    """Verify refresh_mask_status displays '⚠️ No Mask' badge when uncalibrated."""
     empty_dir = tmp_path / "empty_dir"
     empty_dir.mkdir()
 
-    with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", empty_dir):
+    with patch("rixs_app.core.dark_mask_store.DARK_MASK_DIR", empty_dir):
         view = HomeLaunchpadView()
         qtbot.addWidget(view)
         view.show()
-        view.refresh_calibration_status()
+        view.refresh_mask_status()
 
-        labels = view._card_dark_cal.findChildren(QLabel)
+        labels = view._card_dark_mask.findChildren(QLabel)
         texts = [lbl.text() for lbl in labels]
         assert any("No Mask" in t or "Not calibrated" in t for t in texts)
         assert any("⚠️" in t for t in texts)
 
 
-def test_refresh_calibration_status_exception_handling(qapp, qtbot):
-    """Verify refresh_calibration_status falls back to uncalibrated state if store raises."""
+def test_refresh_mask_status_exception_handling(qapp, qtbot):
+    """Verify refresh_mask_status falls back to uncalibrated state if store raises."""
     view = HomeLaunchpadView()
     qtbot.addWidget(view)
     view.show()
 
-    with patch("rixs_app.core.calibration_store.get_calibration_summary", side_effect=RuntimeError("Disk failure")):
-        view.refresh_calibration_status()
-        labels = view._card_dark_cal.findChildren(QLabel)
+    with patch("rixs_app.core.dark_mask_store.get_mask_summary", side_effect=RuntimeError("Disk failure")):
+        view.refresh_mask_status()
+        labels = view._card_dark_mask.findChildren(QLabel)
         texts = [lbl.text() for lbl in labels]
         assert any("No Mask" in t or "Not calibrated" in t for t in texts)
 
@@ -303,7 +303,7 @@ def test_rapid_sequential_clicks(qapp, qtbot):
     counts = {"dark": 0, "zo": 0, "clust": 0, "align": 0}
 
     view = HomeLaunchpadView(
-        on_dark_calibration=lambda: counts.update(dark=counts["dark"] + 1),
+        on_dark_masking=lambda: counts.update(dark=counts["dark"] + 1),
         on_zeroth_order=lambda: counts.update(zo=counts["zo"] + 1),
         on_clustering=lambda: counts.update(clust=counts["clust"] + 1),
         on_alignment=lambda: counts.update(align=counts["align"] + 1),
@@ -312,7 +312,7 @@ def test_rapid_sequential_clicks(qapp, qtbot):
     view.show()
 
     for _ in range(25):
-        view._card_dark_cal.mousePressEvent()
+        view._card_dark_mask.mousePressEvent()
         view._card_zeroth_order.mousePressEvent()
         view._card_clustering.mousePressEvent()
         view._card_alignment.mousePressEvent()
@@ -367,13 +367,13 @@ def test_adversarial_child_widget_click_transparency(qapp, qtbot):
     """Verify clicking directly on child labels, icon, badge, and accent bar triggers card callback."""
     counts = {"dark": 0}
     view = HomeLaunchpadView(
-        on_dark_calibration=lambda: counts.update(dark=counts["dark"] + 1)
+        on_dark_masking=lambda: counts.update(dark=counts["dark"] + 1)
     )
     qtbot.addWidget(view)
     view.show()
     qapp.processEvents()
 
-    card = view._card_dark_cal
+    card = view._card_dark_mask
     children_to_test = [
         card._icon_label,
         card._title_label,
@@ -416,15 +416,15 @@ def test_adversarial_calibration_status_churn(qapp, qtbot, tmp_path):
     cal_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Corrupt JSON
-    (cal_dir / "calibration_meta.json").write_text("{malformed: true, invalid...", encoding="utf-8")
-    with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", cal_dir):
-        view.refresh_calibration_status()
-        assert "No Mask" in view._card_dark_cal._badge_label.text() or "Not calibrated" in view._card_dark_cal._badge_label.text()
+    (cal_dir / "mask_meta.json").write_text("{malformed: true, invalid...", encoding="utf-8")
+    with patch("rixs_app.core.dark_mask_store.DARK_MASK_DIR", cal_dir):
+        view.refresh_mask_status()
+        assert "No Mask" in view._card_dark_mask._badge_label.text() or "Not calibrated" in view._card_dark_mask._badge_label.text()
 
     # 2. Valid calibration
     med = np.full((50, 50), 30.0, dtype=np.float32)
     mask = np.ones((50, 50), dtype=np.float32)
-    calibration_store.save_calibration(
+    dark_mask_store.save_dark_mask(
         med_dark=med,
         final_mask=mask,
         stddev_thresh=40.0,
@@ -436,12 +436,12 @@ def test_adversarial_calibration_status_churn(qapp, qtbot, tmp_path):
         suppression_pct=0.4,
         source_dir=str(tmp_path / "raw"),
         date="2026-08-28T12:00:00",
-        cal_dir=cal_dir,
+        mask_dir=cal_dir,
     )
-    with patch("rixs_app.core.calibration_store.DARK_CAL_DIR", cal_dir):
-        view.refresh_calibration_status()
-        assert "Mask Generated" in view._card_dark_cal._badge_label.text() or "Calibrated" in view._card_dark_cal._badge_label.text()
-        assert "cal_status_ok" == view._card_dark_cal._badge_label.objectName()
+    with patch("rixs_app.core.dark_mask_store.DARK_MASK_DIR", cal_dir):
+        view.refresh_mask_status()
+        assert "Mask Generated" in view._card_dark_mask._badge_label.text() or "Calibrated" in view._card_dark_mask._badge_label.text()
+        assert "mask_status_ok" == view._card_dark_mask._badge_label.objectName()
 
 
 def test_adversarial_copilot_foreign_container_reparenting(qapp, qtbot):
@@ -492,7 +492,7 @@ def test_adversarial_view_memory_lifecycle(qapp, qtbot):
         view.set_copilot_button(btn)
 
         refs.append(weakref.ref(view))
-        refs.append(weakref.ref(view._card_dark_cal))
+        refs.append(weakref.ref(view._card_dark_mask))
         refs.append(weakref.ref(btn))
 
         view.deleteLater()
@@ -522,14 +522,14 @@ def test_adversarial_callback_exception_isolation(qapp, qtbot):
         healthy_zo_count += 1
 
     view = HomeLaunchpadView(
-        on_dark_calibration=_faulty_cal,
+        on_dark_masking=_faulty_cal,
         on_zeroth_order=_healthy_zo,
     )
     qtbot.addWidget(view)
     view.show()
 
     with pytest.raises(RuntimeError, match="Simulated error"):
-        view._card_dark_cal.mousePressEvent()
+        view._card_dark_mask.mousePressEvent()
 
     assert faulty_cal_called is True
     view._card_zeroth_order.mousePressEvent()
@@ -544,8 +544,8 @@ def test_adversarial_qss_invalidation_churn(qapp, qtbot):
 
     for style in ["", DARK_STYLE, FULL_QSS]:
         view.setStyleSheet(style)
-        view.refresh_calibration_status()
+        view.refresh_mask_status()
         qapp.processEvents()
 
-    assert view._card_dark_cal._title_label.text() == "Dark Image & Pixel Masking"
+    assert view._card_dark_mask._title_label.text() == "Dark Image & Pixel Masking"
 

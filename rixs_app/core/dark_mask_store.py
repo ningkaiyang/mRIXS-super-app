@@ -34,12 +34,8 @@ APPDATA_DIR = _PACKAGE_DIR / "appdata"
 DEFAULT_MASK_DIR = APPDATA_DIR / "dark_masking"
 DARK_MASK_DIR = DEFAULT_MASK_DIR
 
-# Legacy directory for automatic migration fallback
-_LEGACY_CAL_DIR = APPDATA_DIR / "dark_calibration"
-
 # Canonical metadata manifest filename
 META_FILENAME = "mask_meta.json"
-_LEGACY_META_FILENAME = "calibration_meta.json"
 META_FILE = DARK_MASK_DIR / META_FILENAME
 
 
@@ -104,94 +100,54 @@ class DarkMaskRecord:
         )
 
 
-# Backward compatibility alias for dataclass
-CalibrationRecord = DarkMaskRecord
-
-
 def get_dark_mask_dir(
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
 ) -> Path:
     """Resolve the effective dark mask storage directory.
 
     Args:
         mask_dir: Optional custom storage directory.
-        store_dir: Alias for mask_dir.
-        cal_dir: Legacy alias for mask_dir.
 
     Returns:
         Path object pointing to the resolved storage directory.
     """
-    target = mask_dir if mask_dir is not None else (store_dir if store_dir is not None else cal_dir)
-    if target is not None:
-        return Path(target).resolve()
+    if mask_dir is not None:
+        return Path(mask_dir).resolve()
     return Path(DARK_MASK_DIR).resolve()
-
-
-get_dark_cal_dir = get_dark_mask_dir
-DEFAULT_CALIBRATION_DIR = DEFAULT_MASK_DIR
-DARK_CAL_DIR = DARK_MASK_DIR
 
 
 def get_meta_file_path(
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
 ) -> Path:
     """Resolve the path to the mask metadata JSON file."""
-    target_dir = get_dark_mask_dir(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir)
-    primary = target_dir / META_FILENAME
-    if primary.is_file():
-        return primary
-    legacy = target_dir / _LEGACY_META_FILENAME
-    if legacy.is_file():
-        return legacy
-    return primary
+    return get_dark_mask_dir(mask_dir=mask_dir) / META_FILENAME
 
 
 def _find_meta_file(target_dir: Path) -> Path | None:
-    """Find valid metadata file in directory (checking both new and legacy filenames)."""
-    p1 = target_dir / META_FILENAME
-    if p1.is_file():
-        return p1
-    p2 = target_dir / _LEGACY_META_FILENAME
-    if p2.is_file():
-        return p2
-    return None
+    """Find valid metadata file in directory."""
+    candidate = target_dir / META_FILENAME
+    return candidate if candidate.is_file() else None
 
 
 def has_dark_mask(
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
 ) -> bool:
     """Check if a valid, readable dark image & pixel mask exists on disk.
 
     Verification criteria:
-    1. Directory exists and contains mask_meta.json (or calibration_meta.json).
+    1. Directory exists and contains mask_meta.json.
     2. Metadata can be loaded and parsed into a valid DarkMaskRecord.
     3. Both referenced TIFF files (med_dark_file and final_mask_file) exist on disk.
 
     Args:
         mask_dir: Optional custom storage directory (defaults to DEFAULT_MASK_DIR).
-        store_dir: Alias for mask_dir.
-        cal_dir: Legacy alias for mask_dir.
 
     Returns:
         True if all files exist and manifest is valid; False otherwise. Never raises.
     """
     try:
-        target_dir = get_dark_mask_dir(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir)
+        target_dir = get_dark_mask_dir(mask_dir=mask_dir)
         meta_path = _find_meta_file(target_dir)
-        
-        # Check fallback legacy folder if default target dir has no files
-        if (meta_path is None or not meta_path.is_file()) and (mask_dir is None and store_dir is None and cal_dir is None):
-            if _LEGACY_CAL_DIR.is_dir():
-                legacy_meta = _find_meta_file(_LEGACY_CAL_DIR)
-                if legacy_meta is not None and legacy_meta.is_file():
-                    target_dir = _LEGACY_CAL_DIR
-                    meta_path = legacy_meta
 
         if meta_path is None or not meta_path.is_file():
             return False
@@ -215,20 +171,13 @@ def has_dark_mask(
         return False
 
 
-has_calibration = has_dark_mask
-
-
 def load_dark_mask(
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, DarkMaskRecord]:
     """Load cached dark image and pixel mask arrays and metadata from disk.
 
     Args:
         mask_dir: Optional custom storage directory (defaults to DEFAULT_MASK_DIR).
-        store_dir: Alias for mask_dir.
-        cal_dir: Legacy alias for mask_dir.
 
     Returns:
         Tuple of:
@@ -240,20 +189,12 @@ def load_dark_mask(
         FileNotFoundError: If mask metadata or either TIFF file is missing.
         ValueError: If files are corrupted, not 2D, or array dimensions mismatch.
     """
-    target_dir = get_dark_mask_dir(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir)
+    target_dir = get_dark_mask_dir(mask_dir=mask_dir)
     meta_path = _find_meta_file(target_dir)
-
-    # Fallback to legacy dir if default directory was requested
-    if (meta_path is None or not meta_path.is_file()) and (mask_dir is None and store_dir is None and cal_dir is None):
-        if _LEGACY_CAL_DIR.is_dir():
-            legacy_meta = _find_meta_file(_LEGACY_CAL_DIR)
-            if legacy_meta is not None and legacy_meta.is_file():
-                target_dir = _LEGACY_CAL_DIR
-                meta_path = legacy_meta
 
     if meta_path is None or not meta_path.is_file():
         raise FileNotFoundError(
-            f"No dark calibration / mask metadata found at {target_dir}. Please run Dark Image & Pixel Masking first."
+            f"No dark mask metadata found at {target_dir}. Please run Dark Image & Pixel Masking first."
         )
 
     try:
@@ -261,7 +202,7 @@ def load_dark_mask(
             data = json.load(f)
         record = DarkMaskRecord.from_dict(data)
     except Exception as exc:
-        raise ValueError(f"Failed to parse calibration manifest / dark mask manifest at {meta_path}: {exc}") from exc
+        raise ValueError(f"Failed to parse dark mask manifest at {meta_path}: {exc}") from exc
 
     med_path = Path(record.med_dark_file)
     if not med_path.is_absolute():
@@ -299,9 +240,6 @@ def load_dark_mask(
     return med_dark, final_mask, record
 
 
-load_calibration = load_dark_mask
-
-
 def save_dark_mask(
     med_dark: np.ndarray,
     final_mask: np.ndarray,
@@ -316,8 +254,6 @@ def save_dark_mask(
     source_dir: Path | str,
     date: str | None = None,
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
     typical_dark_sigma: float | None = None,
     per_pixel_stddev: np.ndarray | None = None,
 ) -> DarkMaskRecord:
@@ -339,8 +275,6 @@ def save_dark_mask(
         source_dir: Path or string of raw dark frame source folder.
         date: Optional custom date/timestamp string (defaults to current datetime ISO).
         mask_dir: Optional custom storage directory (defaults to DEFAULT_MASK_DIR).
-        store_dir: Alias for mask_dir.
-        cal_dir: Legacy alias for mask_dir.
         typical_dark_sigma: Optional median dark noise standard deviation on valid pixels (ADU).
         per_pixel_stddev: Optional 2D array of per-pixel standard deviation (used to compute typical_dark_sigma).
 
@@ -361,7 +295,7 @@ def save_dark_mask(
     if med_arr.shape != mask_arr.shape:
         raise ValueError(f"Shape mismatch: med_dark {med_arr.shape} != final_mask {mask_arr.shape}")
 
-    target_dir = get_dark_mask_dir(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir)
+    target_dir = get_dark_mask_dir(mask_dir=mask_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now()
@@ -420,13 +354,8 @@ def save_dark_mask(
     return record
 
 
-save_calibration = save_dark_mask
-
-
 def get_mask_summary(
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
 ) -> str | None:
     """Generate human-readable summary string of current dark mask status.
 
@@ -436,25 +365,16 @@ def get_mask_summary(
 
     Args:
         mask_dir: Optional custom storage directory (defaults to DEFAULT_MASK_DIR).
-        store_dir: Alias for mask_dir.
-        cal_dir: Legacy alias for mask_dir.
 
     Returns:
         Summary string if a valid mask exists; None otherwise. Never raises.
     """
-    if not has_dark_mask(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir):
+    if not has_dark_mask(mask_dir=mask_dir):
         return None
 
     try:
-        target_dir = get_dark_mask_dir(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir)
+        target_dir = get_dark_mask_dir(mask_dir=mask_dir)
         meta_path = _find_meta_file(target_dir)
-        if meta_path is None or not meta_path.is_file():
-            if _LEGACY_CAL_DIR.is_dir():
-                legacy_meta = _find_meta_file(_LEGACY_CAL_DIR)
-                if legacy_meta is not None and legacy_meta.is_file():
-                    target_dir = _LEGACY_CAL_DIR
-                    meta_path = legacy_meta
-
         if meta_path is None or not meta_path.is_file():
             return None
 
@@ -474,16 +394,11 @@ def get_mask_summary(
         return None
 
 
-get_calibration_summary = get_mask_summary
-
-
 def clear_dark_mask(
     mask_dir: Path | str | None = None,
-    store_dir: Path | str | None = None,
-    cal_dir: Path | str | None = None,
 ) -> None:
     """Remove dark mask files in storage directory for testing or resetting cache."""
-    target_dir = get_dark_mask_dir(mask_dir=mask_dir, store_dir=store_dir, cal_dir=cal_dir)
+    target_dir = get_dark_mask_dir(mask_dir=mask_dir)
     if not target_dir.exists():
         return
     for item in target_dir.glob("*"):
@@ -492,6 +407,3 @@ def clear_dark_mask(
                 item.unlink()
             except OSError:
                 pass
-
-
-clear_calibration = clear_dark_mask

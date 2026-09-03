@@ -29,7 +29,7 @@ import tifffile
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from rixs_app.core import calibration_store
+from rixs_app.core import dark_mask_store
 from rixs_app.core.photon_clustering import (
     ClusterConfig,
     DarkDiagnostics,
@@ -46,7 +46,7 @@ from rixs_app.core.photon_clustering import (
 from rixs_app.ui.clustering_slideshow.file_selection_view import ClusteringFileSelectionView
 from rixs_app.ui.clustering_slideshow.manager import ClusteringManager
 from rixs_app.ui.clustering_slideshow.studio_view import ClusteringStudioView
-from rixs_app.ui.dark_calibration.dark_cal_view import DarkCalibrationView
+from rixs_app.ui.dark_masking.dark_mask_view import DarkMaskingView
 from rixs_app.ui.home_launchpad import HomeLaunchpadView
 from rixs_app.ui.sorting_view import SortingView, find_matching_scan_txt
 
@@ -61,30 +61,30 @@ def qapp():
 
 
 # ============================================================================
-# Section 1: Calibration Store Boundaries
+# Section 1: Dark Mask Store Boundaries
 # ============================================================================
 
 def test_e2e_boundary_cal_store_empty_and_partial(tmp_path: Path):
-    """Verify calibration store handles empty and partial file states cleanly."""
+    """Verify dark mask store handles empty and partial file states cleanly."""
     cal_dir = tmp_path / "empty_cal"
-    assert not calibration_store.has_calibration(cal_dir=cal_dir)
+    assert not dark_mask_store.has_dark_mask(mask_dir=cal_dir)
 
     cal_dir.mkdir(parents=True)
-    assert not calibration_store.has_calibration(cal_dir=cal_dir)
+    assert not dark_mask_store.has_dark_mask(mask_dir=cal_dir)
 
     # Only JSON
-    (cal_dir / "calibration_meta.json").write_text("{}")
-    assert not calibration_store.has_calibration(cal_dir=cal_dir)
+    (cal_dir / "mask_meta.json").write_text("{}")
+    assert not dark_mask_store.has_dark_mask(mask_dir=cal_dir)
 
     # Only MED_Dark
     tifffile.imwrite(str(cal_dir / "MED_Dark.tif"), np.zeros((10, 10), dtype=np.float32))
-    assert not calibration_store.has_calibration(cal_dir=cal_dir)
+    assert not dark_mask_store.has_dark_mask(mask_dir=cal_dir)
 
 
 def test_e2e_boundary_cal_store_save_shape_mismatch(tmp_path: Path):
-    """Verify save_calibration raises ValueError on shape mismatches."""
+    """Verify save_dark_mask raises ValueError on shape mismatches."""
     with pytest.raises(ValueError, match="Shape mismatch|must be 2D"):
-        calibration_store.save_calibration(
+        dark_mask_store.save_dark_mask(
             med_dark=np.zeros((10, 10), dtype=np.float32),
             final_mask=np.zeros((20, 20), dtype=np.float32),
             stddev_thresh=40.0,
@@ -95,7 +95,7 @@ def test_e2e_boundary_cal_store_save_shape_mismatch(tmp_path: Path):
             total_pixels=100,
             suppression_pct=0.0,
             source_dir="/tmp",
-            cal_dir=tmp_path,
+            mask_dir=tmp_path,
         )
 
 
@@ -192,15 +192,15 @@ def test_e2e_boundary_clustering_out_of_bounds_coords():
 # Section 4: GUI & Navigation Boundaries
 # ============================================================================
 
-def test_e2e_boundary_dark_cal_gui_zero_and_extreme_sliders(qapp):
-    """Verify Dark Calibration GUI handles extreme and 0 slider boundaries."""
+def test_e2e_boundary_dark_mask_gui_zero_and_extreme_sliders(qapp):
+    """Verify Dark Masking GUI handles extreme and 0 slider boundaries."""
     diag = DarkDiagnostics(
         med_dark=np.full((32, 32), 100.0, dtype=np.float32),
         per_pixel_stddev=np.full((32, 32), 10.0, dtype=np.float32),
         pct93_residual=np.full((32, 32), 20.0, dtype=np.float32),
         dark_frame_count=10,
     )
-    view = DarkCalibrationView()
+    view = DarkMaskingView()
     view._on_diagnostics_ready(diag)
 
     # 0 boundary -> 0%

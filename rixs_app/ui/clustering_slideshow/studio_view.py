@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from rixs_app.core.calibration_store import load_calibration
+from rixs_app.core.dark_mask_store import load_dark_mask
 from rixs_app.core.photon_clustering import (
     ClusterConfig,
     ReconstructionConfig,
@@ -672,7 +672,7 @@ class ClusteringStudioView(QWidget):
         chunk_size: int = 80,
         cluster_config: ClusterConfig | None = None,
         recon_config: ReconstructionConfig | None = None,
-        cal_dir: Path | str | None = None,
+        mask_dir: Path | str | None = None,
         auto_run: bool = True,
     ) -> None:
         """Load a new dataset session into the studio and optionally start cluster extraction.
@@ -682,7 +682,7 @@ class ClusteringStudioView(QWidget):
             chunk_size: Number of frames per chunk.
             cluster_config: Optional Stage 2 cluster config.
             recon_config: Optional Stage 3 reconstruction config.
-            cal_dir: Optional custom dark calibration directory.
+            mask_dir: Optional custom dark mask directory.
             auto_run: If True, automatically launches Stage 2 background extraction.
         """
         self.manager.init_session(
@@ -690,7 +690,7 @@ class ClusteringStudioView(QWidget):
             chunk_size=chunk_size,
             cluster_config=cluster_config,
             recon_config=recon_config,
-            cal_dir=cal_dir,
+            mask_dir=mask_dir,
         )
 
         n_frames = self.manager.total_frames

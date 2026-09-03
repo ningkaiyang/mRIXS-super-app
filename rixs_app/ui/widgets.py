@@ -33,27 +33,21 @@ class RangeSlider(QWidget):
 
     Emits the ``range_changed`` signal whenever either handle or window is dragged,
     carrying the current (left_value, right_value) tuple as arguments.
-    Also invokes an optional *command* callable with the same signature for
-    backwards-compatibility.
 
     Args:
         parent: Parent widget.
-        command: Optional callable called with (left_val, right_val) on change.
     """
 
     range_changed = Signal(float, float)
     slider_released = Signal(float, float)
 
-    def __init__(self, parent=None, *, command=None, **kwargs):
+    def __init__(self, parent: QWidget | None = None) -> None:
         """Initialise the RangeSlider.
 
         Args:
             parent: Parent QWidget.
-            command: Optional callable invoked as command(left, right) on change.
-            **kwargs: Absorbed silently (height= etc. from Tkinter callers).
         """
         super().__init__(parent)
-        self._command = command
 
         self.min_val: float = 0.0
         self.max_val: float = 1.0
@@ -363,18 +357,6 @@ class RangeSlider(QWidget):
 
         return None
 
-    def _pick_handle(self, x: int) -> str | None:
-        """Backwards compatibility helper returning 'left' or 'right' handle only.
-
-        Args:
-            x: Mouse x-pixel position.
-
-        Returns:
-            'left', 'right', or None.
-        """
-        target = self._pick_target(x)
-        return target if target in ('left', 'right') else None
-
     def mousePressEvent(self, event) -> None:  # noqa: N802
         """Detect handle or window click and initiate drag.
 
@@ -422,16 +404,12 @@ class RangeSlider(QWidget):
             self.val_left = min(val, self.val_right)
             self.update()
             self.range_changed.emit(self.val_left, self.val_right)
-            if self._command:
-                self._command(self.val_left, self.val_right)
 
         elif self._active_handle == 'right':
             val = self._val_for_x(x)
             self.val_right = max(val, self.val_left)
             self.update()
             self.range_changed.emit(self.val_left, self.val_right)
-            if self._command:
-                self._command(self.val_left, self.val_right)
 
         elif self._active_handle == 'window':
             usable = max(self.width() - 2 * self._padding, 1)
@@ -453,8 +431,6 @@ class RangeSlider(QWidget):
             self.val_right = max(self.min_val, min(self.max_val, new_right))
             self.update()
             self.range_changed.emit(self.val_left, self.val_right)
-            if self._command:
-                self._command(self.val_left, self.val_right)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         """End handle/window dragging and emit slider_released signal.
