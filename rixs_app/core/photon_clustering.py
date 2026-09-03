@@ -118,6 +118,7 @@ class ReconstructionConfig:
     """Configuration for Stage 3 event filtering and 2D event map accumulation."""
     intden_low: float = 120.0         # Single-photon IntDen lower cut (ADU)
     intden_high: float = 320.0        # Single-photon IntDen upper cut (ADU)
+    min_area: int = 1                 # Minimum cluster pixel area (pixels)
     max_area: int = 9                 # Maximum cluster pixel area (pixels)
     min_circ: float = 0.3             # Minimum cluster circularity (4*pi*Area / P^2)
     subpixel_factor: int = 1          # 1 = standard detector grid, 2 = 2x super-resolution, etc.
@@ -754,7 +755,7 @@ def reconstruct_photon_event_map(
     # Rejection boolean masks
     mask_noise = int_den < config.intden_low
     mask_pileup = int_den > config.intden_high
-    mask_shape = (area > config.max_area) | (circ < config.min_circ)
+    mask_shape = (area < config.min_area) | (area > config.max_area) | (circ < config.min_circ)
 
     # Discretize sub-pixel coordinates
     px = np.floor(xm * factor).astype(np.int64)

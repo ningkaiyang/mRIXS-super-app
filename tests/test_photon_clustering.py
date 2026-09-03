@@ -518,3 +518,34 @@ def test_super_resolution_2x_and_4x_reconstruction():
     assert recon_4x.event_map.shape == (200, 200)
     assert recon_4x.event_map[51, 41] == 1.0
 
+
+def test_reconstruct_min_area_filtering():
+    """Verify that clusters with Area < min_area are properly rejected into rejected_shape."""
+    from rixs_app.core.photon_clustering import (
+        ReconstructionConfig,
+        reconstruct_photon_event_map,
+    )
+    import pandas as pd
+    import numpy as np
+
+    df = pd.DataFrame({
+        "ClusterNum": [0, 1, 2, 3],
+        "Area": [1, 2, 3, 15],
+        "Circ.": [0.8, 0.8, 0.8, 0.8],
+        "IntDen": [200.0, 200.0, 200.0, 200.0],
+        "XM": [10.0, 20.0, 30.0, 40.0],
+        "YM": [10.0, 20.0, 30.0, 40.0],
+        "Slice": [1, 1, 1, 1],
+    })
+
+    cfg_default = ReconstructionConfig(min_area=1, max_area=9, intden_low=100.0, intden_high=300.0)
+    res_default = reconstruct_photon_event_map(df, (100, 100), cfg_default)
+    assert res_default.accepted_events == 3
+    assert res_default.rejected_shape == 1
+
+    cfg_cut1px = ReconstructionConfig(min_area=2, max_area=9, intden_low=100.0, intden_high=300.0)
+    res_cut1px = reconstruct_photon_event_map(df, (100, 100), cfg_cut1px)
+    assert res_cut1px.accepted_events == 2
+    assert res_cut1px.rejected_shape == 2
+
+

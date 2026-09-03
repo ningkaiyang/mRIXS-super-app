@@ -151,12 +151,18 @@ class ClusteringStudioView(QWidget):
         self._clamping_slider_max: float = 1.0
 
         self._accum_timer = QTimer(self)
-        self._accum_timer.setInterval(100)
+        self._accum_timer.setInterval(60)
         self._accum_timer.setSingleShot(True)
         self._accum_timer.timeout.connect(self._on_accum_timer_tick)
 
         self._running_cluster_count = 0
         self._progressive_event_map = np.zeros((2048, 2048), dtype=np.float32)
+        self._live_total_clusters: int = 0
+        self._live_accepted_photons: int = 0
+        self._live_rejected_noise: int = 0
+        self._live_rejected_shape: int = 0
+        self._live_rejected_pileup: int = 0
+        self._live_hist_counts: np.ndarray = np.zeros(150, dtype=np.int64)
 
         self._init_ui()
         self._mode_combo = self.mode_combo
@@ -445,6 +451,20 @@ class ClusteringStudioView(QWidget):
         self.intden_slider.range_changed.connect(self._handle_intden_slider_changed)
         self.intden_slider.slider_released.connect(self._handle_intden_slider_released)
         s_layout.addWidget(self.intden_slider)
+
+        area_label_row = QHBoxLayout()
+        self._area_cut_lbl = QLabel("Cluster Area Window: 1 - 9 px", slider_box)
+        self._area_cut_lbl.setStyleSheet("font-weight: bold; color: #38bdf8; font-size: 11px;")
+        area_label_row.addWidget(self._area_cut_lbl)
+        area_label_row.addStretch(1)
+        s_layout.addLayout(area_label_row)
+
+        self.area_slider = RangeSlider(slider_box)
+        self.area_slider.configure_range(1.0, 20.0)
+        self.area_slider.set_values(1.0, 9.0)
+        self.area_slider.range_changed.connect(self._handle_area_slider_changed)
+        self.area_slider.slider_released.connect(self._handle_area_slider_released)
+        s_layout.addWidget(self.area_slider)
         right_layout.addWidget(slider_box)
 
         # Shape Filters Box
@@ -453,27 +473,20 @@ class ClusteringStudioView(QWidget):
         shape_grid.setContentsMargins(10, 8, 10, 8)
         shape_grid.setSpacing(8)
 
-        shape_grid.addWidget(QLabel("Max Area (px):", shape_box), 0, 0)
-        self.max_area_spin = QSpinBox(shape_box)
-        self.max_area_spin.setRange(1, 100)
-        self.max_area_spin.setValue(9)
-        self.max_area_spin.valueChanged.connect(self._handle_shape_filter_changed)
-        shape_grid.addWidget(self.max_area_spin, 0, 1)
-
-        shape_grid.addWidget(QLabel("Min Circ:", shape_box), 0, 2)
+        shape_grid.addWidget(QLabel("Min Circ:", shape_box), 0, 0)
         self.min_circ_spin = QDoubleSpinBox(shape_box)
         self.min_circ_spin.setRange(0.0, 1.0)
         self.min_circ_spin.setSingleStep(0.05)
         self.min_circ_spin.setValue(0.3)
         self.min_circ_spin.valueChanged.connect(self._handle_shape_filter_changed)
-        shape_grid.addWidget(self.min_circ_spin, 0, 3)
+        shape_grid.addWidget(self.min_circ_spin, 0, 1)
 
-        shape_grid.addWidget(QLabel("Subpixel Factor:", shape_box), 1, 0)
+        shape_grid.addWidget(QLabel("Subpixel Factor:", shape_box), 0, 2)
         self.subpixel_spin = QSpinBox(shape_box)
         self.subpixel_spin.setRange(1, 4)
         self.subpixel_spin.setValue(1)
         self.subpixel_spin.valueChanged.connect(self._handle_shape_filter_changed)
-        shape_grid.addWidget(self.subpixel_spin, 1, 1)
+        shape_grid.addWidget(self.subpixel_spin, 0, 3)
 
         right_layout.addWidget(shape_box)
         splitter.addWidget(right_panel)
@@ -721,9 +734,22 @@ class ClusteringStudioView(QWidget):
         # Sync Stage 3 sliders & controls
         cfg = self.manager.state.recon_config
         self.intden_slider.set_values(cfg.intden_low, cfg.intden_high)
-        self.max_area_spin.setValue(cfg.max_area)
+        self._intden_cut_lbl.setText(f"Single-Photon Window: {cfg.intden_low:.1f} - {cfg.intden_high:.1f} ADU")
+        self.area_slider.set_values(float(cfg.min_area), float(cfg.max_area))
+        self._area_cut_lbl.setText(f"Cluster Area Window: {int(cfg.min_area)} - {int(cfg.max_area)} px")
         self.min_circ_spin.setValue(cfg.min_circ)
         self.subpixel_spin.setValue(cfg.subpixel_factor)
+
+        # Reset progressive accumulation state
+        self._live_total_clusters = 0
+        self._live_accepted_photons = 0
+        self._live_rejected_noise = 0
+        self._live_rejected_shape = 0
+        self._live_rejected_pileup = 0
+        self._live_hist_counts = np.zeros(150, dtype=np.int64)
+        h, w = self.manager.state.image_shape
+        factor = cfg.subpixel_factor
+        self._progressive_event_map = np.zeros((h * factor, w * factor), dtype=np.float32)
 
         self._current_frame_idx = 0
         self._current_chunk_idx = 0
@@ -746,6 +772,17 @@ class ClusteringStudioView(QWidget):
         self._progress_bar.setValue(0)
         self._cancel_btn.show()
         self._status_lbl.setText("Extracting photon clusters...")
+
+        # Reset progressive streaming state
+        self._live_total_clusters = 0
+        self._live_accepted_photons = 0
+        self._live_rejected_noise = 0
+        self._live_rejected_shape = 0
+        self._live_rejected_pileup = 0
+        self._live_hist_counts = np.zeros(150, dtype=np.int64)
+        h, w = self.manager.state.image_shape
+        factor = self.manager.state.recon_config.subpixel_factor
+        self._progressive_event_map = np.zeros((h * factor, w * factor), dtype=np.float32)
 
         # Reset canvases
         self._reset_dashboard_canvas()
@@ -773,39 +810,181 @@ class ClusteringStudioView(QWidget):
 
     @Slot(int, object)
     def _on_worker_frame_result(self, frame_idx: int, frame_df: pd.DataFrame) -> None:
-        """Progressive accumulation: append clusters from each frame as it finishes."""
+        """Progressive accumulation: non-blocking stream processing of completed frames."""
+        # Never access self.manager.state.df_clusters here (avoids pd.concat on main thread)
         self.manager.append_frame_clusters(frame_idx, frame_df)
-        self._update_kpi_cards()
 
+        n_frame_clusters = len(frame_df) if (frame_df is not None and not frame_df.empty) else 0
+        self._live_total_clusters += n_frame_clusters
+
+        cfg = self.manager.state.recon_config
+        factor = cfg.subpixel_factor
+        h, w = self.manager.state.image_shape
+        out_h, out_w = h * factor, w * factor
+
+        if self._progressive_event_map is None or self._progressive_event_map.shape != (out_h, out_w):
+            self._progressive_event_map = np.zeros((out_h, out_w), dtype=np.float32)
+
+        if self._live_hist_counts is None or len(self._live_hist_counts) != 150:
+            self._live_hist_counts = np.zeros(150, dtype=np.int64)
+
+        if n_frame_clusters > 0:
+            int_den = frame_df["IntDen"].to_numpy(dtype=np.float32, copy=False)
+            area = frame_df["Area"].to_numpy(dtype=np.float32, copy=False)
+            circ = frame_df["Circ."].to_numpy(dtype=np.float32, copy=False)
+            xm = frame_df["XM"].to_numpy(dtype=np.float32, copy=False)
+            ym = frame_df["YM"].to_numpy(dtype=np.float32, copy=False)
+
+            # Frame-local Stage 3 acceptance masks (<0.1ms)
+            mask_noise = int_den < cfg.intden_low
+            mask_pileup = int_den > cfg.intden_high
+            mask_shape = (area < cfg.min_area) | (area > cfg.max_area) | (circ < cfg.min_circ)
+
+            px = np.floor(xm * factor).astype(np.int64)
+            py = np.floor(ym * factor).astype(np.int64)
+
+            mask_bounds = (px >= 0) & (px < out_w) & (py >= 0) & (py < out_h)
+            mask_accepted = (~mask_noise) & (~mask_pileup) & (~mask_shape) & mask_bounds
+
+            n_noise = int(np.sum(mask_noise))
+            n_pileup = int(np.sum(mask_pileup))
+            n_shape = int(np.sum((~mask_noise) & (~mask_pileup) & mask_shape))
+            n_accepted = int(np.sum(mask_accepted))
+
+            # Maintain running integer KPI totals in O(1)
+            self._live_accepted_photons += n_accepted
+            self._live_rejected_noise += n_noise
+            self._live_rejected_shape += n_shape
+            self._live_rejected_pileup += n_pileup
+
+            # Accumulate accepted photons onto 2D event map
+            if n_accepted > 0:
+                np.add.at(self._progressive_event_map, (py[mask_accepted], px[mask_accepted]), 1.0)
+
+            # Incrementally accumulate IntDen values into 150-bin histogram array
+            counts, _ = np.histogram(int_den, bins=150, range=(0.0, 1500.0))
+            self._live_hist_counts += counts
+
+        # Update all 4 KPI cards and progress bar on every single frame without pd.concat
+        total_frames = max(1, self.manager.total_frames)
+        processed_frames = max(frame_idx, self.manager.state.processed_frame_count)
+        pct_frames = (processed_frames / total_frames * 100.0)
+        self._progress_bar.setValue(int(pct_frames))
+
+        pct_accepted = (self._live_accepted_photons / self._live_total_clusters * 100.0) if self._live_total_clusters > 0 else 0.0
+        rej_total = self._live_rejected_noise + self._live_rejected_shape + self._live_rejected_pileup
+
+        if self._current_mode == "Dashboard":
+            self.kpi_1._title_lbl.setText("TOTAL FRAMES")
+            self.kpi_1.set_content(
+                f"{processed_frames} / {total_frames}",
+                f"{pct_frames:.0f}% frames processed",
+                color="#38bdf8",
+            )
+            self.kpi_2._title_lbl.setText("TOTAL CLUSTERS")
+            self.kpi_2.set_content(
+                f"{self._live_total_clusters:,}",
+                f"{self._live_total_clusters / max(1, processed_frames):.1f} clusters / frame",
+                color="#38bdf8",
+            )
+            self.kpi_3._title_lbl.setText("SINGLE PHOTONS")
+            self.kpi_3.set_content(
+                f"{self._live_accepted_photons:,} ({pct_accepted:.1f}%)",
+                "Single-photon events",
+                color="#34d399",
+            )
+            self.kpi_4._title_lbl.setText("REJECTED EVENTS")
+            self.kpi_4.set_content(
+                f"{rej_total:,}",
+                f"Noise:{self._live_rejected_noise} Shape:{self._live_rejected_shape}",
+                color="#f87171",
+            )
+        elif self._current_mode == "Frame Inspector" and self._current_frame_idx == (frame_idx - 1):
+            self._render_frame_inspector()
+
+        # Start smooth throttled timer (~60ms / ~15-20 FPS) if not active
         if not self._accum_timer.isActive():
             self._accum_timer.start()
 
-        # If user is in Frame Inspector and currently viewing this frame, refresh
-        if self._current_mode == "Frame Inspector" and self._current_frame_idx == frame_idx:
-            self._render_frame_inspector()
-
     @Slot()
     def _on_accum_timer_tick(self) -> None:
-        """Throttled update of the 2D event map and IntDen histogram."""
-        if self.manager.has_clusters:
-            recon = self.manager.get_reconstruction()
-            self._render_dashboard_event_map(recon.event_map)
-            self._render_intden_histogram()
+        """Throttled update of the 2D event map and IntDen histogram (~60ms / ~15-20 FPS)."""
+        if self._progressive_event_map is not None:
+            if self._im_dashboard_event is None:
+                self._render_dashboard_event_map(self._progressive_event_map)
+            else:
+                vmax = float(np.max(self._progressive_event_map)) if self._progressive_event_map.size > 0 else 1.0
+                if vmax > self._clamping_slider_max:
+                    self._clamping_slider_max = max(1.0, vmax)
+                    self._clamping_slider.configure_range(0.0, self._clamping_slider_max)
+                self._im_dashboard_event.set_data(self._progressive_event_map)
+                self._im_dashboard_event.set_clim(self._clamping_floor, self._clamping_ceiling)
+                self._ax_dashboard_event.set_title(
+                    f"2D Photon Event Map ({self._live_accepted_photons:,} photons)",
+                    color="#f8fafc",
+                    fontsize=11,
+                )
+                self._canvas_dashboard.draw_idle()
+            self._render_live_histogram()
+
+    def _render_live_histogram(self) -> None:
+        """Render throttled live histogram directly from _live_hist_counts without pd.concat."""
+        self._ax_hist.clear()
+        self._ax_hist.set_facecolor("#16213e")
+
+        if self._live_hist_counts is not None and np.any(self._live_hist_counts > 0):
+            bin_edges = np.linspace(0.0, 1500.0, 151)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+            bin_width = float(bin_edges[1] - bin_edges[0])
+            valid = self._live_hist_counts > 0
+            self._ax_hist.bar(
+                bin_centers[valid],
+                self._live_hist_counts[valid],
+                width=bin_width,
+                color="#3b82f6",
+                edgecolor="none",
+                log=True,
+                alpha=0.85,
+            )
+
+        cfg = self.manager.state.recon_config
+        self._line_low = self._ax_hist.axvline(
+            cfg.intden_low, color="#e11d48", linewidth=1.8, linestyle="--", label=f"Low: {cfg.intden_low:.1f}"
+        )
+        self._line_high = self._ax_hist.axvline(
+            cfg.intden_high, color="#059669", linewidth=1.8, linestyle="--", label=f"High: {cfg.intden_high:.1f}"
+        )
+
+        self._ax_hist.set_title(
+            f"IntDen Distribution ({self._live_total_clusters:,} clusters)",
+            color="#f8fafc",
+            fontsize=11,
+        )
+        self._ax_hist.set_xlabel("IntDen (ADU)", color="#e2e8f0", fontsize=9)
+        self._ax_hist.set_ylabel("Counts (log)", color="#e2e8f0", fontsize=9)
+        self._ax_hist.tick_params(colors="#94a3b8", labelsize=8)
+        for spine in self._ax_hist.spines.values():
+            spine.set_color("#2d3561")
+        self._ax_hist.grid(True, linestyle=":", alpha=0.3, color="#94a3b8")
+
+        self._fig_hist.tight_layout()
+        self._canvas_hist.draw_idle()
 
     @Slot(int, int, int)
     def _on_worker_progress(self, current: int, total: int, clusters: int) -> None:
         pct = int((current / total) * 100) if total > 0 else 0
         self._progress_bar.setValue(pct)
-        self.kpi_1.set_content(
-            f"{current} / {total}",
-            f"{pct}% extracted",
-            color="#38bdf8",
-        )
-        self.kpi_2.set_content(
-            f"{clusters:,}",
-            f"{clusters / max(1, current):.1f} / frame",
-            color="#38bdf8",
-        )
+        if self._current_mode == "Dashboard":
+            self.kpi_1.set_content(
+                f"{current} / {total}",
+                f"{pct}% frames processed",
+                color="#38bdf8",
+            )
+            self.kpi_2.set_content(
+                f"{clusters:,}",
+                f"{clusters / max(1, current):.1f} clusters / frame",
+                color="#38bdf8",
+            )
 
     @Slot(str)
     def _on_worker_progress_msg(self, msg: str) -> None:
@@ -821,8 +1000,19 @@ class ClusteringStudioView(QWidget):
         self._progress_bar.setValue(100)
         self._status_lbl.setText(f"Extraction complete ({len(df_all):,} clusters).")
 
-        # Full refresh across views
-        self._on_accum_timer_tick()
+        # Full clean sync across views using consolidated clusters
+        recon = self.manager.get_reconstruction()
+        self._progressive_event_map = recon.event_map.copy()
+        self._live_total_clusters = recon.total_clusters
+        self._live_accepted_photons = recon.accepted_events
+        self._live_rejected_noise = recon.rejected_noise
+        self._live_rejected_shape = recon.rejected_shape
+        self._live_rejected_pileup = recon.rejected_pileup
+        if df_all is not None and not df_all.empty:
+            self._live_hist_counts, _ = np.histogram(df_all["IntDen"].to_numpy(), bins=150, range=(0.0, 1500.0))
+
+        self._render_dashboard_event_map(recon.event_map)
+        self._render_intden_histogram()
         self._update_kpi_cards()
 
         if self._current_mode == "Frame Inspector":
@@ -832,18 +1022,22 @@ class ClusteringStudioView(QWidget):
 
     @Slot(str)
     def _on_worker_error(self, err_msg: str) -> None:
+        self._accum_timer.stop()
         self.manager.state.is_processing = False
         self._pipeline_worker = None
         self._cancel_btn.hide()
         self._status_lbl.setText(f"Error: {err_msg}")
+        self._update_kpi_cards()
         QMessageBox.critical(self, "Cluster Extraction Error", f"Extraction failed:\n{err_msg}")
 
     @Slot()
     def _on_worker_canceled(self) -> None:
+        self._accum_timer.stop()
         self.manager.state.is_processing = False
         self._pipeline_worker = None
         self._cancel_btn.hide()
         self._status_lbl.setText("Cluster extraction canceled by user.")
+        self._update_kpi_cards()
 
     # ------------------------------------------------------------------
     # Mode Switching & Contextual KPI Synchronization
@@ -889,23 +1083,11 @@ class ClusteringStudioView(QWidget):
         frame_df: pd.DataFrame | None = None,
     ) -> None:
         """Progressively accumulate event map and update live metrics."""
-        if frame_df is not None and not frame_df.empty:
-            slice_num = frame_idx + 1 if (frame_idx == 0 and "Slice" in frame_df.columns) else frame_idx
-            self.manager.append_frame_clusters(slice_num, frame_df)
-            if self._progressive_event_map is None or self._progressive_event_map.shape != self.manager.state.image_shape:
-                self._progressive_event_map = np.zeros(self.manager.state.image_shape, dtype=np.float32)
-            for _, row in frame_df.iterrows():
-                xm, ym = int(round(float(row["XM"]))), int(round(float(row["YM"])))
-                if 0 <= ym < self._progressive_event_map.shape[0] and 0 <= xm < self._progressive_event_map.shape[1]:
-                    self._progressive_event_map[ym, xm] += 1.0
-        self._running_cluster_count = len(self.manager.state.df_clusters)
-        self._update_kpi_cards()
+        self._on_worker_frame_result(frame_idx, frame_df if frame_df is not None else pd.DataFrame())
 
     def _update_kpi_cards(self) -> None:
         """Update KPI cards dynamically based on active mode."""
-        df = self.manager.state.df_clusters
-        total_clusters = len(df)
-        total_frames = self.manager.total_frames
+        total_frames = max(1, self.manager.total_frames)
         processed = self.manager.state.processed_frame_count
 
         if self._current_mode == "Dashboard":
@@ -913,8 +1095,38 @@ class ClusteringStudioView(QWidget):
             self.kpi_2._title_lbl.setText("TOTAL CLUSTERS")
             self.kpi_3._title_lbl.setText("SINGLE PHOTONS")
             self.kpi_4._title_lbl.setText("REJECTED EVENTS")
-            recon = self.manager.state.latest_recon or self.manager.get_reconstruction()
+
             pct_frames = (processed / total_frames * 100.0) if total_frames > 0 else 0.0
+
+            # During live extraction, use O(1) integer counters to avoid pd.concat
+            if self.manager.state.is_processing:
+                pct_accepted = (self._live_accepted_photons / self._live_total_clusters * 100.0) if self._live_total_clusters > 0 else 0.0
+                rej_total = self._live_rejected_noise + self._live_rejected_shape + self._live_rejected_pileup
+                self.kpi_1.set_content(
+                    f"{processed} / {total_frames}",
+                    f"{pct_frames:.0f}% frames processed",
+                    color="#38bdf8",
+                )
+                self.kpi_2.set_content(
+                    f"{self._live_total_clusters:,}",
+                    f"{self._live_total_clusters / max(1, processed):.1f} clusters / frame",
+                    color="#38bdf8",
+                )
+                self.kpi_3.set_content(
+                    f"{self._live_accepted_photons:,} ({pct_accepted:.1f}%)",
+                    "Single-photon events",
+                    color="#34d399",
+                )
+                self.kpi_4.set_content(
+                    f"{rej_total:,}",
+                    f"Noise:{self._live_rejected_noise} Shape:{self._live_rejected_shape}",
+                    color="#f87171",
+                )
+                return
+
+            df = self.manager.state.df_clusters
+            total_clusters = len(df)
+            recon = self.manager.state.latest_recon or self.manager.get_reconstruction()
 
             self.kpi_1.set_content(
                 f"{processed} / {total_frames}",
@@ -953,6 +1165,7 @@ class ClusteringStudioView(QWidget):
                 accepted_mask = (
                     (int_dens >= cfg.intden_low)
                     & (int_dens <= cfg.intden_high)
+                    & (areas >= cfg.min_area)
                     & (areas <= cfg.max_area)
                     & (circs >= cfg.min_circ)
                 )
@@ -1052,7 +1265,7 @@ class ClusteringStudioView(QWidget):
             self._im_dashboard_event = self._ax_dashboard_event.imshow(
                 event_arr,
                 cmap=cmap,
-                origin="lower",
+                origin="upper",
                 vmin=self._clamping_floor,
                 vmax=self._clamping_ceiling,
             )
@@ -1069,7 +1282,7 @@ class ClusteringStudioView(QWidget):
                 self._apply_zoom()
             else:
                 self._ax_dashboard_event.set_xlim(0.0, float(event_arr.shape[1]))
-                self._ax_dashboard_event.set_ylim(0.0, float(event_arr.shape[0]))
+                self._ax_dashboard_event.set_ylim(float(event_arr.shape[0]), 0.0)
         else:
             self._im_dashboard_event.set_data(event_arr)
             self._im_dashboard_event.set_clim(self._clamping_floor, self._clamping_ceiling)
@@ -1099,6 +1312,7 @@ class ClusteringStudioView(QWidget):
                 log=True,
                 alpha=0.85,
             )
+            self._live_hist_counts, _ = np.histogram(int_dens, bins=150, range=(0.0, 1500.0))
 
         cfg = self.manager.state.recon_config
         self._line_low = self._ax_hist.axvline(
@@ -1142,6 +1356,7 @@ class ClusteringStudioView(QWidget):
         new_cfg = ReconstructionConfig(
             intden_low=float(low_val),
             intden_high=float(high_val),
+            min_area=current_cfg.min_area,
             max_area=current_cfg.max_area,
             min_circ=current_cfg.min_circ,
             subpixel_factor=current_cfg.subpixel_factor,
@@ -1149,6 +1364,12 @@ class ClusteringStudioView(QWidget):
 
         # In-memory execution strictly <50ms
         recon = self.manager.get_reconstruction(new_cfg)
+        self._progressive_event_map = recon.event_map.copy()
+        self._live_total_clusters = recon.total_clusters
+        self._live_accepted_photons = recon.accepted_events
+        self._live_rejected_noise = recon.rejected_noise
+        self._live_rejected_shape = recon.rejected_shape
+        self._live_rejected_pileup = recon.rejected_pileup
         self._render_dashboard_event_map(recon.event_map)
         self._update_kpi_cards()
 
@@ -1165,22 +1386,68 @@ class ClusteringStudioView(QWidget):
         """Alias for slider move event."""
         self._handle_intden_slider_changed(low_val, high_val)
 
+    def _handle_area_slider_changed(self, low_val: float, high_val: float) -> None:
+        """Fast drag handler: updates label in real-time."""
+        self._area_cut_lbl.setText(f"Cluster Area Window: {int(round(low_val))} - {int(round(high_val))} px")
+
+    def _handle_area_slider_released(self, low_val: float, high_val: float) -> None:
+        """Release handler: triggers instant in-memory Stage 3 filtering (<50ms benchmark)."""
+        current_cfg = self.manager.state.recon_config
+        new_cfg = ReconstructionConfig(
+            intden_low=current_cfg.intden_low,
+            intden_high=current_cfg.intden_high,
+            min_area=int(round(low_val)),
+            max_area=int(round(high_val)),
+            min_circ=current_cfg.min_circ,
+            subpixel_factor=current_cfg.subpixel_factor,
+        )
+
+        recon = self.manager.get_reconstruction(new_cfg)
+        self._progressive_event_map = recon.event_map.copy()
+        self._live_total_clusters = recon.total_clusters
+        self._live_accepted_photons = recon.accepted_events
+        self._live_rejected_noise = recon.rejected_noise
+        self._live_rejected_shape = recon.rejected_shape
+        self._live_rejected_pileup = recon.rejected_pileup
+        self._render_dashboard_event_map(recon.event_map)
+        self._update_kpi_cards()
+
+        if self._current_mode == "Frame Inspector":
+            self._render_frame_inspector()
+        elif self._current_mode == "Chunk Inspector":
+            self._render_chunk_inspector()
+
+    def _on_area_slider_released(self, low_val: float, high_val: float) -> None:
+        """Alias for area slider release event."""
+        self._handle_area_slider_released(low_val, high_val)
+
+    def _on_area_slider_moved(self, low_val: float, high_val: float) -> None:
+        """Alias for area slider move event."""
+        self._handle_area_slider_changed(low_val, high_val)
+
     @property
     def _current_reconstruction(self) -> ReconstructionResult | None:
         """Latest Stage 3 reconstruction result."""
         return self.manager.state.latest_recon
 
     def _handle_shape_filter_changed(self) -> None:
-        """Handler for Max Area, Min Circ, or Subpixel Factor changes."""
+        """Handler for Min Circ or Subpixel Factor changes."""
         current_cfg = self.manager.state.recon_config
         new_cfg = ReconstructionConfig(
             intden_low=current_cfg.intden_low,
             intden_high=current_cfg.intden_high,
-            max_area=self.max_area_spin.value(),
+            min_area=current_cfg.min_area,
+            max_area=current_cfg.max_area,
             min_circ=self.min_circ_spin.value(),
             subpixel_factor=self.subpixel_spin.value(),
         )
         recon = self.manager.get_reconstruction(new_cfg)
+        self._progressive_event_map = recon.event_map.copy()
+        self._live_total_clusters = recon.total_clusters
+        self._live_accepted_photons = recon.accepted_events
+        self._live_rejected_noise = recon.rejected_noise
+        self._live_rejected_shape = recon.rejected_shape
+        self._live_rejected_pileup = recon.rejected_pileup
         self._render_dashboard_event_map(recon.event_map)
         self._update_kpi_cards()
 
@@ -1218,7 +1485,7 @@ class ClusteringStudioView(QWidget):
         self._apply_zoom()
 
     def _apply_zoom(self) -> None:
-        """Apply current zoom level to the 2D dashboard event map axes."""
+        """Apply current zoom level to the 2D dashboard event map axes respecting origin='upper'."""
         self._zoom_lbl.setText(f"Zoom: {int(self._current_zoom_level)}×")
         h, w = self.manager.state.image_shape
         if self._im_dashboard_event is not None:
@@ -1228,11 +1495,11 @@ class ClusteringStudioView(QWidget):
 
         if self._current_zoom_level <= 1.0:
             self._ax_dashboard_event.set_xlim(0.0, float(w))
-            self._ax_dashboard_event.set_ylim(0.0, float(h))
+            self._ax_dashboard_event.set_ylim(float(h), 0.0)
         else:
             xlim = self._ax_dashboard_event.get_xlim()
             ylim = self._ax_dashboard_event.get_ylim()
-            if xlim == (0.0, 1.0) and ylim == (0.0, 1.0):
+            if (xlim == (0.0, 1.0) and ylim == (0.0, 1.0)) or (xlim == (0.0, float(w)) and (ylim == (0.0, float(h)) or ylim == (float(h), 0.0))):
                 cx, cy = float(w) / 2.0, float(h) / 2.0
             else:
                 cx = (float(xlim[0]) + float(xlim[1])) / 2.0
@@ -1254,7 +1521,7 @@ class ClusteringStudioView(QWidget):
                 y0 = max(0.0, y1 - 2.0 * hh)
 
             self._ax_dashboard_event.set_xlim(x0, x1)
-            self._ax_dashboard_event.set_ylim(y0, y1)
+            self._ax_dashboard_event.set_ylim(y1, y0)
 
         self._canvas_dashboard.draw_idle()
 
@@ -1345,6 +1612,7 @@ class ClusteringStudioView(QWidget):
                 is_accepted = (
                     (int_den >= cfg.intden_low)
                     & (int_den <= cfg.intden_high)
+                    & (area >= cfg.min_area)
                     & (area <= cfg.max_area)
                     & (circ >= cfg.min_circ)
                 )

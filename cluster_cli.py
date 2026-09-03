@@ -210,6 +210,7 @@ def run_reconstruct(args: argparse.Namespace) -> int:
     print("========================================")
     print(f"Cluster file:       {clusters_path} ({len(df_clusters):,} clusters)")
     print(f"IntDen cuts:        [{args.intden_low}, {args.intden_high}] ADU")
+    print(f"Min Area:           {args.min_area} pixels")
     print(f"Max Area:           {args.max_area} pixels")
     print(f"Min Circularity:    {args.min_circ}")
     print(f"Sub-pixel factor:   {args.subpixel}x")
@@ -218,6 +219,7 @@ def run_reconstruct(args: argparse.Namespace) -> int:
     config = ReconstructionConfig(
         intden_low=args.intden_low,
         intden_high=args.intden_high,
+        min_area=args.min_area,
         max_area=args.max_area,
         min_circ=args.min_circ,
         subpixel_factor=args.subpixel,
@@ -353,6 +355,7 @@ def run_full(args: argparse.Namespace) -> int:
     recon_config = ReconstructionConfig(
         intden_low=args.intden_low,
         intden_high=args.intden_high,
+        min_area=args.min_area,
         max_area=args.max_area,
         min_circ=args.min_circ,
         subpixel_factor=args.subpixel,
@@ -428,6 +431,7 @@ def main() -> None:
     p_recon.add_argument("--output-name", default="Photon_Event_Map.tif", help="Output 2D TIFF map filename")
     p_recon.add_argument("--intden-low", type=float, default=120.0, help="Single-photon IntDen lower cutoff (ADU)")
     p_recon.add_argument("--intden-high", type=float, default=320.0, help="Single-photon IntDen upper cutoff (ADU)")
+    p_recon.add_argument("--min-area", type=int, default=1, help="Minimum cluster pixel area cut (default: 1)")
     p_recon.add_argument("--max-area", type=int, default=9, help="Max cluster area (pixels)")
     p_recon.add_argument("--min-circ", type=float, default=0.3, help="Min cluster circularity")
     p_recon.add_argument("--subpixel", type=int, default=1, help="Sub-pixel super-resolution binning multiplier")
@@ -450,6 +454,7 @@ def main() -> None:
     p_full.add_argument("--sig-thresh-high", type=float, default=1e6, help="Signal ceiling threshold (ADU)")
     p_full.add_argument("--intden-low", type=float, default=120.0, help="Single-photon IntDen lower cutoff (ADU)")
     p_full.add_argument("--intden-high", type=float, default=320.0, help="Single-photon IntDen upper cutoff (ADU)")
+    p_full.add_argument("--min-area", type=int, default=1, help="Minimum cluster pixel area cut (default: 1)")
     p_full.add_argument("--max-area", type=int, default=9, help="Max cluster area (pixels)")
     p_full.add_argument("--min-circ", type=float, default=0.3, help="Min cluster circularity")
     p_full.add_argument("--subpixel", type=int, default=1, help="Sub-pixel super-resolution binning multiplier")

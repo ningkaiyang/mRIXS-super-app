@@ -63,6 +63,7 @@ from rixs_app.ui.clustering_slideshow.workers import (
     ChunkSaveWorker,
     ClusterPipelineWorker,
 )
+from rixs_app.ui.widgets import RangeSlider
 
 
 # ============================================================================
@@ -259,11 +260,57 @@ def test_file_selection_callbacks_and_copilot_docking(qapp, qtbot, dummy_mask_di
     assert args[1] == 50
     assert isinstance(args[2], ClusterConfig)
     assert isinstance(args[3], ReconstructionConfig)
+    assert args[2].connectivity == 8
+    assert args[3].min_area == 1
 
     # 4. Co-Pilot docking
     copilot_btn = QPushButton("Co-Pilot")
     view.set_copilot_button(copilot_btn)
     assert copilot_btn.parent() == view._copilot_container
+
+
+def test_file_selection_connectivity_and_min_area(qapp, qtbot, dummy_mask_dir):
+    """Verify connectivity_spin is removed, min_area_spin configured, stage 3 note present, and launch passes connectivity=8 and min_area."""
+    mock_launch = MagicMock()
+    view = ClusteringFileSelectionView(
+        mask_dir=dummy_mask_dir,
+        on_launch_studio=mock_launch,
+    )
+    qtbot.addWidget(view)
+
+    # 1. Verify connectivity_spin is removed
+    assert not hasattr(view, "connectivity_spin")
+
+    # 2. Verify min_area_spin configuration
+    assert hasattr(view, "min_area_spin")
+    assert view.min_area_spin.minimum() == 1
+    assert view.min_area_spin.maximum() == 20
+    assert view.min_area_spin.value() == 1
+
+    # 3. Verify max_area_spin configuration
+    assert hasattr(view, "max_area_spin")
+    assert view.max_area_spin.minimum() == 1
+    assert view.max_area_spin.maximum() == 20
+    assert view.max_area_spin.value() == 9
+
+    # 4. Verify stage 3 note label
+    assert hasattr(view, "_stage3_note_lbl")
+    expected_note = "ℹ️ Don't have to set here, fully adjustable interactively via live sliders in the next view!"
+    assert view._stage3_note_lbl.text() == expected_note
+
+    # 5. Verify launch passes connectivity=8 and updated min_area
+    view.load_files(["/fake/path/frame_001.tif"])
+    view.min_area_spin.setValue(3)
+    view.max_area_spin.setValue(12)
+    view.launch_btn.click()
+
+    mock_launch.assert_called_once()
+    args, _ = mock_launch.call_args
+    cluster_cfg = args[2]
+    recon_cfg = args[3]
+    assert cluster_cfg.connectivity == 8
+    assert recon_cfg.min_area == 3
+    assert recon_cfg.max_area == 12
 
 
 def test_file_selection_adaptive_threshold_population(tmp_path, qtbot):
@@ -869,16 +916,17 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
     assert "Zoom: 2×" in studio._zoom_lbl.text()
     xlim = studio._ax_dashboard_event.get_xlim()
     ylim = studio._ax_dashboard_event.get_ylim()
-    # Should be centered half-extent of detector
+    # Should be centered half-extent of detector respecting origin="upper"
     assert xlim[0] > 0 and xlim[1] < w
-    assert ylim[0] > 0 and ylim[1] < h
+    assert ylim[0] > ylim[1]  # Inverted Y for origin="upper"
+    assert ylim[1] > 0 and ylim[0] < h
 
     # Zoom out
     studio._handle_zoom_out()
     assert studio._current_zoom_level == 1.0
     assert "Zoom: 1×" in studio._zoom_lbl.text()
     assert studio._ax_dashboard_event.get_xlim() == (0.0, float(w))
-    assert studio._ax_dashboard_event.get_ylim() == (0.0, float(h))
+    assert studio._ax_dashboard_event.get_ylim() == (float(h), 0.0)
 
     # Zoom in twice then reset
     studio._handle_zoom_in()
@@ -889,7 +937,7 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
     assert studio._current_zoom_level == 1.0
     assert "Zoom: 1×" in studio._zoom_lbl.text()
     assert studio._ax_dashboard_event.get_xlim() == (0.0, float(w))
-    assert studio._ax_dashboard_event.get_ylim() == (0.0, float(h))
+    assert studio._ax_dashboard_event.get_ylim() == (float(h), 0.0)
 
     # 3. Clamping Slider & Entry Handlers
     # Trigger clamping change with latency check (<5ms)
@@ -898,6 +946,7 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
     dummy_map[100, 100] = 5.0
     studio._render_dashboard_event_map(dummy_map)
     assert studio._im_dashboard_event is not None
+    assert studio._im_dashboard_event.origin == "upper"
     assert studio._clamping_slider_max >= 5.0
 
     t0 = time.perf_counter()
@@ -929,7 +978,7 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
 
     # 4. Throttled Accumulation Timer
     assert hasattr(studio, "_accum_timer")
-    assert studio._accum_timer.interval() == 100
+    assert studio._accum_timer.interval() == 60
     assert studio._accum_timer.isSingleShot()
 
     # Emitting worker frame result starts the timer
@@ -978,6 +1027,160 @@ def test_studio_rangeslider_cutlines_and_instant_release(qapp, qtbot, synthetic_
     assert studio.manager.state.recon_config.intden_low == 100.0
     assert studio.manager.state.recon_config.intden_high == 300.0
     assert studio.manager.state.latest_recon.accepted_events == 1  # only 150.0 accepted
+
+    studio.cleanup()
+
+
+def test_studio_area_rangeslider_and_origin_upper(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """Verify Area RangeSlider controls, label, <50ms instant refilter, and origin='upper'."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+
+    # 1. Slider Existence & Defaults
+    assert hasattr(studio, "area_slider")
+    assert isinstance(studio.area_slider, RangeSlider)
+    assert studio.area_slider.min_val == 1.0
+    assert studio.area_slider.max_val == 20.0
+    assert studio.area_slider.val_left == 1.0
+    assert studio.area_slider.val_right == 9.0
+    assert "Cluster Area Window: 1 - 9 px" in studio._area_cut_lbl.text()
+    assert not hasattr(studio, "max_area_spin")  # Removed from shape box
+
+    # 2. Drag updates label in real-time
+    studio._handle_area_slider_changed(2.0, 6.0)
+    assert "Cluster Area Window: 2 - 6 px" in studio._area_cut_lbl.text()
+
+    # 3. Release triggers in-memory Stage 3 filtering in <50ms
+    mock_df = pd.DataFrame([
+        # Area 1: rejected by min_area=2
+        {"ClusterNum": 0, "Slice": 1, "Area": 1, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 10.0, "YM": 10.0, "Circ.": 0.8, "IntDen": 200.0},
+        # Area 3: accepted
+        {"ClusterNum": 1, "Slice": 1, "Area": 3, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 20.0, "YM": 20.0, "Circ.": 0.8, "IntDen": 200.0},
+        # Area 5: accepted
+        {"ClusterNum": 2, "Slice": 2, "Area": 5, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 30.0, "YM": 30.0, "Circ.": 0.8, "IntDen": 200.0},
+        # Area 8: rejected by max_area=6
+        {"ClusterNum": 3, "Slice": 2, "Area": 8, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 40.0, "YM": 40.0, "Circ.": 0.8, "IntDen": 200.0},
+    ])
+    studio.manager.set_all_clusters(mock_df)
+
+    t0 = time.perf_counter()
+    studio._handle_area_slider_released(2.0, 6.0)
+    elapsed = time.perf_counter() - t0
+
+    assert elapsed < 0.050  # Strictly <50ms
+    cfg = studio.manager.state.recon_config
+    assert cfg.min_area == 2
+    assert cfg.max_area == 6
+    recon = studio.manager.state.latest_recon
+    assert recon is not None
+    assert recon.accepted_events == 2  # Area 3 and Area 5
+    assert recon.rejected_shape == 2   # Area 1 and Area 8
+
+    # Check KPI cards updated
+    assert "2 (" in studio.kpi_3._value_lbl.text()
+    assert "Shape:2" in studio.kpi_4._sub_lbl.text()
+
+    # 4. Origin="upper" and Zoom Bounds
+    h, w = studio.manager.state.image_shape
+    dummy_map = np.zeros((h, w), dtype=np.float32)
+    dummy_map[10, 20] = 1.0
+    studio._render_dashboard_event_map(dummy_map)
+    assert studio._im_dashboard_event.origin == "upper"
+    assert studio._ax_dashboard_event.get_ylim() == (float(h), 0.0)
+
+    # Zoom in: y limits must maintain origin="upper" (y1 > y0, y0 at top, y1 at bottom)
+    studio._handle_zoom_in()
+    xlim = studio._ax_dashboard_event.get_xlim()
+    ylim = studio._ax_dashboard_event.get_ylim()
+    assert ylim[0] > ylim[1]
+    assert ylim[0] < h and ylim[1] > 0
+    assert xlim[0] > 0 and xlim[1] < w
+
+    studio.cleanup()
+
+
+def test_studio_streaming_responsiveness_and_kpi_tallies(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """Verify non-blocking progressive accumulation during frame streaming without pd.concat."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+
+    studio.manager.state.is_processing = True
+
+    # Simulate 5 consecutive frames streaming in
+    total_clusters_expected = 0
+    accepted_photons_expected = 0
+    rejected_noise_expected = 0
+    rejected_shape_expected = 0
+
+    for f_idx in range(1, 6):
+        # Frame with 1 noise (50 ADU), 1 accepted (200 ADU, Area 3, Circ 0.8), 1 shape-reject (Area 15)
+        df_frame = pd.DataFrame([
+            {"ClusterNum": 0, "Slice": f_idx, "Area": 2, "Mean": 50.0, "StdDev": 0.0, "Min": 40.0, "Max": 60.0, "XM": 10.0, "YM": 15.0, "Circ.": 0.8, "IntDen": 50.0},
+            {"ClusterNum": 1, "Slice": f_idx, "Area": 3, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 25.0, "YM": 35.0, "Circ.": 0.8, "IntDen": 200.0},
+            {"ClusterNum": 2, "Slice": f_idx, "Area": 15, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 50.0, "YM": 60.0, "Circ.": 0.8, "IntDen": 200.0},
+        ])
+        total_clusters_expected += 3
+        accepted_photons_expected += 1
+        rejected_noise_expected += 1
+        rejected_shape_expected += 1
+
+        t0 = time.perf_counter()
+        studio._on_worker_frame_result(f_idx, df_frame)
+        elapsed = time.perf_counter() - t0
+
+        # Frame processing must be non-blocking and strictly <5ms (<0.1ms compute)
+        assert elapsed < 0.005
+
+        # Ensure manager df_clusters was NOT consolidated on main thread during streaming
+        assert studio.manager.state._dirty is True
+
+        # Running integer KPI counters tallied in O(1)
+        assert studio._live_total_clusters == total_clusters_expected
+        assert studio._live_accepted_photons == accepted_photons_expected
+        assert studio._live_rejected_noise == rejected_noise_expected
+        assert studio._live_rejected_shape == rejected_shape_expected
+
+        # KPI cards updated dynamically
+        assert f"{f_idx} / {studio.manager.total_frames}" in studio.kpi_1._value_lbl.text()
+        assert f"{total_clusters_expected:,}" in studio.kpi_2._value_lbl.text()
+        assert f"{accepted_photons_expected:,} (" in studio.kpi_3._value_lbl.text()
+        assert f"Noise:{rejected_noise_expected} Shape:{rejected_shape_expected}" in studio.kpi_4._sub_lbl.text()
+
+        # Progressive event map accumulated accepted photons
+        assert np.sum(studio._progressive_event_map) == accepted_photons_expected
+        # Live histogram accumulated counts
+        assert np.sum(studio._live_hist_counts) == total_clusters_expected
+
+    # Throttled timer was triggered
+    assert studio._accum_timer.isActive()
+    studio._on_accum_timer_tick()
+    assert studio._im_dashboard_event is not None
+    assert studio._im_dashboard_event.origin == "upper"
+
+    # Worker finishes: consolidate all clusters and perform final clean sync
+    all_frames = []
+    for f in studio.manager.state._frame_dfs:
+        all_frames.append(f)
+    df_all = pd.concat(all_frames, ignore_index=True)
+    studio._on_worker_finished(df_all)
+
+    assert not studio._accum_timer.isActive()
+    assert studio.manager.state.is_processing is False
+    assert studio.manager.state._dirty is False
+    assert len(studio.manager.state.df_clusters) == total_clusters_expected
+    assert studio.manager.state.latest_recon.accepted_events == accepted_photons_expected
 
     studio.cleanup()
 

@@ -352,13 +352,6 @@ class ClusteringFileSelectionView(QWidget):
         self.sig_high_spin.setSingleStep(1000.0)
         s2_grid.addWidget(self.sig_high_spin, 2, 1)
 
-        s2_grid.addWidget(QLabel("Pixel Connectivity:", stage2_box), 3, 0)
-        self.connectivity_spin = QSpinBox(stage2_box)
-        self.connectivity_spin.setRange(4, 8)
-        self.connectivity_spin.setValue(8)
-        self.connectivity_spin.setSingleStep(4)
-        s2_grid.addWidget(self.connectivity_spin, 3, 1)
-
         layout.addWidget(stage2_box)
 
         # Stage 3 Filtering Defaults
@@ -367,32 +360,53 @@ class ClusteringFileSelectionView(QWidget):
         s3_grid.setContentsMargins(14, 14, 14, 14)
         s3_grid.setSpacing(10)
 
-        s3_grid.addWidget(QLabel("Default IntDen Low (ADU):", stage3_box), 0, 0)
+        self._stage3_note_lbl = QLabel(
+            "ℹ️ Don't have to set here, fully adjustable interactively via live sliders in the next view!",
+            stage3_box,
+        )
+        self._stage3_note_lbl.setWordWrap(True)
+        self._stage3_note_lbl.setStyleSheet("font-size: 11px; color: #38bdf8; margin-bottom: 4px;")
+        s3_grid.addWidget(self._stage3_note_lbl, 0, 0, 1, 2)
+
+        s3_grid.addWidget(QLabel("Default IntDen Low (ADU):", stage3_box), 1, 0)
         self.intden_low_spin = QDoubleSpinBox(stage3_box)
         self.intden_low_spin.setRange(0.0, 5000.0)
         self.intden_low_spin.setValue(120.0)
         self.intden_low_spin.setSingleStep(10.0)
-        s3_grid.addWidget(self.intden_low_spin, 0, 1)
+        s3_grid.addWidget(self.intden_low_spin, 1, 1)
 
-        s3_grid.addWidget(QLabel("Default IntDen High (ADU):", stage3_box), 1, 0)
+        s3_grid.addWidget(QLabel("Default IntDen High (ADU):", stage3_box), 2, 0)
         self.intden_high_spin = QDoubleSpinBox(stage3_box)
         self.intden_high_spin.setRange(0.0, 10000.0)
         self.intden_high_spin.setValue(320.0)
         self.intden_high_spin.setSingleStep(10.0)
-        s3_grid.addWidget(self.intden_high_spin, 1, 1)
+        s3_grid.addWidget(self.intden_high_spin, 2, 1)
 
-        s3_grid.addWidget(QLabel("Max Cluster Area (px):", stage3_box), 2, 0)
+        s3_grid.addWidget(QLabel("Min Cluster Area (px):", stage3_box), 3, 0)
+        self.min_area_spin = QSpinBox(stage3_box)
+        self.min_area_spin.setRange(1, 20)
+        self.min_area_spin.setValue(1)
+        s3_grid.addWidget(self.min_area_spin, 3, 1)
+
+        s3_grid.addWidget(QLabel("Max Cluster Area (px):", stage3_box), 4, 0)
         self.max_area_spin = QSpinBox(stage3_box)
-        self.max_area_spin.setRange(1, 100)
+        self.max_area_spin.setRange(1, 20)
         self.max_area_spin.setValue(9)
-        s3_grid.addWidget(self.max_area_spin, 2, 1)
+        s3_grid.addWidget(self.max_area_spin, 4, 1)
 
-        s3_grid.addWidget(QLabel("Min Circularity:", stage3_box), 3, 0)
+        self.min_area_spin.valueChanged.connect(
+            lambda v: self.max_area_spin.setMinimum(v)
+        )
+        self.max_area_spin.valueChanged.connect(
+            lambda v: self.min_area_spin.setMaximum(v)
+        )
+
+        s3_grid.addWidget(QLabel("Min Circularity:", stage3_box), 5, 0)
         self.min_circ_spin = QDoubleSpinBox(stage3_box)
         self.min_circ_spin.setRange(0.0, 1.0)
         self.min_circ_spin.setSingleStep(0.05)
         self.min_circ_spin.setValue(0.3)
-        s3_grid.addWidget(self.min_circ_spin, 3, 1)
+        s3_grid.addWidget(self.min_circ_spin, 5, 1)
 
         layout.addWidget(stage3_box)
         layout.addStretch(1)
@@ -609,12 +623,13 @@ class ClusteringFileSelectionView(QWidget):
         cluster_cfg = ClusterConfig(
             sig_thresh_low=self.sig_low_spin.value(),
             sig_thresh_high=self.sig_high_spin.value(),
-            connectivity=self.connectivity_spin.value(),
+            connectivity=8,
         )
 
         recon_cfg = ReconstructionConfig(
             intden_low=self.intden_low_spin.value(),
             intden_high=self.intden_high_spin.value(),
+            min_area=self.min_area_spin.value(),
             max_area=self.max_area_spin.value(),
             min_circ=self.min_circ_spin.value(),
         )
