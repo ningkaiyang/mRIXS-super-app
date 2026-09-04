@@ -46,7 +46,7 @@ from rixs_app.core import (
     find_best_threshold,
 )
 from rixs_app.core.cli_utils import discover_directories, glob_tifs
-from rixs_app.core.dataset import CLIZarrSequenceManager, _frame_key
+from rixs_app.core.io import load_raw
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,11 +126,10 @@ def save_comparison_png(
 
 def process_directory(
     dir_path: str,
-    engines: list[str],
-    threshold: str,
-    save_png: bool,
-    overwrite: bool,
-    ephemeral_cache: bool = False,
+    engines: list[str] | None = None,
+    threshold: str = "99.9",
+    save_png: bool = False,
+    overwrite: bool = False,
     save_json: bool = False,
     output_dir: str = "sum",
 ) -> None:
@@ -138,8 +137,8 @@ def process_directory(
 
     Steps:
         1. Glob and sort TIF files.
-        2. Create a :class:`CLIZarrSequenceManager` (synchronous caching).
-        3. Select the reference frame (median, fallback to frame 0).
+        2. Load reference frame and stream frames directly via load_raw.
+        3. Select the reference frame (frame 0).
         4. Compute the direct (unaligned) sum.
         5. For each engine compute offsets, aligned sum, and save outputs.
 
@@ -151,11 +150,11 @@ def process_directory(
             or ``'auto'`` for automatic sweep.
         save_png: If ``True``, write a comparison PNG per engine.
         overwrite: If ``True``, overwrite existing output files.
-        ephemeral_cache: If ``True``, delete the ``tif-cache/`` directory
-            after processing completes.
         save_json: If ``True``, save computed offsets as a JSON file.
         output_dir: Output directory name or path (default: ``"sum"``).
     """
+    if engines is None:
+        engines = ["ECC"]
     dir_name = os.path.basename(dir_path)
     print(f"\n{'='*60}")
     print(f"[{dir_name}] Scanning for TIF files…")
@@ -167,18 +166,16 @@ def process_directory(
 
     print(f"[{dir_name}] Found {len(tif_files)} TIF files.")
 
-    # ── Zarr caching ─────────────────────────────────────────────────────
-    print(f"[{dir_name}] Caching frames…")
-    zarr_manager = CLIZarrSequenceManager(tif_files)
-
-    ref_raw = zarr_manager.get_frame(0)
-    ref_mode = "frame0"
-    if ref_raw is None:
-        print(f"[{dir_name}] Error: cannot load any frames — skipping.",
+    # ── Load reference frame (frame 0) ───────────────────────────────────
+    try:
+        ref_raw = load_raw(tif_files[0])
+    except Exception as e:
+        print(f"[{dir_name}] Error: cannot load reference frame {os.path.basename(tif_files[0])}: {e}",
               file=sys.stderr)
         return
 
     ref_shape = ref_raw.shape
+    ref_mode = "frame0"
 
     # ── Output directory ─────────────────────────────────────────────────
     if os.path.isabs(output_dir):
@@ -188,10 +185,8 @@ def process_directory(
     os.makedirs(sum_dir, exist_ok=True)
 
     # ── Helper to read a raw frame ───────────────────────────────────────
-    def get_raw(fpath):
+    def get_raw(fpath: str) -> np.ndarray | None:
         """Retrieve a raw frame for alignment computation and direct sum.
-
-        Checks the Zarr group first, falling back to a live TIFF read.
 
         Args:
             fpath: Absolute path to a TIFF file.
@@ -199,12 +194,8 @@ def process_directory(
         Returns:
             2-D ``float32`` numpy array, or ``None`` on failure.
         """
-        key = _frame_key(fpath)
-        if key in zarr_manager.zarr_group:
-            return zarr_manager.zarr_group[key][:]
         try:
-            raw = tifffile.imread(fpath).astype(np.float32)
-            return np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+            return load_raw(fpath)
         except Exception as e:
             print(f"  Error reading {os.path.basename(fpath)}: {e}",
                   file=sys.stderr)
@@ -384,14 +375,11 @@ def process_directory(
             save_comparison_png(direct_sum, aligned_sum, engine, png_path)
             print(f"[{dir_name}] Saved: {os.path.basename(png_path)}")
 
-    # ── Ephemeral cache cleanup ──────────────────────────────────────────
-    if ephemeral_cache:
-        cache_dir = os.path.join(dir_path, "tif-cache")
-        if os.path.isdir(cache_dir):
-            shutil.rmtree(cache_dir, ignore_errors=True)
-            print(f"[{dir_name}] Removed tif-cache/")
-
     print(f"[{dir_name}] Done.")
+
+
+# Programmatic alias
+align_directory = process_directory
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -440,11 +428,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         '--png',
         action='store_true',
         help="Save comparison PNGs (Direct Sum vs Aligned Sum).",
-    )
-    parser.add_argument(
-        '--ephemeral-cache',
-        action='store_true',
-        help="Delete tif-cache/ directories after processing.",
     )
     parser.add_argument(
         '--overwrite',
@@ -516,7 +499,6 @@ def main(argv: list[str] | None = None) -> None:
             threshold=args.threshold,
             save_png=args.png,
             overwrite=args.overwrite,
-            ephemeral_cache=args.ephemeral_cache,
             save_json=args.json,
             output_dir=args.output_dir,
         )

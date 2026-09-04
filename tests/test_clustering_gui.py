@@ -38,8 +38,16 @@ import numpy as np
 import pandas as pd
 import pytest
 import tifffile
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QEvent, QPointF, Qt, QThreadPool
+from PySide6.QtGui import QKeyEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QPushButton
+
+class MockMplEvent:
+    def __init__(self, inaxes, xdata, ydata, button=1):
+        self.inaxes = inaxes
+        self.xdata = xdata
+        self.ydata = ydata
+        self.button = button
 
 from rixs_app.core import dark_mask_store
 from rixs_app.core.photon_clustering import (
@@ -226,6 +234,42 @@ def test_file_selection_ingest_and_natural_sorting(qapp, qtbot, tmp_path, dummy_
     view.clear_files()
     assert len(view.signal_paths) == 0
     assert "No Signal TIFF Files Loaded" in view._file_count_lbl.text()
+
+
+def test_file_selection_ui_refinements(qapp, qtbot, dummy_mask_dir):
+    """TASK-01: Verify redundant browse folder button is removed while keeping add files and clear.
+    TASK-02: Verify file counter label has grey styling when empty and red styling when loaded.
+    """
+    view = ClusteringFileSelectionView(mask_dir=dummy_mask_dir)
+    qtbot.addWidget(view)
+
+    # TASK-01: Redundant browse folder button removed
+    assert not hasattr(view, "_browse_dir_btn")
+    assert hasattr(view, "_browse_files_btn")
+    assert hasattr(view, "_clear_btn")
+
+    # TASK-02: Empty state is muted grey (#94a3b8)
+    assert view._file_count_lbl.text() == "No Signal TIFF Files Loaded"
+    assert "color: #94a3b8;" in view._file_count_lbl.styleSheet()
+    assert "font-weight: bold;" in view._file_count_lbl.styleSheet()
+
+    # TASK-02: Loaded state (1 file) is prominent red (#ef4444)
+    view.load_files(["/fake/path/frame_1.tif"])
+    assert view._file_count_lbl.text() == "Loaded 1 Signal TIFF Frame"
+    assert "color: #ef4444;" in view._file_count_lbl.styleSheet()
+    assert "font-weight: bold;" in view._file_count_lbl.styleSheet()
+
+    # TASK-02: Loaded state (multiple files) is prominent red (#ef4444)
+    view.load_files(["/fake/path/frame_2.tif"])
+    assert view._file_count_lbl.text() == "Loaded 2 Signal TIFF Frames"
+    assert "color: #ef4444;" in view._file_count_lbl.styleSheet()
+    assert "font-weight: bold;" in view._file_count_lbl.styleSheet()
+
+    # TASK-02: Back to empty state after clear
+    view.clear_files()
+    assert view._file_count_lbl.text() == "No Signal TIFF Files Loaded"
+    assert "color: #94a3b8;" in view._file_count_lbl.styleSheet()
+    assert "font-weight: bold;" in view._file_count_lbl.styleSheet()
 
 
 def test_file_selection_callbacks_and_copilot_docking(qapp, qtbot, dummy_mask_dir):
@@ -578,6 +622,138 @@ def test_manager_append_frame_clusters_no_quadratic_realloc(dummy_mask_dir):
     assert mgr.state._dirty is False
 
 
+def test_manager_cache_initialization():
+    """Verify CompressedFrameCache and _clusters_by_slice initialization in ClusteringManager."""
+    from rixs_app.core.frame_cache import CompressedFrameCache
+    mgr = ClusteringManager()
+    assert hasattr(mgr, "_frame_cache")
+    assert isinstance(mgr._frame_cache, CompressedFrameCache)
+    assert mgr._frame_cache.capacity == 128
+    assert hasattr(mgr, "_clusters_by_slice")
+    assert isinstance(mgr._clusters_by_slice, dict)
+    assert len(mgr._clusters_by_slice) == 0
+
+
+def test_manager_cache_clusters_by_slice_o1_lookup(benchmark_dataframe):
+    """Verify O(1) cluster slice indexing (< 0.01 ms) and slice DataFrame extraction."""
+    mgr = ClusteringManager()
+    mgr.set_all_clusters(benchmark_dataframe)
+
+    # Pre-indexing check
+    assert len(mgr._clusters_by_slice) > 0
+    assert 1 in mgr._clusters_by_slice
+
+    # O(1) lookup latency test (< 0.01 ms per lookup on 50,000 clusters)
+    # Warmup
+    _ = mgr.get_frame_clusters(1)
+
+    t0 = time.perf_counter()
+    n_lookups = 500
+    for _ in range(n_lookups):
+        res = mgr.get_frame_clusters(1)
+    elapsed = time.perf_counter() - t0
+    avg_lookup_ms = (elapsed / n_lookups) * 1000.0
+
+    assert avg_lookup_ms < 0.01, f"Average lookup took {avg_lookup_ms*1000:.2f} µs (> 10 µs / 0.01 ms)"
+    assert len(res) > 0
+    assert (res["Slice"] == 1).all()
+
+    # Non-existent slice returns empty DataFrame with CLUSTER_COLUMNS
+    empty_res = mgr.get_frame_clusters(99999)
+    assert empty_res.empty
+    assert list(empty_res.columns) == CLUSTER_COLUMNS
+
+
+def test_manager_cache_frame_cache_hit_and_prefetch(dummy_mask_dir, synthetic_signal_frames):
+    """Verify CompressedFrameCache caching, latency under 0.5 ms on hit, and prefetch_frame."""
+    mgr = ClusteringManager()
+    mgr.init_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+    )
+
+    # Initially cache should be empty
+    assert len(mgr._frame_cache) == 0
+    assert not mgr._frame_cache.has(1)
+
+    # First fetch (cache miss)
+    img_miss = mgr.get_frame_image(1, dark_subtracted=True)
+    assert img_miss.shape == (64, 64)
+    assert mgr._frame_cache.has(1)
+    assert len(mgr._frame_cache) == 1
+
+    # Second fetch (cache hit) -> benchmark latency < 0.5 ms
+    t0 = time.perf_counter()
+    img_hit = mgr.get_frame_image(1, dark_subtracted=True)
+    hit_latency_ms = (time.perf_counter() - t0) * 1000.0
+
+    assert hit_latency_ms < 0.5, f"Cache hit latency {hit_latency_ms:.3f} ms exceeded 0.5 ms"
+    np.testing.assert_allclose(img_hit, img_miss, atol=1e-2)
+
+    # dark_subtracted=False returns raw frame without caching
+    raw_img = mgr.get_frame_image(2, dark_subtracted=False)
+    assert not mgr._frame_cache.has(2)
+
+    # Test prefetch_frame
+    mgr.prefetch_frame(2)
+    assert mgr._frame_cache.has(2)
+
+    # Prefetch existing frame should be a no-op
+    mgr.prefetch_frame(2)
+    assert mgr._frame_cache.has(2)
+
+    # Prefetch out of bounds frame does not error or cache
+    mgr.prefetch_frame(999)
+    assert not mgr._frame_cache.has(999)
+
+
+def test_manager_cache_invalidation_lifecycle(dummy_mask_dir, synthetic_signal_frames):
+    """Verify frame cache and cluster slice index invalidation on clear and reinit."""
+    mgr = ClusteringManager()
+    mgr.init_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+    )
+
+    # Populate cache and clusters
+    mgr.get_frame_image(1, dark_subtracted=True)
+    df = pd.DataFrame([{
+        "ClusterNum": 0, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0,
+        "Min": 80.0, "Max": 120.0, "XM": 15.5, "YM": 20.5, "Circ.": 0.8, "IntDen": 200.0
+    }])
+    mgr.set_all_clusters(df)
+
+    assert len(mgr._frame_cache) == 1
+    assert len(mgr._clusters_by_slice) == 1
+
+    # clear_clusters should clear _clusters_by_slice
+    mgr.clear_clusters()
+    assert len(mgr._clusters_by_slice) == 0
+
+    # set_mask should clear frame cache (baseline changed)
+    mgr.set_mask(
+        med_dark=np.zeros((64, 64), dtype=np.float32),
+        final_mask=np.ones((64, 64), dtype=np.float32),
+    )
+    assert len(mgr._frame_cache) == 0
+
+    # init_session should clear both
+    mgr.get_frame_image(1, dark_subtracted=True)
+    mgr.set_all_clusters(df)
+    assert len(mgr._frame_cache) == 1
+    assert len(mgr._clusters_by_slice) == 1
+
+    mgr.init_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+    )
+    assert len(mgr._frame_cache) == 0
+    assert len(mgr._clusters_by_slice) == 0
+
+
 # ============================================================================
 # 3. Worker Tests
 # ============================================================================
@@ -910,8 +1086,10 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
 
     # 2. Zoom Controls
     h, w = studio.manager.state.image_shape
-    # Zoom in
+    # Zoom in via click-to-zoom
     studio._handle_zoom_in()
+    mock_center_ev = MockMplEvent(studio._ax_dashboard_event, float(w) / 2.0, float(h) / 2.0)
+    studio._on_dash_canvas_clicked(mock_center_ev)
     assert studio._current_zoom_level == 2.0
     assert "Zoom: 2×" in studio._zoom_lbl.text()
     xlim = studio._ax_dashboard_event.get_xlim()
@@ -930,7 +1108,9 @@ def test_dashboard_zoom_and_intensity_clamping(qtbot, synthetic_signal_frames, d
 
     # Zoom in twice then reset
     studio._handle_zoom_in()
+    studio._on_dash_canvas_clicked(mock_center_ev)
     studio._handle_zoom_in()
+    studio._on_dash_canvas_clicked(mock_center_ev)
     assert studio._current_zoom_level == 4.0
     assert "Zoom: 4×" in studio._zoom_lbl.text()
     studio._handle_zoom_reset()
@@ -1094,8 +1274,10 @@ def test_studio_area_rangeslider_and_origin_upper(qapp, qtbot, synthetic_signal_
     assert studio._im_dashboard_event.origin == "upper"
     assert studio._ax_dashboard_event.get_ylim() == (float(h), 0.0)
 
-    # Zoom in: y limits must maintain origin="upper" (y1 > y0, y0 at top, y1 at bottom)
+    # Zoom in via click-to-zoom: y limits must maintain origin="upper" (y1 > y0, y0 at top, y1 at bottom)
     studio._handle_zoom_in()
+    mock_ev = MockMplEvent(studio._ax_dashboard_event, float(w) / 2.0, float(h) / 2.0)
+    studio._on_dash_canvas_clicked(mock_ev)
     xlim = studio._ax_dashboard_event.get_xlim()
     ylim = studio._ax_dashboard_event.get_ylim()
     assert ylim[0] > ylim[1]
@@ -1207,14 +1389,17 @@ def test_studio_frame_inspector_rendering_and_scrubbing(qapp, qtbot, synthetic_s
 
     studio.set_mode("Frame Inspector")
     assert "Frame 1/6" in studio._ax_frame.get_title()
-    assert len(studio._ax_frame.patches) == 2  # 2 cluster bounding boxes
+    assert studio._frame_boxes_lc is not None
+    assert len(studio._frame_boxes_lc.get_segments()) == 1  # only accepted when show rejected is unchecked
+    studio._show_rejected_cb.setChecked(True)
+    assert len(studio._frame_boxes_lc.get_segments()) == 2  # 2 cluster bounding boxes
 
     # Scrub to next frame
     studio.next_frame()
     assert studio._current_frame_idx == 1
     assert studio.frame_spin.value() == 2
     assert "Frame 2/6" in studio._ax_frame.get_title()
-    assert len(studio._ax_frame.patches) == 1
+    assert len(studio._frame_boxes_lc.get_segments()) == 1
 
     # Scrub to previous frame
     studio.prev_frame()
@@ -1456,3 +1641,281 @@ def test_adversarial_chunk_partition_boundaries(dummy_mask_dir):
     assert mgr.get_chunk_clusters(-1).empty
     assert mgr.get_chunk_clusters(5).empty
 
+
+
+# ============================================================================
+# 6. Task 3 Studio View Feature Tests
+# ============================================================================
+
+def test_area_slider_integer_stepping(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """TASK-03: Verify integer stepping (step=1.0) configured on area slider."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+
+    assert studio.area_slider.step == 1.0
+    studio.area_slider.set_values(2.4, 8.7)
+    assert studio.area_slider.val_left == 2.0
+    assert studio.area_slider.val_right == 9.0
+
+    studio.cleanup()
+
+
+def test_dashboard_click_to_zoom(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """TASK-04: Verify single-click center-zoom on 2D Event Map."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+
+    # 1. Initial State
+    assert hasattr(studio, "_dash_zoom_mode")
+    assert studio._dash_zoom_mode is False
+    assert studio._zoom_in_btn.text() == "🔍+ Zoom In"
+
+    # 2. Toggle zoom mode on
+    studio._handle_zoom_in()
+    assert studio._dash_zoom_mode is True
+    assert studio._zoom_in_btn.text() == "🔍 Click Zoom..."
+    assert studio._canvas_dashboard.cursor().shape() == Qt.CrossCursor
+
+    # 3. Toggle zoom mode off by clicking again
+    studio._handle_zoom_in()
+    assert studio._dash_zoom_mode is False
+    assert studio._zoom_in_btn.text() == "🔍+ Zoom In"
+    assert studio._canvas_dashboard.cursor().shape() != Qt.CrossCursor
+
+    # 4. Arm zoom mode again and trigger click on canvas
+    studio._handle_zoom_in()
+    assert studio._dash_zoom_mode is True
+
+    # Click on axes at (20.0, 30.0)
+    mock_ev = MockMplEvent(studio._ax_dashboard_event, 20.0, 30.0)
+    studio._on_dash_canvas_clicked(mock_ev)
+
+    assert studio._dash_zoom_mode is False
+    assert studio._zoom_in_btn.text() == "🔍+ Zoom In"
+    assert studio._canvas_dashboard.cursor().shape() != Qt.CrossCursor
+    assert studio._current_zoom_level == 2.0
+    assert "Zoom: 2×" in studio._zoom_lbl.text()
+
+    xlim = studio._ax_dashboard_event.get_xlim()
+    ylim = studio._ax_dashboard_event.get_ylim()
+    # Respects origin="upper" (ylim[0] > ylim[1])
+    assert ylim[0] > ylim[1]
+    cx = (xlim[0] + xlim[1]) / 2.0
+    cy = (ylim[0] + ylim[1]) / 2.0
+    assert cx == pytest.approx(20.0, abs=1.0)
+    assert cy == pytest.approx(30.0, abs=1.0)
+
+    # Reset view
+    studio._handle_zoom_reset()
+    assert studio._current_zoom_level == 1.0
+
+    studio.cleanup()
+
+
+def test_navigation_focus_trap_dismissal_and_arrow_keys(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """TASK-06: Focus trap dismissal on Return / click-away and keyboard scrubbing."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+    studio.show()
+    qapp.setActiveWindow(studio)
+    studio.activateWindow()
+    # 1. Frame spin returnPressed transfers focus (switch to Frame Inspector so widget is visible)
+    studio.set_mode("Frame Inspector")
+    studio.frame_spin.lineEdit().setFocus()
+    assert studio.frame_spin.hasFocus() or studio.frame_spin.lineEdit().hasFocus()
+    studio.frame_spin.lineEdit().returnPressed.emit()
+    assert not studio.frame_spin.hasFocus()
+    assert not studio.frame_spin.lineEdit().hasFocus()
+    assert studio.hasFocus()
+
+    # 2. Chunk spin returnPressed transfers focus (switch to Chunk Inspector so widget is visible)
+    studio.set_mode("Chunk Inspector")
+    studio.chunk_spin.lineEdit().setFocus()
+    assert studio.chunk_spin.hasFocus() or studio.chunk_spin.lineEdit().hasFocus()
+    studio.chunk_spin.lineEdit().returnPressed.emit()
+    assert not studio.chunk_spin.hasFocus()
+    assert not studio.chunk_spin.lineEdit().hasFocus()
+    assert studio.hasFocus()
+
+    # 3. Mouse press event dismisses focus if spin box was focused
+    studio.set_mode("Frame Inspector")
+    studio.frame_spin.lineEdit().setFocus()
+    assert studio.frame_spin.lineEdit().hasFocus()
+    mouse_ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(10, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    studio.mousePressEvent(mouse_ev)
+    assert not studio.frame_spin.hasFocus()
+    assert not studio.frame_spin.lineEdit().hasFocus()
+
+    # 4. Arrow keys in Frame Inspector mode
+    studio.set_mode("Frame Inspector")
+    studio.setFocus()
+    assert studio.frame_spin.value() == 1
+
+    # Right arrow -> next frame
+    right_ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.NoModifier)
+    studio.keyPressEvent(right_ev)
+    assert studio.frame_spin.value() == 2
+
+    # Left arrow -> prev frame
+    left_ev = QKeyEvent(QEvent.KeyPress, Qt.Key_Left, Qt.NoModifier)
+    studio.keyPressEvent(left_ev)
+    assert studio.frame_spin.value() == 1
+
+    # 5. Arrow keys in Chunk Inspector mode
+    studio.set_mode("Chunk Inspector")
+    studio.setFocus()
+    assert studio.chunk_spin.value() == 1
+
+    studio.keyPressEvent(right_ev)
+    assert studio.chunk_spin.value() == 2
+
+    studio.keyPressEvent(left_ev)
+    assert studio.chunk_spin.value() == 1
+
+    # 6. If focused on a text entry / spinbox, arrow keys should NOT trigger frame scrubbing
+    studio.frame_spin.setFocus()
+    studio.set_mode("Frame Inspector")
+    studio.keyPressEvent(right_ev)
+    assert studio.frame_spin.value() == 1
+
+    studio.cleanup()
+
+
+def test_frame_inspector_vectorized_overlays_and_prefetch(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """TASK-07 UI: Vectorized Frame Inspector overlays, artist reuse, Show Rejected, and prefetch."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+
+    mock_df = pd.DataFrame([
+        # Frame 1: 1 accepted (200 ADU), 1 rejected (50 ADU)
+        {"ClusterNum": 0, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 15.0, "YM": 20.0, "Circ.": 0.8, "IntDen": 200.0},
+        {"ClusterNum": 1, "Slice": 1, "Area": 1, "Mean": 50.0, "StdDev": 0.0, "Min": 50.0, "Max": 50.0, "XM": 40.0, "YM": 40.0, "Circ.": 1.0, "IntDen": 50.0},
+        # Frame 2: 1 accepted
+        {"ClusterNum": 2, "Slice": 2, "Area": 3, "Mean": 90.0, "StdDev": 0.0, "Min": 70.0, "Max": 110.0, "XM": 30.0, "YM": 40.0, "Circ.": 0.9, "IntDen": 250.0},
+    ])
+    studio.manager.set_all_clusters(mock_df)
+
+    studio.set_mode("Frame Inspector")
+
+    # Show Rejected checkbox exists and is default unchecked
+    assert hasattr(studio, "_show_rejected_cb")
+    assert studio._show_rejected_cb.isChecked() is False
+
+    # Check LineCollection and scatter
+    assert studio._frame_boxes_lc is not None
+    # 1 accepted box
+    assert len(studio._frame_boxes_lc.get_segments()) == 1
+    assert studio._frame_centroids_scatter is not None
+    assert studio._frame_rej_centroids_scatter is None
+
+    # Enable Show Rejected
+    studio._show_rejected_cb.setChecked(True)
+    assert len(studio._frame_boxes_lc.get_segments()) == 2
+    assert studio._frame_rej_centroids_scatter is not None
+
+    # Test Artist Reuse across frame scrubs
+    im_ref = studio._im_frame
+    assert im_ref is not None
+    studio.next_frame()
+    assert studio._im_frame is im_ref
+
+    # Test background sliding-window prefetcher
+    qtbot.waitUntil(lambda: studio.manager._frame_cache.has(3), timeout=2000)
+    assert studio.manager._frame_cache.has(3)
+
+    studio.cleanup()
+
+
+def test_chunk_inspector_zoom_and_clamping_persistence(qapp, qtbot, synthetic_signal_frames, dummy_mask_dir):
+    """TASK-09: Chunk Inspector Zoom controls, intensity clamping, and viewport persistence."""
+    studio = ClusteringStudioView()
+    qtbot.addWidget(studio)
+    studio.load_session(
+        signal_paths=synthetic_signal_frames,
+        chunk_size=3,
+        mask_dir=dummy_mask_dir,
+        auto_run=False,
+    )
+
+    mock_df = pd.DataFrame([
+        {"ClusterNum": 0, "Slice": 1, "Area": 2, "Mean": 100.0, "StdDev": 0.0, "Min": 80.0, "Max": 120.0, "XM": 15.0, "YM": 20.0, "Circ.": 0.8, "IntDen": 200.0},
+        {"ClusterNum": 1, "Slice": 4, "Area": 3, "Mean": 90.0, "StdDev": 0.0, "Min": 70.0, "Max": 110.0, "XM": 30.0, "YM": 40.0, "Circ.": 0.9, "IntDen": 250.0},
+    ])
+    studio.manager.set_all_clusters(mock_df)
+
+    studio.set_mode("Chunk Inspector")
+
+    # 1. Check controls exist
+    assert hasattr(studio, "_chunk_zoom_in_btn")
+    assert hasattr(studio, "_chunk_zoom_out_btn")
+    assert hasattr(studio, "_chunk_zoom_reset_btn")
+    assert hasattr(studio, "_chunk_zoom_lbl")
+    assert hasattr(studio, "_chunk_floor_entry")
+    assert hasattr(studio, "_chunk_clamping_slider")
+    assert hasattr(studio, "_chunk_ceiling_entry")
+
+    # 2. Click-to-zoom on Chunk Canvas
+    assert studio._chunk_zoom_mode is False
+    studio._handle_chunk_zoom_in()
+    assert studio._chunk_zoom_mode is True
+    assert studio._chunk_zoom_in_btn.text() == "🔍 Click Zoom..."
+    assert studio._canvas_chunk.cursor().shape() == Qt.CrossCursor
+
+    # Simulate click at (30.0, 30.0)
+    mock_ev = MockMplEvent(studio._ax_chunk, 30.0, 30.0)
+    studio._on_chunk_canvas_clicked(mock_ev)
+
+    assert studio._chunk_zoom_mode is False
+    assert studio._chunk_zoom_level == 2.0
+    assert "Zoom: 2×" in studio._chunk_zoom_lbl.text()
+    xlim_zoom = studio._ax_chunk.get_xlim()
+    ylim_zoom = studio._ax_chunk.get_ylim()
+    assert ylim_zoom[0] > ylim_zoom[1]
+
+    # 3. Test Clamping Slider
+    studio._handle_chunk_clamping_changed(0.5, 2.0)
+    assert studio._chunk_clamping_floor == 0.5
+    assert studio._chunk_clamping_ceiling == 2.0
+    assert studio._im_chunk.get_clim() == (0.5, 2.0)
+    assert studio._chunk_floor_entry.text() == "0.50"
+    assert studio._chunk_ceiling_entry.text() == "2.00"
+
+    # 4. Test Viewport Persistence across scrubbing
+    studio.next_chunk()
+    assert studio._current_chunk_idx == 1
+    assert studio._chunk_zoom_level == 2.0
+    xlim_chunk2 = studio._ax_chunk.get_xlim()
+    ylim_chunk2 = studio._ax_chunk.get_ylim()
+    np.testing.assert_allclose(xlim_chunk2, xlim_zoom)
+    np.testing.assert_allclose(ylim_chunk2, ylim_zoom)
+
+    # 5. Reset zoom
+    studio._handle_chunk_zoom_reset()
+    assert studio._chunk_zoom_level == 1.0
+    assert "Zoom: 1×" in studio._chunk_zoom_lbl.text()
+
+    studio.cleanup()

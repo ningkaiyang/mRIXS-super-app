@@ -29,7 +29,6 @@ You help beamline scientists with:
 - **PCA**: Principal Component Analysis — intensity-weighted line detection for peak line finding
 - **Phase Correlation**: Frequency-domain cross-correlation for translation estimation
 - **DoG**: Difference of Gaussians — bandpass prefilter for Phase Correlation
-- **Zarr**: Chunked array storage format used for frame caching with MD5 content hashing
 - **Anscombe VST**: Variance-Stabilizing Transform for Poisson noise in low-count images
 - **MAD Despiking**: Median Absolute Deviation based hot-pixel removal
 

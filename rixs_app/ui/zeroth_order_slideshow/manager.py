@@ -1,12 +1,11 @@
-"""Logical manager driving the state, Zarr caching, and calculations of the zeroth-order calibration slideshow."""
+"""Logical manager driving the state, in-memory caching, and calculations of the zeroth-order calibration slideshow."""
 
 import os
 import queue
 import threading
 import numpy as np
-import hashlib
 import inspect
-from rixs_app.core.dataset import ZarrSequenceManager
+from rixs_app.core.dataset import SequenceManager
 from rixs_app.core.zeroth_order import run_zeroth_order_pipeline
 
 def _call_on_complete(on_complete, success, err_msg=None):
@@ -28,6 +27,7 @@ class ZerothOrderManager:
         self._local = threading.local()
         self._file_list = []
         self.lock = threading.Lock()
+        self.sequence_manager = None
 
     @property
     def file_list(self):
@@ -68,13 +68,13 @@ class ZerothOrderManager:
         self._cache_generation = 0
         self._active_config_fingerprint = None
 
-        # Zarr cache
-        self.zarr_manager = None
+        # In-memory sequence manager
+        self.sequence_manager = None
         self.session_id = None
 
     def start(self, file_list: list[str], txt_metadata=None):
         """Resets the manager state and launches data preloading."""
-        manager = ZarrSequenceManager(file_list)
+        manager = SequenceManager(file_list)
         self.file_list = file_list
         self.current_idx = 0
         self.autoplay_active = False
@@ -86,7 +86,7 @@ class ZerothOrderManager:
             self.mono_energy_ev = 850.0
 
         with self.lock:
-            self.zarr_manager = manager
+            self.sequence_manager = manager
             self.session_id = object()
             self.scores.clear()
             self.centroids.clear()
@@ -104,12 +104,12 @@ class ZerothOrderManager:
 
     def _load_reference_bounds(self):
         """Loads first frame to establish display thresholds using 20th/98th percentile."""
-        current_zarr_manager = self.zarr_manager
-        if current_zarr_manager is None or not self.file_list:
+        current_seq_manager = self.sequence_manager
+        if current_seq_manager is None or not self.file_list:
             return
         ref_raw = None
         for idx in range(len(self.file_list)):
-            frame = current_zarr_manager.get_frame(idx)
+            frame = current_seq_manager.get_frame(idx)
             if frame is not None:
                 ref_raw = frame
                 break
@@ -130,10 +130,34 @@ class ZerothOrderManager:
         if self.slicing_ceiling <= self.slicing_floor:
             self.slicing_ceiling = float(self.intensity_max)
 
+    def get_frame(self, idx: int) -> np.ndarray | None:
+        """Retrieves raw frame for the given index via sequence_manager.
+
+        Args:
+            idx: Zero-based frame index.
+
+        Returns:
+            2-D float32 array or None if not loaded.
+        """
+        if self.sequence_manager is None:
+            return None
+        return self.sequence_manager.get_frame(idx)
+
+    def get_pipeline_data(self, idx: int) -> dict:
+        """Retrieves or calculates the zeroth-order pipeline breakdown dictionary for a frame.
+
+        Args:
+            idx: Zero-based frame index.
+
+        Returns:
+            Pipeline result dictionary.
+        """
+        return self.get_frame_pipeline_data(idx)
+
     def get_frame_pipeline_data(self, idx: int) -> dict:
         """Retrieves or calculates the zeroth-order pipeline breakdown dictionary for a frame."""
         self._local.file_list = None
-        current_zarr_manager = self.zarr_manager
+        current_seq_manager = self.sequence_manager
         current_session = self.session_id
         session_file_list = self._file_list
         if idx < 0 or idx >= len(session_file_list):
@@ -151,14 +175,14 @@ class ZerothOrderManager:
         if self.session_id is not current_session:
             return None
 
-        # 2. Get frames from Zarr cache
-        if current_zarr_manager is None:
+        # 2. Get frames from in-memory cache
+        if current_seq_manager is None:
             return None
-        denoised_img = current_zarr_manager.get_derived_frame(idx, "denoised_img")
-        dsm_img = current_zarr_manager.get_derived_frame(idx, "dsm_img")
-        masked_img = current_zarr_manager.get_derived_frame(idx, "masked_img")
-        grad_img = current_zarr_manager.get_derived_frame(idx, "grad_img")
-        raw_img = current_zarr_manager.get_frame(idx)
+        denoised_img = current_seq_manager.get_derived_frame(idx, "denoised_img")
+        dsm_img = current_seq_manager.get_derived_frame(idx, "dsm_img")
+        masked_img = current_seq_manager.get_derived_frame(idx, "masked_img")
+        grad_img = current_seq_manager.get_derived_frame(idx, "grad_img")
+        raw_img = current_seq_manager.get_frame(idx)
 
         if raw_img is None:
             return None
@@ -194,16 +218,16 @@ class ZerothOrderManager:
         )
 
         if self.session_id is current_session:
-            # Save derived frames to disk cache
-            if current_zarr_manager is not None:
+            # Save derived frames to in-memory cache
+            if current_seq_manager is not None:
                 if res.get("denoised_img") is not None:
-                    current_zarr_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
+                    current_seq_manager.set_derived_frame(idx, "denoised_img", res["denoised_img"])
                 if res.get("dsm_img") is not None:
-                    current_zarr_manager.set_derived_frame(idx, "dsm_img", res["dsm_img"])
+                    current_seq_manager.set_derived_frame(idx, "dsm_img", res["dsm_img"])
                 if res.get("masked_img") is not None:
-                    current_zarr_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
+                    current_seq_manager.set_derived_frame(idx, "masked_img", res["masked_img"])
                 if res.get("grad_img") is not None:
-                    current_zarr_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
+                    current_seq_manager.set_derived_frame(idx, "grad_img", res["grad_img"])
             with self.lock:
                 if self.session_id is current_session:
                     self.centroids[idx] = res["centroid"]

@@ -224,10 +224,20 @@ def test_e2e_real_dataset_pipeline_performance(qtbot):
 
     # 4. Test Zoom Controls
     studio._handle_zoom_in()
+    assert studio._dash_zoom_mode is True
+
+    class MockClickEvent:
+        inaxes = studio._ax_dashboard_event
+        xdata = 100.0
+        ydata = 100.0
+
+    studio._on_dash_canvas_clicked(MockClickEvent())
     assert studio._current_zoom_level == 2.0
     assert "Zoom: 2×" in studio._zoom_lbl.text()
 
     studio._handle_zoom_in()
+    assert studio._dash_zoom_mode is True
+    studio._on_dash_canvas_clicked(MockClickEvent())
     assert studio._current_zoom_level == 4.0
     assert "Zoom: 4×" in studio._zoom_lbl.text()
 

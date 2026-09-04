@@ -256,11 +256,6 @@ class ClusteringFileSelectionView(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._browse_dir_btn = QPushButton("📂 Browse Folder...", col)
-        theme.set_tool_btn(self._browse_dir_btn)
-        self._browse_dir_btn.clicked.connect(self._handle_browse_dir)
-        btn_row.addWidget(self._browse_dir_btn)
-
         self._browse_files_btn = QPushButton("📄 Add Files...", col)
         theme.set_tool_btn(self._browse_files_btn)
         self._browse_files_btn.clicked.connect(self._handle_browse_files)
@@ -278,7 +273,7 @@ class ClusteringFileSelectionView(QWidget):
         # File List Section
         list_header_row = QHBoxLayout()
         self._file_count_lbl = QLabel("No Signal TIFF Files Loaded", col)
-        self._file_count_lbl.setStyleSheet("font-weight: bold; color: #e2e8f0;")
+        self._file_count_lbl.setStyleSheet("color: #94a3b8; font-weight: bold;")
         list_header_row.addWidget(self._file_count_lbl)
         list_header_row.addStretch(1)
         layout.addLayout(list_header_row)
@@ -485,10 +480,13 @@ class ClusteringFileSelectionView(QWidget):
         n = len(self.signal_paths)
         if n == 0:
             self._file_count_lbl.setText("No Signal TIFF Files Loaded")
-        elif n == 1:
-            self._file_count_lbl.setText("Loaded 1 Signal TIFF Frame")
+            self._file_count_lbl.setStyleSheet("color: #94a3b8; font-weight: bold;")
         else:
-            self._file_count_lbl.setText(f"Loaded {n:,} Signal TIFF Frames")
+            if n == 1:
+                self._file_count_lbl.setText("Loaded 1 Signal TIFF Frame")
+            else:
+                self._file_count_lbl.setText(f"Loaded {n:,} Signal TIFF Frames")
+            self._file_count_lbl.setStyleSheet("color: #ef4444; font-weight: bold;")
 
         self._update_chunk_summary()
         self._update_launch_state()

@@ -68,7 +68,10 @@ from .dark_mask_store import (
     get_meta_file_path,
 )
 
+from .frame_cache import CompressedFrameCache
+
 __all__ = [
+    "CompressedFrameCache",
     "PCAFitFailure",
     "load_raw",
     "natural_sort",

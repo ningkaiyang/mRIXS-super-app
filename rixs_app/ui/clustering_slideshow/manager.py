@@ -23,6 +23,7 @@ import tifffile
 
 from rixs_app.core import dark_mask_store
 from rixs_app.core.dark_mask_store import DarkMaskRecord
+from rixs_app.core.frame_cache import CompressedFrameCache
 from rixs_app.core.photon_clustering import (
     ClusterConfig,
     ReconstructionConfig,
@@ -164,6 +165,8 @@ class ClusteringManager:
         mask_dir: Path | str | None = None,
     ) -> None:
         self.state = ClusteringState()
+        self._frame_cache = CompressedFrameCache(capacity=128)
+        self._clusters_by_slice: dict[int, pd.DataFrame] = {}
         if signal_paths is not None:
             self.init_session(
                 signal_paths=signal_paths,
@@ -216,6 +219,8 @@ class ClusteringManager:
             is_processing=False,
             stale_stage2=False,
         )
+        self._frame_cache.clear()
+        self._clusters_by_slice = {}
 
     def set_mask(
         self,
@@ -234,6 +239,7 @@ class ClusteringManager:
         self.state.final_mask = mask_arr
         self.state.mask_record = mask_record
         self.state.image_shape = (int(med_arr.shape[0]), int(med_arr.shape[1]))
+        self._frame_cache.clear()
 
     def clear_clusters(self) -> None:
         """Clear extracted clusters and reset progress."""
@@ -242,6 +248,7 @@ class ClusteringManager:
         self.state.latest_recon = None
         self.state.processed_frame_count = 0
         self.state.stale_stage2 = False
+        self._clusters_by_slice.clear()
 
     def append_frame_clusters(self, frame_idx: int, frame_df: pd.DataFrame) -> None:
         """Append extracted clusters from a single processed frame to the in-memory cache.
@@ -254,21 +261,50 @@ class ClusteringManager:
         if frame_df is not None and not frame_df.empty:
             self.state._frame_dfs.append(frame_df)
             self.state._dirty = True
+            if "Slice" in frame_df.columns:
+                for s, grp in frame_df.groupby("Slice"):
+                    self._clusters_by_slice[int(s)] = grp.copy().reset_index(drop=True)
+            else:
+                self._clusters_by_slice[int(frame_idx)] = frame_df.copy().reset_index(drop=True)
+        else:
+            self._clusters_by_slice.setdefault(int(frame_idx), pd.DataFrame(columns=CLUSTER_COLUMNS))
+
+    def _rebuild_clusters_by_slice(self) -> None:
+        df = self.state.df_clusters
+        if df is not None and not df.empty and "Slice" in df.columns:
+            self._clusters_by_slice = {
+                int(s): grp.copy().reset_index(drop=True)
+                for s, grp in df.groupby("Slice")
+            }
+        else:
+            self._clusters_by_slice = {}
 
     def set_all_clusters(self, df_clusters: pd.DataFrame) -> None:
-        """Set the entire cluster cache at once.
+        """Set the entire cluster cache at once and build O(1) slice index.
 
         Args:
             df_clusters: Consolidated DataFrame of all clusters.
         """
         if df_clusters is None or df_clusters.empty:
             self.state.df_clusters = pd.DataFrame(columns=CLUSTER_COLUMNS)
+            self._clusters_by_slice = {}
         else:
             df = df_clusters.copy().reset_index(drop=True)
             df["ClusterNum"] = np.arange(len(df), dtype=np.int64)
             self.state.df_clusters = df
+            if "Slice" in df.columns:
+                self._clusters_by_slice = {
+                    int(s): grp.copy().reset_index(drop=True)
+                    for s, grp in df.groupby("Slice")
+                }
+            else:
+                self._clusters_by_slice = {}
         self.state.processed_frame_count = len(self.state.signal_paths)
         self.state.latest_recon = None
+
+    def set_clusters_df(self, df_clusters: pd.DataFrame) -> None:
+        """Alias for set_all_clusters."""
+        self.set_all_clusters(df_clusters)
 
     def get_reconstruction(
         self, recon_config: ReconstructionConfig | None = None
@@ -367,45 +403,52 @@ class ClusteringManager:
         self.set_all_clusters(df_clusters)
 
     def get_frame_clusters(
-        self, slice_idx: int | None = None, frame_idx: int | None = None
+        self,
+        slice_num: int | None = None,
+        slice_idx: int | None = None,
+        frame_idx: int | None = None,
     ) -> pd.DataFrame:
-        """Query clusters detected in a single frame.
+        """Query clusters detected in a single frame in O(1) time (< 0.01 ms).
 
         Args:
-            slice_idx: 1-indexed global frame number.
-            frame_idx: 0-indexed or 1-indexed frame number.
+            slice_num: 1-indexed global frame number (Slice).
+            slice_idx: Optional 1-indexed global frame number.
+            frame_idx: Optional 0-indexed or 1-indexed frame number.
 
         Returns:
             DataFrame containing clusters detected in the frame.
         """
-        df = self.state.df_clusters
-        if df.empty:
-            return pd.DataFrame(columns=CLUSTER_COLUMNS)
-
-        if slice_idx is not None:
-            target_slice = slice_idx
+        target_slice: int | None = None
+        if slice_num is not None:
+            target_slice = int(slice_num)
+        elif slice_idx is not None:
+            target_slice = int(slice_idx)
         elif frame_idx is not None:
-            # Handle 0-indexed or 1-indexed frame_idx
-            if (frame_idx + 1) in df["Slice"].values or frame_idx == 0:
-                target_slice = frame_idx + 1
+            if (frame_idx + 1) in self._clusters_by_slice or frame_idx == 0:
+                target_slice = int(frame_idx + 1)
             else:
-                target_slice = frame_idx
+                target_slice = int(frame_idx)
         else:
             return pd.DataFrame(columns=CLUSTER_COLUMNS)
 
-        mask = df["Slice"] == target_slice
-        return df[mask].copy().reset_index(drop=True)
+        if not self._clusters_by_slice and not self.state.df_clusters.empty:
+            self._rebuild_clusters_by_slice()
+
+        res = self._clusters_by_slice.get(target_slice)
+        if res is not None:
+            return res
+        return pd.DataFrame(columns=CLUSTER_COLUMNS)
 
     def get_chunk_count(self) -> int:
         """Total number of chunks in the session."""
         return self.total_chunks
 
     def get_frame_image(self, slice_idx: int, dark_subtracted: bool = True) -> np.ndarray:
-        """Read and optionally dark-subtract a single signal frame.
+        """Read and optionally dark-subtract a single signal frame with LRU cache.
 
         Args:
             slice_idx: 1-indexed frame index (1 <= slice_idx <= total_frames).
-            dark_subtracted: If True, subtracts med_dark and applies final_mask.
+            dark_subtracted: If True, subtracts med_dark and applies final_mask, caching the result.
 
         Returns:
             2D float32 or uint16 numpy array.
@@ -420,14 +463,44 @@ class ClusteringManager:
                 f"slice_idx {slice_idx} out of range (1 to {n_frames})"
             )
 
+        if dark_subtracted:
+            cached = self._frame_cache.get(slice_idx)
+            if cached is not None:
+                return cached
+
+            path = self.state.signal_paths[slice_idx - 1]
+            raw_frame = tifffile.imread(path).astype(np.float32)
+
+            if self.state.med_dark is not None and self.state.final_mask is not None:
+                clean = (raw_frame - self.state.med_dark) * self.state.final_mask
+                clean = np.maximum(0.0, clean).astype(np.float32)
+            else:
+                clean = raw_frame
+
+            self._frame_cache.put(slice_idx, clean)
+            return clean
+
         path = self.state.signal_paths[slice_idx - 1]
-        raw_frame = tifffile.imread(path).astype(np.float32)
+        return tifffile.imread(path).astype(np.float32)
 
-        if dark_subtracted and self.state.med_dark is not None and self.state.final_mask is not None:
-            clean = (raw_frame - self.state.med_dark) * self.state.final_mask
-            return np.maximum(0.0, clean).astype(np.float32)
+    def prefetch_frame(self, slice_idx: int) -> None:
+        """Prefetch and cache a dark-subtracted frame in the background.
 
-        return raw_frame
+        Args:
+            slice_idx: 1-indexed frame index.
+        """
+        if not self._frame_cache.has(slice_idx) and 1 <= slice_idx <= len(self.state.signal_paths):
+            path = self.state.signal_paths[slice_idx - 1]
+            try:
+                raw_frame = tifffile.imread(path).astype(np.float32)
+                if self.state.med_dark is not None and self.state.final_mask is not None:
+                    clean = (raw_frame - self.state.med_dark) * self.state.final_mask
+                    clean = np.maximum(0.0, clean).astype(np.float32)
+                else:
+                    clean = raw_frame
+                self._frame_cache.put(slice_idx, clean)
+            except Exception as e:
+                logger.warning("Failed to prefetch frame %d: %s", slice_idx, e)
 
     def mark_stage2_stale(self, stale: bool = True) -> None:
         """Set or clear the stale Stage 2 parameters flag."""

@@ -20,6 +20,9 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QWidget
 
 
+_UNSET = object()
+
+
 class RangeSlider(QWidget):
     """A custom dual-handle range slider built with QPainter.
 
@@ -29,6 +32,7 @@ class RangeSlider(QWidget):
     - Concentric tactile handles (16px outer ring, 10px inner white circle, hover halo, drop shadow).
     - Live floating value callout pills above handles during hover and drag.
     - Middle-span window dragging translating [floor, ceiling] preserving window span.
+    - Discrete stepping support (step: float | None = None) with integer pill formatting.
     - Pixel-crisp integer coordinate drawing for macOS Retina / High-DPI displays.
 
     Emits the ``range_changed`` signal whenever either handle or window is dragged,
@@ -36,21 +40,28 @@ class RangeSlider(QWidget):
 
     Args:
         parent: Parent widget.
+        step: Optional discrete step increment. Pass None for continuous float dragging.
     """
 
     range_changed = Signal(float, float)
     slider_released = Signal(float, float)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        step: float | None = None,
+    ) -> None:
         """Initialise the RangeSlider.
 
         Args:
             parent: Parent QWidget.
+            step: Optional discrete step increment. Pass None for continuous float dragging.
         """
         super().__init__(parent)
 
         self.min_val: float = 0.0
         self.max_val: float = 1.0
+        self.step: float | None = float(step) if step is not None else None
         self.val_left: float = 0.0
         self.val_right: float = 1.0
 
@@ -88,19 +99,54 @@ class RangeSlider(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def configure_range(self, min_val: float, max_val: float) -> None:
+    def _snap_val(self, val: float) -> float:
+        """Snap a value to the nearest step increment from min_val if step is configured.
+
+        Args:
+            val: Numeric value.
+
+        Returns:
+            Snapped value clamped to [min_val, max_val].
+        """
+        if self.step is not None and self.step > 0:
+            steps = round((val - self.min_val) / self.step)
+            val = self.min_val + steps * self.step
+        return max(self.min_val, min(self.max_val, val))
+
+    def configure_range(
+        self,
+        min_val: float,
+        max_val: float,
+        step: float | None | object = _UNSET,
+    ) -> None:
         """Set the absolute minimum and maximum boundaries for the slider.
 
         Args:
             min_val: Lower bound.
             max_val: Upper bound (must be > min_val).
+            step: Optional step increment. If provided, updates slider step.
         """
         self.min_val = float(min_val)
         self.max_val = float(max_val)
         if self.max_val <= self.min_val:
             self.max_val = self.min_val + 1.0
-        self.val_left = max(self.min_val, min(self.max_val, self.val_left))
-        self.val_right = max(self.min_val, min(self.max_val, self.val_right))
+        if step is not _UNSET:
+            self.step = float(step) if step is not None else None
+        self.val_left = self._snap_val(self.val_left)
+        self.val_right = self._snap_val(self.val_right)
+        if self.val_right < self.val_left:
+            self.val_right = self.val_left
+        self.update()
+
+    def set_step(self, step: float | None) -> None:
+        """Set or clear the discrete step increment.
+
+        Args:
+            step: Discrete step increment, or None for continuous float dragging.
+        """
+        self.step = float(step) if step is not None else None
+        self.val_left = self._snap_val(self.val_left)
+        self.val_right = self._snap_val(self.val_right)
         if self.val_right < self.val_left:
             self.val_right = self.val_left
         self.update()
@@ -108,14 +154,14 @@ class RangeSlider(QWidget):
     def set_values(self, val_left: float, val_right: float) -> None:
         """Set the current left and right handle positions.
 
-        Values are clamped to [min_val, max_val].
+        Values are clamped to [min_val, max_val] and snapped if step is configured.
 
         Args:
             val_left: Left handle value.
             val_right: Right handle value.
         """
-        self.val_left = max(self.min_val, min(self.max_val, float(val_left)))
-        self.val_right = max(self.min_val, min(self.max_val, float(val_right)))
+        self.val_left = self._snap_val(float(val_left))
+        self.val_right = self._snap_val(float(val_right))
         if self.val_right < self.val_left:
             self.val_right = self.val_left
         self.update()
@@ -146,14 +192,15 @@ class RangeSlider(QWidget):
             x: The x pixel coordinate.
 
         Returns:
-            The corresponding slider value, clamped to [min_val, max_val].
+            The corresponding slider value, clamped to [min_val, max_val]
+            and snapped to step increment if configured.
         """
         w = self.width()
         usable = max(w - 2 * self._padding, 1)
         frac = (x - self._padding) / usable
         frac = max(0.0, min(1.0, frac))
-        val = self.min_val + frac * (self.max_val - self.min_val)
-        return max(self.min_val, min(self.max_val, val))
+        raw_val = self.min_val + frac * (self.max_val - self.min_val)
+        return self._snap_val(raw_val)
 
     def _format_value(self, val: float) -> str:
         """Format a slider value cleanly for the callout pill.
@@ -164,6 +211,9 @@ class RangeSlider(QWidget):
         Returns:
             Formatted string representation.
         """
+        if self.step is not None and self.step > 0 and int(self.step) == self.step:
+            return f"{int(round(val))}"
+
         span = abs(self.max_val - self.min_val)
         if span >= 500:
             return f"{val:.0f}"
@@ -417,8 +467,14 @@ class RangeSlider(QWidget):
             delta_val = delta_x / usable * (self.max_val - self.min_val)
             window_span = self._drag_start_right - self._drag_start_left
 
-            new_left = self._drag_start_left + delta_val
-            new_right = self._drag_start_right + delta_val
+            if self.step is not None and self.step > 0:
+                delta_steps = round(delta_val / self.step)
+                snapped_delta = delta_steps * self.step
+                new_left = self._drag_start_left + snapped_delta
+                new_right = self._drag_start_right + snapped_delta
+            else:
+                new_left = self._drag_start_left + delta_val
+                new_right = self._drag_start_right + delta_val
 
             if new_left < self.min_val:
                 new_left = self.min_val

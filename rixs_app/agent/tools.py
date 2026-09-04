@@ -423,7 +423,6 @@ def _register_tools(registry: ToolRegistry) -> None:
         recursive: bool = False,
         save_png: bool = True,
         save_json: bool = True,
-        ephemeral_cache: bool = True,
         overwrite: bool = False,
         threshold: str = "99.9",
     ) -> str:
@@ -435,7 +434,6 @@ def _register_tools(registry: ToolRegistry) -> None:
             recursive (bool): Whether to recurse into subdirectories.
             save_png (bool): Save comparison PNG (Direct Sum vs Aligned Sum).
             save_json (bool): Save computed drift offsets to JSON.
-            ephemeral_cache (bool): Clean up temporary tif-cache/ zarr directory after processing.
             overwrite (bool): Overwrite existing sum output files.
             threshold (str): PCA percentile threshold ('99.9' or 'auto').
         """
@@ -457,8 +455,6 @@ def _register_tools(registry: ToolRegistry) -> None:
             cmd.append("--png")
         if save_json:
             cmd.append("--json")
-        if ephemeral_cache:
-            cmd.append("--ephemeral-cache")
         if overwrite:
             cmd.append("--overwrite")
 

@@ -90,9 +90,8 @@ def qapp():
 def temp_tif_files(tmp_path):
     """Three tiny synthetic TIFF files inside a pytest-managed temp dir.
 
-    Using ``tmp_path`` instead of ``tempfile.TemporaryDirectory`` avoids
-    OSError on Windows/macOS when Zarr has written sub-directories that
-    prevent shutil.rmtree from deleting the directory.
+    Using ``tmp_path`` instead of ``tempfile.TemporaryDirectory`` ensures
+    clean directory teardown across platforms.
     """
     files = []
     for i in range(3):

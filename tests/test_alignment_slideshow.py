@@ -42,7 +42,7 @@ def synthetic_tifs(tmp_path):
 @pytest.fixture
 def slideshow(qapp, synthetic_tifs, qtbot):
     """Instantiate SlideshowView with mocked dataset for fast, synchronous UI tests."""
-    with patch("rixs_app.ui.alignment_slideshow.alignment_manager.ZarrSequenceManager") as mock_ds:
+    with patch("rixs_app.ui.alignment_slideshow.alignment_manager.SequenceManager") as mock_ds:
         mock_instance = MagicMock()
         mock_instance.get_frame.return_value = np.zeros((64, 64), dtype=np.float32)
         mock_ds.return_value = mock_instance

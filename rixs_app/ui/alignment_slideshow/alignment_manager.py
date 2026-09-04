@@ -6,7 +6,7 @@ import threading
 import numpy as np
 import sys
 
-from rixs_app.core.dataset import ZarrSequenceManager
+from rixs_app.core.dataset import SequenceManager
 from rixs_app.core import (
     PCAFitFailure,
     apply_colormap,
@@ -71,7 +71,7 @@ class SlideshowManager:
         self.per_frame_origin = {}
 
         # Caching
-        self.zarr_manager = None
+        self.sequence_manager = None
         self.rgb_cache = {}
         self.offset_cache = {}
         self.ref_ecc_pyr = None
@@ -110,7 +110,7 @@ class SlideshowManager:
         self.ref_raw = None
         self.ref_origin = None
         self.ref_direction = None
-        self.zarr_manager = ZarrSequenceManager(file_list)
+        self.sequence_manager = SequenceManager(file_list)
         self.rgb_cache.clear()
         self.offset_cache.clear()
         self.ref_ecc_pyr = None
@@ -187,11 +187,11 @@ class SlideshowManager:
         Returns:
             np.ndarray: The 2D image array, or None if loading fails.
         """
-        if self.zarr_manager is None:
+        if self.sequence_manager is None:
             return None
         try:
             idx = self.file_list.index(filepath)
-            return self.zarr_manager.get_frame(idx)
+            return self.sequence_manager.get_frame(idx)
         except ValueError:
             return None
 

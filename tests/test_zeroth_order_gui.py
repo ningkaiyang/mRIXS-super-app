@@ -21,7 +21,6 @@ from PySide6.QtWidgets import QApplication
 
 from rixs_app.ui.zeroth_order_slideshow.slideshow_view import ZerothOrderSlideshowView
 from rixs_app.ui.zeroth_order_slideshow.manager import ZerothOrderManager
-from rixs_app.core.dataset import ZarrSequenceManager
 from rixs_app.core.zeroth_order_evaluator import ZerothOrderResult
 
 
@@ -295,24 +294,6 @@ def test_zo_manager_missing_last_file_no_crash(app_window, temp_tif_files, tmp_p
     v = app_window.zeroth_order_view
     v.manager.current_idx = 3
     v.load_and_render()  # must not raise
-
-
-# ---------------------------------------------------------------------------
-# Zarr cache fallback (pure Python, no GUI display required)
-# ---------------------------------------------------------------------------
-
-def test_zo_zarr_cache_fallback(temp_tif_files):
-    """ZarrSequenceManager must fall back to tempdir when main cache path fails."""
-    import tempfile
-    import hashlib
-    with patch("os.makedirs", side_effect=PermissionError("Permission Denied")):
-        manager = ZarrSequenceManager(temp_tif_files)
-        assert manager.zarr_group is not None
-
-    tif_dir = os.path.dirname(os.path.abspath(temp_tif_files[0]))
-    dir_hash = hashlib.md5(tif_dir.encode("utf-8")).hexdigest()
-    expected_fallback = os.path.join(tempfile.gettempdir(), f"rixs_cache_{dir_hash}")
-    assert os.path.exists(expected_fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -636,8 +617,8 @@ def test_zo_best_focus_celebration_badge_and_card_glow(app_window, temp_tif_file
     assert v.navbar.best_focus_badge.isHidden() is False
 
 
-def test_zo_zarr_dsm_img_caching_and_retrieval(app_window, temp_tif_files):
-    """Row-smoothed stage image (dsm_img) must be stored in Zarr cache and retrieved on hit."""
+def test_zo_dsm_img_caching_and_retrieval(app_window, temp_tif_files):
+    """Row-smoothed stage image (dsm_img) must be stored in memory cache and retrieved on hit."""
     app_window.show_zeroth_order_calibration(temp_tif_files)
     manager = app_window.zeroth_order_view.manager
 
@@ -648,8 +629,8 @@ def test_zo_zarr_dsm_img_caching_and_retrieval(app_window, temp_tif_files):
     assert data1["dsm_img"] is not None
     assert data1["dsm_img"].shape == (100, 100)
 
-    # Check Zarr cache directly
-    cached_dsm = manager.zarr_manager.get_derived_frame(0, "dsm_img")
+    # Check in-memory derived cache directly
+    cached_dsm = manager.sequence_manager.get_derived_frame(0, "dsm_img")
     assert cached_dsm is not None
     np.testing.assert_allclose(cached_dsm, data1["dsm_img"])
 

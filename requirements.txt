@@ -6,8 +6,8 @@ matplotlib==3.10.9
 opencv-python==4.13.0.92
 scipy==1.17.1
 scikit-image==0.26.0
-zarr==3.2.1
 pandas==3.0.5
+numcodecs>=0.14.0
 
 # GUI framework (PySide6 replaces customtkinter)
 PySide6>=6.6.0

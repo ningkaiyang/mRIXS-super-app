@@ -25,13 +25,17 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 import matplotlib.patches as patches
+from matplotlib.collections import LineCollection
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from rixs_app.ui.widgets import SafeFigureCanvasQTAgg
-from PySide6.QtCore import Qt, QThreadPool, QTimer, Slot
+from PySide6.QtCore import Qt, QRunnable, QThreadPool, QTimer, Slot
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -69,6 +73,19 @@ from rixs_app.ui.clustering_slideshow.workers import (
 from rixs_app.ui.widgets import RangeSlider
 
 logger = logging.getLogger(__name__)
+
+
+class _FramePrefetchRunnable(QRunnable):
+    """Background task to prefetch dark-subtracted frames into cache."""
+
+    def __init__(self, manager: ClusteringManager, slices: Sequence[int]) -> None:
+        super().__init__()
+        self.manager = manager
+        self.slices = list(slices)
+
+    def run(self) -> None:
+        for s in self.slices:
+            self.manager.prefetch_frame(s)
 
 
 class KPICard(QFrame):
@@ -145,10 +162,28 @@ class ClusteringStudioView(QWidget):
         self._line_low = None
         self._line_high = None
 
+        self.setFocusPolicy(Qt.StrongFocus)
+
         self._current_zoom_level: float = 1.0
+        self._dash_zoom_mode: bool = False
+        self._dash_pan_x: float | None = None
+        self._dash_pan_y: float | None = None
         self._clamping_floor: float = 0.0
         self._clamping_ceiling: float = 1.0
         self._clamping_slider_max: float = 1.0
+
+        self._chunk_zoom_level: float = 1.0
+        self._chunk_pan_x: float | None = None
+        self._chunk_pan_y: float | None = None
+        self._chunk_zoom_mode: bool = False
+        self._chunk_clamping_floor: float = 0.0
+        self._chunk_clamping_ceiling: float = 1.0
+        self._chunk_clamping_slider_max: float = 1.0
+
+        self._show_rejected_cb: QCheckBox | None = None
+        self._frame_centroids_scatter = None
+        self._frame_rej_centroids_scatter = None
+        self._frame_boxes_lc: LineCollection | None = None
 
         self._accum_timer = QTimer(self)
         self._accum_timer.setInterval(60)
@@ -402,6 +437,7 @@ class ClusteringStudioView(QWidget):
         self._ax_dashboard_event.tick_params(colors="#94a3b8", labelsize=9)
         for spine in self._ax_dashboard_event.spines.values():
             spine.set_color("#2d3561")
+        self._canvas_dashboard.mpl_connect("button_press_event", self._on_dash_canvas_clicked)
         self._fig_dashboard.tight_layout()
 
         left_layout.addWidget(self._canvas_dashboard, stretch=1)
@@ -459,8 +495,8 @@ class ClusteringStudioView(QWidget):
         area_label_row.addStretch(1)
         s_layout.addLayout(area_label_row)
 
-        self.area_slider = RangeSlider(slider_box)
-        self.area_slider.configure_range(1.0, 20.0)
+        self.area_slider = RangeSlider(slider_box, step=1.0)
+        self.area_slider.configure_range(1.0, 20.0, step=1.0)
         self.area_slider.set_values(1.0, 9.0)
         self.area_slider.range_changed.connect(self._handle_area_slider_changed)
         self.area_slider.slider_released.connect(self._handle_area_slider_released)
@@ -526,6 +562,14 @@ class ClusteringStudioView(QWidget):
         self.frame_spin.setRange(1, 1)
         self.frame_spin.setValue(1)
         self.frame_spin.valueChanged.connect(self._handle_frame_spin_changed)
+
+        def _on_frame_spin_return() -> None:
+            self.frame_spin.interpretText()
+            self.frame_spin.clearFocus()
+            self.frame_spin.lineEdit().clearFocus()
+            self.setFocus()
+
+        self.frame_spin.lineEdit().returnPressed.connect(_on_frame_spin_return)
         ctrl_layout.addWidget(self.frame_spin)
 
         self._frame_max_lbl = QLabel("/ 0", ctrl_bar)
@@ -546,6 +590,12 @@ class ClusteringStudioView(QWidget):
         theme.set_tool_btn(self._frame_last_btn)
         self._frame_last_btn.clicked.connect(self._handle_frame_last)
         ctrl_layout.addWidget(self._frame_last_btn)
+
+        self._show_rejected_cb = QCheckBox("Show Rejected", ctrl_bar)
+        self._show_rejected_cb.setChecked(False)
+        self._show_rejected_cb.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self._show_rejected_cb.stateChanged.connect(self._render_frame_inspector)
+        ctrl_layout.addWidget(self._show_rejected_cb)
 
         layout.addWidget(ctrl_bar)
         # Frame Canvas with Cluster Overlays
@@ -600,6 +650,14 @@ class ClusteringStudioView(QWidget):
         self.chunk_spin.setRange(1, 1)
         self.chunk_spin.setValue(1)
         self.chunk_spin.valueChanged.connect(self._handle_chunk_spin_changed)
+
+        def _on_chunk_spin_return() -> None:
+            self.chunk_spin.interpretText()
+            self.chunk_spin.clearFocus()
+            self.chunk_spin.lineEdit().clearFocus()
+            self.setFocus()
+
+        self.chunk_spin.lineEdit().returnPressed.connect(_on_chunk_spin_return)
         ctrl_layout.addWidget(self.chunk_spin)
 
         self._chunk_max_lbl = QLabel("/ 0", ctrl_bar)
@@ -621,22 +679,88 @@ class ClusteringStudioView(QWidget):
         self._chunk_last_btn.clicked.connect(self._handle_chunk_last)
         ctrl_layout.addWidget(self._chunk_last_btn)
 
-        # Colormap selector
-        self._chunk_cmap_combo = QComboBox(ctrl_bar)
-        self._chunk_cmap_combo.addItems(["inferno", "viridis", "plasma", "magma", "hot", "gray"])
-        self._chunk_cmap_combo.currentTextChanged.connect(self._handle_chunk_cmap_changed)
-        ctrl_layout.addWidget(self._chunk_cmap_combo)
-
         layout.addWidget(ctrl_bar)
 
-        # Chunk Canvas
+        # Chunk Canvas & Toolbar Card
         canvas_card = QFrame(view)
         theme.set_squircle_card(canvas_card)
         c_layout = QVBoxLayout(canvas_card)
         c_layout.setContentsMargins(8, 8, 8, 8)
+        c_layout.setSpacing(6)
+
+        # Row 1: Zoom In, Zoom Out, Reset View, Zoom label, spacer, colormap combo.
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
+        self._chunk_zoom_in_btn = QPushButton("🔍+ Zoom In", canvas_card)
+        self._chunk_zoom_out_btn = QPushButton("🔍- Zoom Out", canvas_card)
+        self._chunk_zoom_reset_btn = QPushButton("↺ Reset View", canvas_card)
+        theme.set_tool_btn(self._chunk_zoom_in_btn)
+        theme.set_tool_btn(self._chunk_zoom_out_btn)
+        theme.set_tool_btn(self._chunk_zoom_reset_btn)
+
+        self._chunk_zoom_lbl = QLabel("Zoom: 1×", canvas_card)
+        self._chunk_zoom_lbl.setStyleSheet("color: #94a3b8; font-size: 11px; margin-left: 4px;")
+
+        self._chunk_zoom_in_btn.clicked.connect(self._handle_chunk_zoom_in)
+        self._chunk_zoom_out_btn.clicked.connect(self._handle_chunk_zoom_out)
+        self._chunk_zoom_reset_btn.clicked.connect(self._handle_chunk_zoom_reset)
+
+        row1.addWidget(self._chunk_zoom_in_btn)
+        row1.addWidget(self._chunk_zoom_out_btn)
+        row1.addWidget(self._chunk_zoom_reset_btn)
+        row1.addWidget(self._chunk_zoom_lbl)
+        row1.addStretch(1)
+
+        self._chunk_cmap_combo = QComboBox(canvas_card)
+        self._chunk_cmap_combo.addItems(["inferno", "viridis", "plasma", "magma", "hot", "gray"])
+        self._chunk_cmap_combo.currentTextChanged.connect(self._handle_chunk_cmap_changed)
+        row1.addWidget(self._chunk_cmap_combo)
+
+        c_layout.addLayout(row1)
+
+        # Row 2: Intensity Clamping Floor, RangeSlider [0.0, 1.0], Ceiling.
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+
+        clamp_lbl = QLabel("Intensity Clamping:", canvas_card)
+        clamp_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        row2.addWidget(clamp_lbl)
+
+        self._chunk_floor_entry = QLineEdit("0.00", canvas_card)
+        self._chunk_floor_entry.setFixedWidth(55)
+        self._chunk_floor_entry.setAlignment(Qt.AlignCenter)
+        self._chunk_floor_entry.setStyleSheet(
+            "background-color: #0f172a; color: #f8fafc; border: 1px solid #334155; "
+            "border-radius: 4px; font-size: 11px; padding: 2px;"
+        )
+        row2.addWidget(self._chunk_floor_entry)
+
+        self._chunk_clamping_slider = RangeSlider(canvas_card)
+        self._chunk_clamping_slider.configure_range(0.0, 1.0)
+        self._chunk_clamping_slider.set_values(0.0, 1.0)
+        row2.addWidget(self._chunk_clamping_slider, stretch=1)
+
+        self._chunk_ceiling_entry = QLineEdit("1.00", canvas_card)
+        self._chunk_ceiling_entry.setFixedWidth(55)
+        self._chunk_ceiling_entry.setAlignment(Qt.AlignCenter)
+        self._chunk_ceiling_entry.setStyleSheet(
+            "background-color: #0f172a; color: #f8fafc; border: 1px solid #334155; "
+            "border-radius: 4px; font-size: 11px; padding: 2px;"
+        )
+        row2.addWidget(self._chunk_ceiling_entry)
+
+        self._chunk_clamping_slider.range_changed.connect(self._handle_chunk_clamping_changed)
+        self._chunk_floor_entry.returnPressed.connect(self._on_chunk_floor_submitted)
+        self._chunk_floor_entry.editingFinished.connect(self._on_chunk_floor_submitted)
+        self._chunk_ceiling_entry.returnPressed.connect(self._on_chunk_ceiling_submitted)
+        self._chunk_ceiling_entry.editingFinished.connect(self._on_chunk_ceiling_submitted)
+
+        c_layout.addLayout(row2)
 
         self._fig_chunk = Figure(figsize=(8, 6), facecolor="#14172b")
         self._canvas_chunk = CanvasCls(self._fig_chunk)
+        self._canvas_chunk.mpl_connect("button_press_event", self._on_chunk_canvas_clicked)
         self._ax_chunk = self._fig_chunk.add_subplot(111)
         self._ax_chunk.set_facecolor("#16213e")
         self._ax_chunk.set_title("Chunk Single-Photon Event Map", color="#f8fafc", fontsize=11)
@@ -1038,6 +1162,48 @@ class ClusteringStudioView(QWidget):
         self._cancel_btn.hide()
         self._status_lbl.setText("Cluster extraction canceled by user.")
         self._update_kpi_cards()
+
+    # ------------------------------------------------------------------
+    # Focus Trap Dismissal & Keyboard Navigation Handlers
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if hasattr(self, "frame_spin") and (self.frame_spin.hasFocus() or self.frame_spin.lineEdit().hasFocus()):
+            self.frame_spin.clearFocus()
+            self.frame_spin.lineEdit().clearFocus()
+            self.setFocus()
+        elif hasattr(self, "chunk_spin") and (self.chunk_spin.hasFocus() or self.chunk_spin.lineEdit().hasFocus()):
+            self.chunk_spin.clearFocus()
+            self.chunk_spin.lineEdit().clearFocus()
+            self.setFocus()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, (QLineEdit, QSpinBox)):
+            super().keyPressEvent(event)
+            return
+
+        if event.key() == Qt.Key_Left:
+            if self._current_mode == "Frame Inspector":
+                self.prev_frame()
+                event.accept()
+                return
+            elif self._current_mode == "Chunk Inspector":
+                self.prev_chunk()
+                event.accept()
+                return
+        elif event.key() == Qt.Key_Right:
+            if self._current_mode == "Frame Inspector":
+                self.next_frame()
+                event.accept()
+                return
+            elif self._current_mode == "Chunk Inspector":
+                self.next_chunk()
+                event.accept()
+                return
+
+        super().keyPressEvent(event)
 
     # ------------------------------------------------------------------
     # Mode Switching & Contextual KPI Synchronization
@@ -1466,28 +1632,64 @@ class ClusteringStudioView(QWidget):
     # ------------------------------------------------------------------
 
     def _handle_zoom_in(self) -> None:
-        """Double zoom level up to 32× centered on axes center."""
-        if self._current_zoom_level >= 32.0:
-            return
-        self._current_zoom_level = min(32.0, self._current_zoom_level * 2.0)
-        self._apply_zoom()
+        """Toggle single-click center-zoom mode on 2D event map canvas."""
+        self._dash_zoom_mode = not self._dash_zoom_mode
+        if self._dash_zoom_mode:
+            self._zoom_in_btn.setText("🔍 Click Zoom...")
+            theme.set_active_btn(self._zoom_in_btn)
+            self._canvas_dashboard.setCursor(Qt.CrossCursor)
+        else:
+            self._zoom_in_btn.setText("🔍+ Zoom In")
+            theme.set_tool_btn(self._zoom_in_btn)
+            self._canvas_dashboard.unsetCursor()
 
     def _handle_zoom_out(self) -> None:
         """Halve zoom level down to 1× centered on axes center."""
-        if self._current_zoom_level <= 1.0:
-            return
+        if self._dash_zoom_mode:
+            self._dash_zoom_mode = False
+            self._zoom_in_btn.setText("🔍+ Zoom In")
+            theme.set_tool_btn(self._zoom_in_btn)
+            self._canvas_dashboard.unsetCursor()
         self._current_zoom_level = max(1.0, self._current_zoom_level / 2.0)
         self._apply_zoom()
 
     def _handle_zoom_reset(self) -> None:
         """Reset view to full detector bounds and 1× zoom."""
+        if self._dash_zoom_mode:
+            self._dash_zoom_mode = False
+            self._zoom_in_btn.setText("🔍+ Zoom In")
+            theme.set_tool_btn(self._zoom_in_btn)
+            self._canvas_dashboard.unsetCursor()
+        self._dash_pan_x = None
+        self._dash_pan_y = None
         self._current_zoom_level = 1.0
+        self._apply_zoom()
+
+    def _on_dash_canvas_clicked(self, event) -> None:
+        """Single-click center-zoom handler for 2D event map canvas."""
+        if not self._dash_zoom_mode:
+            return
+        if event.inaxes != self._ax_dashboard_event or event.xdata is None or event.ydata is None:
+            return
+
+        cx, cy = float(event.xdata), float(event.ydata)
+        self._dash_pan_x, self._dash_pan_y = cx, cy
+        self._current_zoom_level = min(32.0, self._current_zoom_level * 2.0)
+
+        # Disarm zoom mode
+        self._dash_zoom_mode = False
+        self._zoom_in_btn.setText("🔍+ Zoom In")
+        theme.set_tool_btn(self._zoom_in_btn)
+        self._canvas_dashboard.unsetCursor()
+
         self._apply_zoom()
 
     def _apply_zoom(self) -> None:
         """Apply current zoom level to the 2D dashboard event map axes respecting origin='upper'."""
         self._zoom_lbl.setText(f"Zoom: {int(self._current_zoom_level)}×")
         h, w = self.manager.state.image_shape
+        factor = self.manager.state.recon_config.subpixel_factor
+        h, w = h * factor, w * factor
         if self._im_dashboard_event is not None:
             arr = self._im_dashboard_event.get_array()
             if arr is not None and hasattr(arr, "shape") and len(arr.shape) == 2:
@@ -1497,13 +1699,16 @@ class ClusteringStudioView(QWidget):
             self._ax_dashboard_event.set_xlim(0.0, float(w))
             self._ax_dashboard_event.set_ylim(float(h), 0.0)
         else:
-            xlim = self._ax_dashboard_event.get_xlim()
-            ylim = self._ax_dashboard_event.get_ylim()
-            if (xlim == (0.0, 1.0) and ylim == (0.0, 1.0)) or (xlim == (0.0, float(w)) and (ylim == (0.0, float(h)) or ylim == (float(h), 0.0))):
-                cx, cy = float(w) / 2.0, float(h) / 2.0
+            if self._dash_pan_x is not None and self._dash_pan_y is not None:
+                cx, cy = self._dash_pan_x, self._dash_pan_y
             else:
-                cx = (float(xlim[0]) + float(xlim[1])) / 2.0
-                cy = (float(ylim[0]) + float(ylim[1])) / 2.0
+                xlim = self._ax_dashboard_event.get_xlim()
+                ylim = self._ax_dashboard_event.get_ylim()
+                if (xlim == (0.0, 1.0) and ylim == (0.0, 1.0)) or (xlim == (0.0, float(w)) and (ylim == (0.0, float(h)) or ylim == (float(h), 0.0))):
+                    cx, cy = float(w) / 2.0, float(h) / 2.0
+                else:
+                    cx = (float(xlim[0]) + float(xlim[1])) / 2.0
+                    cy = (float(ylim[0]) + float(ylim[1])) / 2.0
 
             hw = (float(w) / self._current_zoom_level) / 2.0
             hh = (float(h) / self._current_zoom_level) / 2.0
@@ -1577,82 +1782,141 @@ class ClusteringStudioView(QWidget):
         if n_frames == 0 or self._current_frame_idx < 0 or self._current_frame_idx >= n_frames:
             return
 
-        self._ax_frame.clear()
-        self._ax_frame.set_facecolor("#16213e")
-
         slice_num = self._current_frame_idx + 1
+
         # Load dark-subtracted frame
         try:
             frame_img = self.manager.get_frame_image(slice_num, dark_subtracted=True)
-            self._ax_frame.imshow(frame_img, cmap="viridis", origin="upper")
         except Exception as exc:
             logger.warning("Failed to render frame %d: %s", slice_num, exc)
+            self._ax_frame.clear()
             self._ax_frame.text(
                 0.5, 0.5, f"Could not load frame {slice_num}",
                 color="#ef4444", ha="center", va="center", transform=self._ax_frame.transAxes
             )
+            self._im_frame = None
             self._canvas_frame.draw_idle()
             return
+
+        # Artist reuse: do NOT call ax.clear() or fig.tight_layout() on every scrub!
+        if self._im_frame is None:
+            self._ax_frame.clear()
+            self._ax_frame.set_facecolor("#16213e")
+            self._im_frame = self._ax_frame.imshow(frame_img, cmap="viridis", origin="upper")
+            self._ax_frame.tick_params(colors="#94a3b8", labelsize=9)
+            for spine in self._ax_frame.spines.values():
+                spine.set_color("#2d3561")
+            self._fig_frame.tight_layout()
+        else:
+            self._im_frame.set_data(frame_img)
+            self._im_frame.set_clim(float(np.min(frame_img)), float(np.max(frame_img)))
 
         # Fetch frame clusters
         frame_df = self.manager.get_frame_clusters(slice_num)
         cfg = self.manager.state.recon_config
 
+        # Remove prior overlays
+        if self._frame_centroids_scatter is not None:
+            self._frame_centroids_scatter.remove()
+            self._frame_centroids_scatter = None
+        if self._frame_rej_centroids_scatter is not None:
+            self._frame_rej_centroids_scatter.remove()
+            self._frame_rej_centroids_scatter = None
+        if self._frame_boxes_lc is not None:
+            self._frame_boxes_lc.remove()
+            self._frame_boxes_lc = None
+
+        show_rejected = self._show_rejected_cb is not None and self._show_rejected_cb.isChecked()
         n_accepted = 0
         n_rejected = 0
 
-        if not frame_df.empty:
-            for _, row in frame_df.iterrows():
-                xm = float(row["XM"])
-                ym = float(row["YM"])
-                area = int(row["Area"])
-                circ = float(row["Circ."])
-                int_den = float(row["IntDen"])
+        if frame_df is not None and not frame_df.empty:
+            xm = frame_df["XM"].to_numpy(dtype=np.float32, copy=False)
+            ym = frame_df["YM"].to_numpy(dtype=np.float32, copy=False)
+            area = frame_df["Area"].to_numpy(dtype=np.float32, copy=False)
+            circ = frame_df["Circ."].to_numpy(dtype=np.float32, copy=False)
+            int_den = frame_df["IntDen"].to_numpy(dtype=np.float32, copy=False)
 
-                is_accepted = (
-                    (int_den >= cfg.intden_low)
-                    & (int_den <= cfg.intden_high)
-                    & (area >= cfg.min_area)
-                    & (area <= cfg.max_area)
-                    & (circ >= cfg.min_circ)
+            acc_mask = (
+                (int_den >= cfg.intden_low)
+                & (int_den <= cfg.intden_high)
+                & (area >= cfg.min_area)
+                & (area <= cfg.max_area)
+                & (circ >= cfg.min_circ)
+            )
+            n_accepted = int(np.count_nonzero(acc_mask))
+            n_rejected = len(frame_df) - n_accepted
+
+            # Vectorized single scatter for accepted centroids
+            if n_accepted > 0:
+                self._frame_centroids_scatter = self._ax_frame.scatter(
+                    xm[acc_mask], ym[acc_mask], marker="+", color="#06b6d4", s=36, linewidths=1.2
                 )
 
-                # Bounding box estimate based on area/extent
-                box_half = max(1.5, np.sqrt(area) / 2.0 + 1.0)
-                box_color = "#22c55e" if is_accepted else "#ef4444"
-
-                if is_accepted:
-                    n_accepted += 1
-                else:
-                    n_rejected += 1
-
-                # Draw bounding box rectangle
-                rect = patches.Rectangle(
-                    (xm - box_half, ym - box_half),
-                    box_half * 2.0,
-                    box_half * 2.0,
-                    linewidth=1.4,
-                    edgecolor=box_color,
-                    facecolor="none",
+            # Vectorized single scatter for rejected centroids if Show Rejected is checked
+            if show_rejected and n_rejected > 0:
+                rej_mask = ~acc_mask
+                self._frame_rej_centroids_scatter = self._ax_frame.scatter(
+                    xm[rej_mask], ym[rej_mask], marker="+", color="#ef4444", s=24, linewidths=0.8
                 )
-                self._ax_frame.add_patch(rect)
 
-                # Draw sub-pixel centroid marker
-                self._ax_frame.plot(xm, ym, "+", color="#06b6d4", markersize=7, markeredgewidth=1.4)
+            # Vectorized LineCollection for bounding boxes
+            box_half = np.maximum(1.5, np.sqrt(area) / 2.0 + 1.0)
+            all_segments = []
+            colors = []
+
+            if n_accepted > 0:
+                ax0 = xm[acc_mask] - box_half[acc_mask]
+                ax1 = xm[acc_mask] + box_half[acc_mask]
+                ay0 = ym[acc_mask] - box_half[acc_mask]
+                ay1 = ym[acc_mask] + box_half[acc_mask]
+                acc_rects = np.stack([
+                    np.stack([ax0, ay0], axis=-1),
+                    np.stack([ax1, ay0], axis=-1),
+                    np.stack([ax1, ay1], axis=-1),
+                    np.stack([ax0, ay1], axis=-1),
+                    np.stack([ax0, ay0], axis=-1),
+                ], axis=1)
+                all_segments.extend(acc_rects)
+                colors.extend(["#22c55e"] * len(acc_rects))
+
+            if show_rejected and n_rejected > 0:
+                rej_mask = ~acc_mask
+                rx0 = xm[rej_mask] - box_half[rej_mask]
+                rx1 = xm[rej_mask] + box_half[rej_mask]
+                ry0 = ym[rej_mask] - box_half[rej_mask]
+                ry1 = ym[rej_mask] + box_half[rej_mask]
+                rej_rects = np.stack([
+                    np.stack([rx0, ry0], axis=-1),
+                    np.stack([rx1, ry0], axis=-1),
+                    np.stack([rx1, ry1], axis=-1),
+                    np.stack([rx0, ry1], axis=-1),
+                    np.stack([rx0, ry0], axis=-1),
+                ], axis=1)
+                all_segments.extend(rej_rects)
+                colors.extend(["#ef4444"] * len(rej_rects))
+
+            if all_segments:
+                self._frame_boxes_lc = LineCollection(all_segments, colors=colors, linewidths=1.4)
+                self._ax_frame.add_collection(self._frame_boxes_lc)
 
         self._ax_frame.set_title(
-            f"Frame {self._current_frame_idx + 1}/{n_frames} — "
-            f"{len(frame_df)} clusters ({n_accepted} accepted, {n_rejected} rejected)",
+            f"Frame {slice_num}/{n_frames} — "
+            f"{len(frame_df) if frame_df is not None else 0} clusters ({n_accepted} accepted, {n_rejected} rejected)",
             color="#f8fafc",
             fontsize=11,
         )
-        self._ax_frame.tick_params(colors="#94a3b8", labelsize=9)
-        for spine in self._ax_frame.spines.values():
-            spine.set_color("#2d3561")
 
-        self._fig_frame.tight_layout()
         self._canvas_frame.draw_idle()
         self._update_kpi_cards()
+
+        # Trigger background prefetch for window [slice_num - 3 ... slice_num + 10]
+        start_s = max(1, slice_num - 3)
+        end_s = min(n_frames, slice_num + 10)
+        prefetch_slices = [s for s in range(start_s, end_s + 1) if s != slice_num]
+        if prefetch_slices:
+            runnable = _FramePrefetchRunnable(self.manager, prefetch_slices)
+            QThreadPool.globalInstance().start(runnable)
 
     def prev_frame(self) -> None:
         """Scrub to previous frame."""
@@ -1688,29 +1952,184 @@ class ClusteringStudioView(QWidget):
         if total_chunks == 0 or self._current_chunk_idx < 0 or self._current_chunk_idx >= total_chunks:
             return
 
-        self._ax_chunk.clear()
-        self._ax_chunk.set_facecolor("#16213e")
-
         start_f, end_f = ranges[self._current_chunk_idx]
         chunk_recon = self.manager.get_chunk_reconstruction(self._current_chunk_idx)
         cmap = self._chunk_cmap_combo.currentText()
 
-        self._im_chunk = self._ax_chunk.imshow(
-            chunk_recon.event_map, cmap=cmap, origin="upper"
-        )
+        map_max = float(np.max(chunk_recon.event_map)) if chunk_recon.event_map.size > 0 else 1.0
+        self._chunk_clamping_slider.configure_range(0.0, max(1.0, map_max))
+        if map_max > self._chunk_clamping_slider_max:
+            self._chunk_clamping_slider_max = max(1.0, map_max)
+
+        if self._im_chunk is None:
+            self._ax_chunk.clear()
+            self._ax_chunk.set_facecolor("#16213e")
+            self._im_chunk = self._ax_chunk.imshow(
+                chunk_recon.event_map,
+                cmap=cmap,
+                origin="upper",
+                vmin=self._chunk_clamping_floor,
+                vmax=self._chunk_clamping_ceiling,
+            )
+            self._ax_chunk.tick_params(colors="#94a3b8", labelsize=9)
+            for spine in self._ax_chunk.spines.values():
+                spine.set_color("#2d3561")
+            self._fig_chunk.tight_layout()
+        else:
+            self._im_chunk.set_data(chunk_recon.event_map)
+            self._im_chunk.set_clim(self._chunk_clamping_floor, self._chunk_clamping_ceiling)
+
         self._ax_chunk.set_title(
             f"Chunk {self._current_chunk_idx + 1}/{total_chunks} (Frames {start_f}-{end_f}) — "
             f"{chunk_recon.accepted_events:,} photons",
             color="#f8fafc",
             fontsize=11,
         )
-        self._ax_chunk.tick_params(colors="#94a3b8", labelsize=9)
-        for spine in self._ax_chunk.spines.values():
-            spine.set_color("#2d3561")
 
-        self._fig_chunk.tight_layout()
-        self._canvas_chunk.draw_idle()
+        # Viewport persistence across chunks
+        self._apply_chunk_zoom()
         self._update_kpi_cards()
+
+    def _handle_chunk_zoom_in(self) -> None:
+        """Toggle single-click center-zoom mode on chunk canvas."""
+        self._chunk_zoom_mode = not self._chunk_zoom_mode
+        if self._chunk_zoom_mode:
+            self._chunk_zoom_in_btn.setText("🔍 Click Zoom...")
+            theme.set_active_btn(self._chunk_zoom_in_btn)
+            self._canvas_chunk.setCursor(Qt.CrossCursor)
+        else:
+            self._chunk_zoom_in_btn.setText("🔍+ Zoom In")
+            theme.set_tool_btn(self._chunk_zoom_in_btn)
+            self._canvas_chunk.unsetCursor()
+
+    def _handle_chunk_zoom_out(self) -> None:
+        """Halve chunk zoom level down to 1×."""
+        if self._chunk_zoom_mode:
+            self._chunk_zoom_mode = False
+            self._chunk_zoom_in_btn.setText("🔍+ Zoom In")
+            theme.set_tool_btn(self._chunk_zoom_in_btn)
+            self._canvas_chunk.unsetCursor()
+        self._chunk_zoom_level = max(1.0, self._chunk_zoom_level / 2.0)
+        self._apply_chunk_zoom()
+
+    def _handle_chunk_zoom_reset(self) -> None:
+        """Reset chunk view to full detector bounds and 1× zoom."""
+        if self._chunk_zoom_mode:
+            self._chunk_zoom_mode = False
+            self._chunk_zoom_in_btn.setText("🔍+ Zoom In")
+            theme.set_tool_btn(self._chunk_zoom_in_btn)
+            self._canvas_chunk.unsetCursor()
+        self._chunk_zoom_level = 1.0
+        self._chunk_pan_x = None
+        self._chunk_pan_y = None
+        self._apply_chunk_zoom()
+
+    def _on_chunk_canvas_clicked(self, event) -> None:
+        """Single-click center-zoom handler for Chunk Inspector."""
+        if not self._chunk_zoom_mode:
+            return
+        if event.inaxes != self._ax_chunk or event.xdata is None or event.ydata is None:
+            return
+
+        cx, cy = float(event.xdata), float(event.ydata)
+        self._chunk_pan_x, self._chunk_pan_y = cx, cy
+        self._chunk_zoom_level = min(32.0, self._chunk_zoom_level * 2.0)
+
+        self._chunk_zoom_mode = False
+        self._chunk_zoom_in_btn.setText("🔍+ Zoom In")
+        theme.set_tool_btn(self._chunk_zoom_in_btn)
+        self._canvas_chunk.unsetCursor()
+
+        self._apply_chunk_zoom()
+
+    def _apply_chunk_zoom(self) -> None:
+        """Apply current chunk zoom level and center coordinates respecting origin='upper'."""
+        self._chunk_zoom_lbl.setText(f"Zoom: {int(self._chunk_zoom_level)}×")
+        h, w = self.manager.state.image_shape
+        factor = self.manager.state.recon_config.subpixel_factor
+        h, w = h * factor, w * factor
+        if self._im_chunk is not None:
+            arr = self._im_chunk.get_array()
+            if arr is not None and hasattr(arr, "shape") and len(arr.shape) == 2:
+                h, w = int(arr.shape[0]), int(arr.shape[1])
+
+        if self._chunk_zoom_level <= 1.0:
+            self._ax_chunk.set_xlim(0.0, float(w))
+            self._ax_chunk.set_ylim(float(h), 0.0)
+        else:
+            if self._chunk_pan_x is not None and self._chunk_pan_y is not None:
+                cx, cy = self._chunk_pan_x, self._chunk_pan_y
+            else:
+                xlim = self._ax_chunk.get_xlim()
+                ylim = self._ax_chunk.get_ylim()
+                if (xlim == (0.0, 1.0) and ylim == (0.0, 1.0)) or (xlim == (0.0, float(w)) and (ylim == (0.0, float(h)) or ylim == (float(h), 0.0))):
+                    cx, cy = float(w) / 2.0, float(h) / 2.0
+                else:
+                    cx = (float(xlim[0]) + float(xlim[1])) / 2.0
+                    cy = (float(ylim[0]) + float(ylim[1])) / 2.0
+
+            hw = (float(w) / self._chunk_zoom_level) / 2.0
+            hh = (float(h) / self._chunk_zoom_level) / 2.0
+
+            x0 = max(0.0, cx - hw)
+            x1 = x0 + 2.0 * hw
+            if x1 > float(w):
+                x1 = float(w)
+                x0 = max(0.0, x1 - 2.0 * hw)
+
+            y0 = max(0.0, cy - hh)
+            y1 = y0 + 2.0 * hh
+            if y1 > float(h):
+                y1 = float(h)
+                y0 = max(0.0, y1 - 2.0 * hh)
+
+            self._ax_chunk.set_xlim(x0, x1)
+            self._ax_chunk.set_ylim(y1, y0)
+
+        self._canvas_chunk.draw_idle()
+
+    def _handle_chunk_clamping_changed(self, floor: float, ceiling: float) -> None:
+        """Clamp chunk event map intensity without recalculating reconstruction."""
+        self._chunk_clamping_floor = float(floor)
+        self._chunk_clamping_ceiling = float(ceiling)
+        self._chunk_floor_entry.setText(f"{self._chunk_clamping_floor:.2f}")
+        self._chunk_ceiling_entry.setText(f"{self._chunk_clamping_ceiling:.2f}")
+        if self._im_chunk is not None:
+            self._im_chunk.set_clim(self._chunk_clamping_floor, self._chunk_clamping_ceiling)
+            self._canvas_chunk.draw_idle()
+
+    def _on_chunk_floor_submitted(self) -> None:
+        """Handle manual text entry for chunk clamping floor."""
+        try:
+            val = float(self._chunk_floor_entry.text())
+        except ValueError:
+            self._chunk_floor_entry.setText(f"{self._chunk_clamping_floor:.2f}")
+            return
+        val = max(0.0, min(val, self._chunk_clamping_ceiling))
+        self._chunk_clamping_floor = val
+        self._chunk_floor_entry.setText(f"{self._chunk_clamping_floor:.2f}")
+        self._chunk_clamping_slider.set_values(self._chunk_clamping_floor, self._chunk_clamping_ceiling)
+        if self._im_chunk is not None:
+            self._im_chunk.set_clim(self._chunk_clamping_floor, self._chunk_clamping_ceiling)
+            self._canvas_chunk.draw_idle()
+
+    def _on_chunk_ceiling_submitted(self) -> None:
+        """Handle manual text entry for chunk clamping ceiling."""
+        try:
+            val = float(self._chunk_ceiling_entry.text())
+        except ValueError:
+            self._chunk_ceiling_entry.setText(f"{self._chunk_clamping_ceiling:.2f}")
+            return
+        val = max(self._chunk_clamping_floor, val)
+        if val > self._chunk_clamping_slider_max:
+            self._chunk_clamping_slider_max = max(1.0, val)
+            self._chunk_clamping_slider.configure_range(0.0, self._chunk_clamping_slider_max)
+        self._chunk_clamping_ceiling = val
+        self._chunk_ceiling_entry.setText(f"{self._chunk_clamping_ceiling:.2f}")
+        self._chunk_clamping_slider.set_values(self._chunk_clamping_floor, self._chunk_clamping_ceiling)
+        if self._im_chunk is not None:
+            self._im_chunk.set_clim(self._chunk_clamping_floor, self._chunk_clamping_ceiling)
+            self._canvas_chunk.draw_idle()
 
     def prev_chunk(self) -> None:
         """Scrub to previous chunk."""
@@ -1840,6 +2259,17 @@ class ClusteringStudioView(QWidget):
         if self._pipeline_worker is not None:
             self._pipeline_worker.cancel()
             self._pipeline_worker = None
+
+        if self._dash_zoom_mode:
+            self._dash_zoom_mode = False
+        if self._chunk_zoom_mode:
+            self._chunk_zoom_mode = False
+        self._im_frame = None
+        self._im_chunk = None
+        self._im_dashboard_event = None
+        self._frame_centroids_scatter = None
+        self._frame_rej_centroids_scatter = None
+        self._frame_boxes_lc = None
 
         for canvas in [self._canvas_dashboard, self._canvas_hist, self._canvas_frame, self._canvas_chunk]:
             if canvas is not None:

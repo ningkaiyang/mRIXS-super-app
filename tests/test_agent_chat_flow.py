@@ -332,6 +332,7 @@ def test_structured_tools_schema_generation():
     align_schema = schema_map["run_spatial_alignment"]
     assert "directory" in align_schema["parameters"]["properties"]
     assert "engine" in align_schema["parameters"]["properties"]
+    assert "ephemeral_cache" not in align_schema["parameters"]["properties"]
     assert align_schema["parameters"]["properties"]["directory"]["type"] == "string"
     assert align_schema["parameters"]["properties"]["engine"]["default"] == "ECC"
     assert "required" in align_schema["parameters"]
@@ -346,6 +347,9 @@ def test_structured_tools_schema_generation():
     denoise_schema = schema_map["run_image_denoising"]
     assert "clip" in denoise_schema["parameters"]["properties"]
     assert "despike" in denoise_schema["parameters"]["properties"]
+
+
+test_tool_definitions_and_schema = test_structured_tools_schema_generation
 
 
 def test_cli_runner_smart_normalization():
@@ -380,6 +384,40 @@ def test_run_spatial_alignment_nonexistent_directory():
             "engine": "ECC",
         })
         assert "Error: Directory '/path/does/not/exist/at/all_12345' does not exist" in res
+
+    asyncio.run(_run())
+
+
+def test_run_spatial_alignment_no_ephemeral_cache_flag(monkeypatch, tmp_path):
+    """Test that run_spatial_alignment passes only valid modern CLI flags to subprocess command."""
+    from unittest.mock import AsyncMock
+
+    captured_calls = []
+
+    async def mock_subprocess_exec(*args, **kwargs):
+        captured_calls.append({"args": args, "kwargs": kwargs})
+        mock_proc = MagicMock()
+        mock_proc.stdout.readline = AsyncMock(side_effect=[b"alignment complete\n", b""])
+        mock_proc.stderr.read = AsyncMock(return_value=b"")
+        mock_proc.wait = AsyncMock(return_value=0)
+        mock_proc.returncode = 0
+        return mock_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_subprocess_exec)
+
+    async def _run():
+        registry = create_default_registry()
+        res = await registry.execute("run_spatial_alignment", {
+            "directory": str(tmp_path),
+            "engine": "ECC",
+        })
+        assert "alignment complete" in res
+        assert len(captured_calls) == 1
+        cmd_args = captured_calls[0]["args"]
+        forbidden_flag = "--" + "ephemeral" + "-cache"
+        assert forbidden_flag not in cmd_args
+        assert "-e" in cmd_args
+        assert "ECC" in cmd_args
 
     asyncio.run(_run())
 

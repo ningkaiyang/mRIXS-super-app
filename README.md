@@ -2,7 +2,7 @@
 
 [![Python 3.10–3.12](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
 [![UI Framework: PySide6 (Qt 6)](https://img.shields.io/badge/GUI-PySide6%20(Qt%206)-41CD52.svg)](https://wiki.qt.io/Qt_for_Python)
-[![Core: NumPy / SciPy / OpenCV / Zarr](https://img.shields.io/badge/core-NumPy%20%7C%20SciPy%20%7C%20OpenCV%20%7C%20Zarr-orange.svg)](https://numpy.org/)
+[![Core: NumPy / SciPy / OpenCV / Zstd](https://img.shields.io/badge/core-NumPy%20%7C%20SciPy%20%7C%20OpenCV%20%7C%20Zstd-orange.svg)](https://numpy.org/)
 [![LLM Agent: LBNL CBORG](https://img.shields.io/badge/AI%20Agent-LBNL%20CBORG-purple.svg)](https://cborg.lbl.gov/)
 [![Tests: 650+ passing](https://img.shields.io/badge/tests-650%2B%20passing%20(34%20suites)-brightgreen.svg)](https://pytest.org/)
 
@@ -239,9 +239,9 @@ The application includes an integrated, asynchronous AI Co-Pilot agent connected
   - **Managers** (`SlideshowManager`, `ZerothOrderManager`, `ClusteringManager`): Handle all state machines, caching, and algorithmic workflows with **zero PySide6/Qt imports**.
   - **Controllers** (`*View` classes): Wire UI panels, handle Qt signals, and manage worker thread lifecycles.
   - **Panels**: Modular Qt view widgets communicating exclusively via controller references.
-- **Zarr Content-Addressed Frame Cache (`dataset.py`):**
-  - High-resolution TIFF sequences are cached inside `<dataset_dir>/tif-cache/frames.zarr` using MD5 keys computed from `filepath + modification_time`.
-  - Subsequent sequence loads are instantaneous (< 1 ms per frame) across application sessions.
+- **In-Memory Compressed Frame Cache (`frame_cache.py`, `dataset.py`):**
+  - High-resolution TIFF sequences and derived stage filter frames are cached strictly in RAM using `CompressedFrameCache` (`float16` + Zstd).
+  - Subsequent sequence loads and scrubbing operations are instantaneous (< 0.5 ms per frame) with zero disk clutter or cache files.
 - **Thread Safety & GC Retention:**
   - Background computations run via `QThreadPool` and `QRunnable` workers.
   - Explicit GC retention pattern (`self._workers.add(worker)`) prevents Python garbage collection from tearing down active workers before Qt signal emission.
@@ -344,7 +344,6 @@ python -u align_cli.py -d "path/to/dataset" -e PCA -t auto --overwrite --png
 | `-t`, `--threshold` | PCA intensity percentile cutoff (`float` or `auto`) | `99.9` |
 | `--png` | Save side-by-side comparison PNG (`comparison_<engine>.png`) | `False` |
 | `--json` | Export per-frame (dx, dy) drift offsets to JSON | `False` |
-| `--ephemeral-cache` | Remove `tif-cache/` Zarr directory upon completion | `False` |
 | `--overwrite` | Overwrite existing files in `sum/` output directory | `False` |
 
 ---
@@ -471,7 +470,7 @@ Each200Frames/
 │   │   ├── photon_clustering.py    # Connected components, IntDen, event map recon
 │   │   ├── zeroth_order.py         # 6-stage mirror pitch calibration
 │   │   ├── preprocessing.py        # Anscombe VST, MAD despiking, bilateral filter
-│   │   ├── dataset.py              # Zarr sequence caching & MD5 manifests
+│   │   ├── dataset.py              # In-memory sequence manager & cache
 │   │   ├── dark_mask_store.py      # Atomic dark mask persistence
 │   │   ├── dark_mask_export.py     # Publication-grade histogram figures
 │   │   ├── txt_metadata_parser.py  # Beamline scan log parsing
@@ -501,4 +500,4 @@ Each200Frames/
 
 Developed for **Beamline 6.0.2 (QERLIN)** at the **Advanced Light Source (ALS), Lawrence Berkeley National Laboratory (LBNL)**.
 
-Built with Python, PySide6 (Qt 6), NumPy, SciPy, OpenCV, Zarr, Matplotlib, and LBNL CBORG.
+Built with Python, PySide6 (Qt 6), NumPy, SciPy, OpenCV, Matplotlib, and LBNL CBORG.

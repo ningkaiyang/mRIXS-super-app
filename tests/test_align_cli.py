@@ -18,14 +18,13 @@ import tifffile
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from align_cli import (
-    CLIZarrSequenceManager,
+    align_directory,
     discover_directories,
     find_best_threshold,
     process_directory,
     save_comparison_png,
     _parse_args,
 )
-from rixs_app.core.dataset import _frame_key
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,7 +160,6 @@ class TestProcessDirectory:
             threshold='99.9',
             save_png=False,
             overwrite=True,
-            ephemeral_cache=True,
             save_json=True,
         )
         sum_dir = tmp_path / "sum"
@@ -184,7 +182,6 @@ class TestProcessDirectory:
             threshold='99.9',
             save_png=False,
             overwrite=True,
-            ephemeral_cache=True,
             save_json=True,
         )
         json_path = tmp_path / "sum" / "aligned_offsets_ECC.json"
@@ -221,7 +218,6 @@ class TestProcessDirectory:
             threshold='99.9',
             save_png=True,
             overwrite=True,
-            ephemeral_cache=True,
         )
         png_path = tmp_path / "sum" / "comparison_ECC.png"
         assert png_path.exists()
@@ -236,7 +232,6 @@ class TestProcessDirectory:
             threshold='99.9',
             save_png=False,
             overwrite=True,
-            ephemeral_cache=True,
         )
         sum_dir = tmp_path / "sum"
         assert sum_dir.is_dir()
@@ -275,7 +270,6 @@ class TestProcessDirectory:
             threshold='99.9',
             save_png=False,
             overwrite=True,
-            ephemeral_cache=True,
             output_dir=custom_relative,
         )
         custom_dir = tmp_path / custom_relative
@@ -300,7 +294,6 @@ class TestPCA:
             threshold='auto',
             save_png=False,
             overwrite=True,
-            ephemeral_cache=True,
             save_json=True,
         )
         sum_dir = tmp_path / "sum"
@@ -332,28 +325,12 @@ class TestFindBestThreshold:
         assert 98.0 <= t <= 100.0
 
 
-class TestCLIZarrManager:
-    """Tests for :class:`CLIZarrSequenceManager`."""
-
-    def test_cli_zarr_manager_synchronous(self, tmp_path):
-        """Verify CLIZarrSequenceManager loads frames synchronously.
-
-        After construction completes, all frames should be present in
-        the Zarr group and ``median_frame`` should be a non-None 2-D
-        float array.
-        """
-        paths = _populate_dir(tmp_path, n_frames=4, shift_step=0)
-        mgr = CLIZarrSequenceManager(paths)
-
-        # All frames should be cached
-        for fpath in paths:
-            key = _frame_key(fpath)
-            assert key in mgr.zarr_group, (
-                f"Frame {os.path.basename(fpath)} not cached"
-            )
-
-        # Median should be computed
-        assert mgr.median_frame is not None
-        assert mgr.median_frame.ndim == 2
-        assert mgr.median_frame.shape == (64, 64)
-        assert mgr.median_frame.dtype == np.float64 or mgr.median_frame.dtype == np.float32
+def test_align_cli_no_tif_cache_created(tmp_path):
+    """Verify that running align_directory produces no tif-cache/ directory."""
+    paths = _populate_dir(tmp_path, n_frames=3)
+    align_directory(
+        dir_path=str(tmp_path),
+        engines=['ECC'],
+        overwrite=True,
+    )
+    assert not (tmp_path / "tif-cache").exists()
